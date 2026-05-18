@@ -172,7 +172,7 @@ class OpenMeteoClient:
             lon = NOORDWIJK.lon
 
         if models is None:
-            models = ['knmi_seamless', 'ecmwf_ifs025']
+            models = ['knmi_harmonie', 'ecmwf_ifs025']
 
         params = {
             'latitude': lat,
@@ -188,9 +188,12 @@ class OpenMeteoClient:
             ]),
             'wind_speed_unit': 'kn',
             'timezone': TIMEZONE,
-            'forecast_days': min(16, hours // 24 + 1),
-            'models': ','.join(models)
+            'forecast_days': min(16, hours // 24 + 1)
         }
+
+        # Voeg models toe als array parameter (meerdere keren dezelfde param)
+        for model in models:
+            params['models'] = model
 
         logger.info(f"Fetching forecast data (default model)")
         data = await self._request_with_retry(self.base_url, params)
