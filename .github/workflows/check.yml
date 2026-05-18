@@ -1,0 +1,83 @@
+name: Surf Alert Check
+
+on:
+  schedule:
+    # Run 4x per dag NL tijd: 06:15, 12:15, 18:15, 00:15
+    # UTC = NL tijd - 1 uur (in winter) of - 2 uur (in zomer)
+    # We gebruiken UTC tijden die overeenkomen met NL tijd in beide seizoenen
+    - cron: '15 5,11,17,23 * * *'  # 06:15, 12:15, 18:15, 00:15 NL tijd (winter)
+  workflow_dispatch:  # Handmatige trigger
+
+jobs:
+  check-surf-conditions:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Create data directory
+      run: mkdir -p data
+
+    - name: Load state from cache
+      uses: actions/cache@v3
+      with:
+        path: data/state.json
+        key: surf-state-${{ github.run_id }}
+        restore-keys: |
+          surf-state-
+
+    - name: Load baseline from cache
+      uses: actions/cache@v3
+      with:
+        path: data/seasonal_baseline.json
+        key: surf-baseline
+        restore-keys: |
+          surf-baseline-
+
+    - name: Run surf alert check
+      env:
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        MESSAGEBIRD_API_KEY: ${{ secrets.MESSAGEBIRD_API_KEY }}
+        MESSAGEBIRD_ORIGINATOR: ${{ secrets.MESSAGEBIRD_ORIGINATOR }}
+        RECIPIENT_PHONE_NUMBER: ${{ secrets.RECIPIENT_PHONE_NUMBER }}
+        ALERTS_ENABLED: ${{ secrets.ALERTS_ENABLED || 'false' }}
+      run: |
+        cd src
+        python main.py
+
+    - name: Upload state to cache
+      uses: actions/cache/save@v3
+      with:
+        path: data/state.json
+        key: surf-state-${{ github.run_id }}
+
+    - name: Upload forecasts log
+      uses: actions/upload-artifact@v3
+      with:
+        name: forecasts-log
+        path: data/forecasts_log.jsonl
+        retention-days: 90
+
+    - name: Upload surf alert log
+      uses: actions/upload-artifact@v3
+      with:
+        name: surf-alert-log
+        path: data/surf_alert.log
+        retention-days: 30
+
+    - name: Notify on failure
+      if: failure()
+      run: |
+        echo "Surf alert check failed. Check logs for details."
