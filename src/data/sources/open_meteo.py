@@ -212,16 +212,10 @@ class OpenMeteoClient:
                 'pressure': hourly.get('pressure_msl', [])[i],
                 'cloud_cover': hourly.get('cloud_cover', [])[i]
             })
-
         result['default'] = model_result
         logger.info(f"Retrieved {len(model_result)} hours of forecast data")
 
-            if not model_data:
-                logger.warning(f"No data returned for model {model}")
-                continue
-
-            hourly = model_data.get('hourly', {})
-            times = hourly.get('time', [])
+        return result
 
             model_result = []
             for i, time_str in enumerate(times):
