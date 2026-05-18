@@ -150,21 +150,20 @@ def is_clean_swell(spectrum: WaveSpectrum) -> bool:
     """
     Controleer of de swell "clean" is (één dominante piek).
 
-    Returns:
-        True als één piek dominant is (≥70% van totale energie)
+    Geen pieken = geen golven = niet "clean" (vlak water krijgt geen bonus).
+    Bij meerdere pieken is clean = ≥70% van totale energie in één piek.
     """
-    if not spectrum.peaks or len(spectrum.peaks) == 1:
+    if not spectrum.peaks:
+        return False
+    if len(spectrum.peaks) == 1:
         return True
 
-    # Bereken energie per piek (E ~ H²)
     energies = [(p.height_m ** 2) for p in spectrum.peaks]
     total_energy = sum(energies)
-
     if total_energy == 0:
-        return True
+        return False
 
-    max_energy = max(energies)
-    return (max_energy / total_energy) >= 0.7
+    return (max(energies) / total_energy) >= 0.7
 
 
 def get_swell_quality_score(spectrum: WaveSpectrum) -> float:

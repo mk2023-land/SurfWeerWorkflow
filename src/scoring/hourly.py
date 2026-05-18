@@ -36,23 +36,23 @@ def score_golf_component(wave_spectrum: WaveSpectrum) -> float:
     Factoren:
     - Totale hoogte (0-1.0m = 0-20pt, 1.0-2.0m = 20-40pt, >2.0m = 40pt)
     - Swell type (groundswell = 1.2x multiplier, wind swell = 1.0x, wind sea = 0.8x)
-    - Groundswell door wind sea bonus (+5pt)
-    - Clean swell bonus (+3pt)
+    - Groundswell door wind sea bonus (+1pt)
+    - Clean swell bonus (+1pt)
+
+    Bonussen zijn klein zodat een 1.4m golf niet aan dezelfde cap zit als een 2m+ golf.
     """
     decomposition = decompose_spectrum(wave_spectrum)
     total_height = decomposition['total_height']
 
-    # Basis score op hoogte
     if total_height < 0.5:
         height_score = 0
     elif total_height < 1.0:
-        height_score = (total_height - 0.5) * 40  # 0-20pt lineair
+        height_score = (total_height - 0.5) * 40
     elif total_height < 2.0:
-        height_score = 20 + (total_height - 1.0) * 20  # 20-40pt lineair
+        height_score = 20 + (total_height - 1.0) * 20
     else:
-        height_score = 40  # Max
+        height_score = 40
 
-    # Type multiplier
     if decomposition['ground_swell']:
         type_multiplier = 1.2
     elif decomposition['wind_swell']:
@@ -62,13 +62,11 @@ def score_golf_component(wave_spectrum: WaveSpectrum) -> float:
 
     height_score *= type_multiplier
 
-    # Groundswell door wind sea bonus
     if has_groundswell_through_windsea(wave_spectrum):
-        height_score += 5
+        height_score += 1
 
-    # Clean swell bonus
     if is_clean_swell(wave_spectrum):
-        height_score += 3
+        height_score += 1
 
     return min(SCORING_WEIGHTS['golf_max'], height_score)
 
@@ -91,15 +89,16 @@ def score_wind_component(wind_speed_kn: float, wind_direction_deg: int) -> float
     else:
         speed_score = max(0, 10 - (wind_speed_kn - 15) * 2.0)  # 10-0pt
 
-    # Richting multiplier
+    # Richting multiplier. Side-offshore is cross-shore, niet vergelijkbaar met
+    # echte offshore — daarom 0.73 ipv 1.0.
     if WIND_DIRECTIONS['offshore'][0] <= wind_direction_deg <= WIND_DIRECTIONS['offshore'][1]:
         direction_multiplier = 1.2
     elif WIND_DIRECTIONS['side_offshore'][0] <= wind_direction_deg <= WIND_DIRECTIONS['side_offshore'][1]:
-        direction_multiplier = 1.0
+        direction_multiplier = 0.73
     elif WIND_DIRECTIONS['onshore'][0] <= wind_direction_deg <= WIND_DIRECTIONS['onshore'][1]:
         direction_multiplier = 0.5
     else:
-        direction_multiplier = 0.8  # Side-onshore of andere
+        direction_multiplier = 0.8  # Side-onshore
 
     return min(SCORING_WEIGHTS['wind_max'], speed_score * direction_multiplier)
 
@@ -112,16 +111,15 @@ def score_tide_component(tide_level_normalized: float, tide_phase: str) -> float
     - Hoogte (mid-tijd = beste, extremes = slechter)
     - Fase (opgaand vs afgaand, kleine bonus voor afgaand)
     """
-    # Basis score op genormaliseerd niveau
-    # Mid-tijd (0.3-0.8) is het beste
+    # Basis score op genormaliseerd niveau. Mid-tij (0.3-0.8) is beste,
+    # base 13 zodat afgaand-bonus naar 15 cap brengt, opgaand blijft 13.
     if 0.3 <= tide_level_normalized <= 0.8:
-        level_score = 15
+        level_score = 13
     elif tide_level_normalized < 0.3:
-        level_score = tide_level_normalized / 0.3 * 12  # 0-12pt
-    else:  # > 0.8
-        level_score = (1.0 - tide_level_normalized) / 0.2 * 12  # 12-0pt
+        level_score = tide_level_normalized / 0.3 * 12
+    else:
+        level_score = (1.0 - tide_level_normalized) / 0.2 * 12
 
-    # Fase bonus (klein)
     phase_bonus = 2.0 if tide_phase == "afgaand" else 0.0
 
     return min(SCORING_WEIGHTS['tide_max'], level_score + phase_bonus)
@@ -131,37 +129,39 @@ def score_swell_direction_bonus(swell_direction_deg: int) -> float:
     """
     Bereken swell richting bonus voor Noordwijk (max 10 punten).
 
-    Geen harde blokkering, maar voorkeuren op basis van swell richting.
-    Klassieke NL swell richtingen krijgen hogere bonus.
-
-    Args:
-        swell_direction_deg: Swell richting in graden
-
-    Returns:
-        Bonus score 0-10
+    Geblokkeerde sector (pier IJmuiden) krijgt 0 punten. Buiten dat gelden
+    voorkeuren: klassieke NL swell (W/NW/N) hoog, NO redelijk, zuid laag.
     """
-    # Normaliseer richting naar 0-360
     direction = swell_direction_deg % 360
 
-    # Beste richtingen: NW/W/ZW (klassieke NL swell) + N/NNW
-    if 270 <= direction <= 360:  # W -> N (NW, W, ZW, N, NNW)
-        return 10.0  # Perfecte richtingen
+    # Geblokkeerd door obstakels (bv. pier van IJmuiden): wrap-around-range.
+    blocked_min = NOORDWIJK.blocked_swell_dir_min
+    blocked_max = NOORDWIJK.blocked_swell_dir_max
+    if not (blocked_min == 0 and blocked_max == 0):
+        if blocked_min <= blocked_max:
+            is_blocked = blocked_min <= direction <= blocked_max
+        else:  # wrap-around: bv. 350-30 → 350-360 én 0-30
+            is_blocked = direction >= blocked_min or direction <= blocked_max
+        if is_blocked:
+            return 0.0
 
-    # Goede richtingen: NO/ONO (niet zo vaak maar prima)
-    elif 45 <= direction <= 90:  # NO/ONO
+    # Beste richtingen: W -> N
+    if 270 <= direction <= 360:
+        return 10.0
+
+    # Goede richtingen: NO/ONO
+    if 45 <= direction <= 90:
         return 8.0
 
-    # Redelijke richtingen: NNO/Oost/ZO (minder common maar bruikbaar)
-    elif 0 <= direction <= 45 or 90 <= direction <= 135:
+    # Redelijke richtingen: NNO (niet geblokkeerd deel) / O / ZO
+    if 0 <= direction <= 45 or 90 <= direction <= 135:
         return 5.0
 
-    # Mindere richtingen: Z/ZZO/ZZW (komt minder vaak voor)
-    elif 135 <= direction <= 225:
+    # Mindere richtingen: Z/ZZO/ZZW
+    if 135 <= direction <= 225:
         return 3.0
 
-    # Fallback
-    else:
-        return 5.0
+    return 5.0
 
 
 def score_hour(state: HourState) -> ScoreBreakdown:

@@ -21,16 +21,18 @@ class LocationConfig:
     blocked_swell_dir_min: int  # Geblokkeerd door obstakels (bijv. pier)
     blocked_swell_dir_max: int
 
-# Noordwijk configuratie (primaire spot)
+# Noordwijk configuratie (primaire spot).
+# Blocked range 350-30 = NNO sector geblokkeerd door pier van IJmuiden.
+# Wrap-around: 350-360 én 0-30.
 NOORDWIJK = LocationConfig(
     name="Noordwijk",
     lat=52.241,
     lon=4.428,
     beach_normal_deg=285,  # WNW
-    preferred_swell_dir_min=270,  # W (start voorkeursgebied)
-    preferred_swell_dir_max=360,  # Via N naar NW (volledige cirkel)
-    blocked_swell_dir_min=0,  # Geen harde blokkering
-    blocked_swell_dir_max=0
+    preferred_swell_dir_min=270,
+    preferred_swell_dir_max=360,
+    blocked_swell_dir_min=350,
+    blocked_swell_dir_max=30
 )
 
 # Rijkswaterstaat boei definities.
@@ -132,14 +134,15 @@ ANTHROPIC_CONFIG = {
     'temperature': 0.7
 }
 
-# MessageBird configuratie
-MESSAGEBIRD_CONFIG = {
-    'api_key': os.getenv('MESSAGEBIRD_API_KEY'),
-    'originator': os.getenv('MESSAGEBIRD_ORIGINATOR', 'SurfAlert'),
-    'recipient': os.getenv('RECIPIENT_PHONE_NUMBER', '')
+# Twilio configuratie
+TWILIO_CONFIG = {
+    'account_sid': os.getenv('TWILIO_ACCOUNT_SID'),
+    'auth_token': os.getenv('TWILIO_AUTH_TOKEN'),
+    'from_number': os.getenv('TWILIO_PHONE_NUMBER'),
+    'recipient': os.getenv('RECIPIENT_PHONE_NUMBER', ''),
 }
 
-# Debug configuratie
+# Debug configuratie — alleen log-level. Voor "geen SMS verzenden" gebruik --dry-run.
 DEBUG = os.getenv('DEBUG', 'false').lower() == 'true'
 
 # Timezone

@@ -3,7 +3,7 @@ Data models voor het Noordwijk Surf Alert Systeem.
 Definieert alle data structuren die door het systeem worden gebruikt.
 """
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Literal
 from enum import Enum
 
@@ -158,7 +158,14 @@ class ScoreBreakdown:
 
     @property
     def total_score(self) -> float:
-        """Totale score 0-100."""
+        """
+        Totale score 0-100.
+
+        Zonder golven (golf_score < 1) tellen wind/tij/richting niet mee —
+        vlak water blijft onsurfbaar ongeacht offshore wind of perfect tij.
+        """
+        if self.golf_score < 1:
+            return round(self.golf_score, 1)
         return round(self.golf_score + self.wind_score + self.tide_score + self.swell_dir_bonus, 1)
 
     def is_surfable(self) -> bool:
@@ -274,7 +281,7 @@ class SystemState:
         now = datetime.now()
         self.last_alert_time = now
         self.alerts_sent_this_week += 1
-        self.cooldown_until = now.replace(hour=now.hour + cooldown_hours)
+        self.cooldown_until = now + timedelta(hours=cooldown_hours)
 
 
 @dataclass
