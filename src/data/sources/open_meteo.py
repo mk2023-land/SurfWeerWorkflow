@@ -217,24 +217,6 @@ class OpenMeteoClient:
 
         return result
 
-            model_result = []
-            for i, time_str in enumerate(times):
-                model_result.append({
-                    'timestamp': datetime.fromisoformat(time_str.replace('Z', '+00:00')),
-                    'wind_speed': hourly.get('wind_speed_10m', [])[i],
-                    'wind_direction': hourly.get('wind_direction_10m', [])[i],
-                    'wind_gusts': hourly.get('wind_gusts_10m', [])[i],
-                    'temperature': hourly.get('temperature_2m', [])[i],
-                    'precipitation': hourly.get('precipitation', [])[i],
-                    'pressure': hourly.get('pressure_msl', [])[i],
-                    'cloud_cover': hourly.get('cloud_cover', [])[i]
-                })
-
-            result[model] = model_result
-            logger.info(f"Retrieved {len(model_result)} hours of forecast data from {model}")
-
-        return result
-
     async def fetch_archive_data(
         self,
         start_date: str,
