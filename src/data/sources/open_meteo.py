@@ -138,6 +138,40 @@ class OpenMeteoClient:
             lon = NOORDWIJK.lon
 
         if models is None:
+            models = []  # Geen models, gebruikt default
+
+        params = {
+            'latitude': lat,
+            'longitude': lon,
+            'hourly': ','.join([
+                'wind_speed_10m',
+                'wind_direction_10m',
+                'wind_gusts_10m',
+                'temperature_2m',
+                'precipitation',
+                'pressure_msl',
+                'cloud_cover'
+            ]),
+            'wind_speed_unit': 'kn',
+            'timezone': TIMEZONE,
+            'forecast_days': min(16, hours // 24 + 1),
+            'models': ','.join(models)
+        }
+        """
+        Haal forecast data op met meerdere modellen.
+
+        Args:
+            models: Lijst van model namen (knmi_seamless, ecmwf_ifs025, gfs_seamless, ukmo_global_deterministic)
+
+        Returns:
+            Dictionary met model naam als key en lijst van uurlijkse data als value
+        """
+        if lat is None:
+            lat = NOORDWIJK.lat
+        if lon is None:
+            lon = NOORDWIJK.lon
+
+        if models is None:
             models = ['knmi_seamless', 'ecmwf_ifs025']
 
         params = {
@@ -158,13 +192,29 @@ class OpenMeteoClient:
             'models': ','.join(models)
         }
 
-        logger.info(f"Fetching forecast data from {len(models)} models")
+        logger.info(f"Fetching forecast data (default model)")
         data = await self._request_with_retry(self.base_url, params)
 
-        # Parse response per model
+        # Parse response (single model, default)
         result = {}
-        for model in models:
-            model_data = data.get(model, {})
+        hourly = data.get('hourly', {})
+        times = hourly.get('time', [])
+
+        model_result = []
+        for i, time_str in enumerate(times):
+            model_result.append({
+                'timestamp': datetime.fromisoformat(time_str.replace('Z', '+00:00')),
+                'wind_speed': hourly.get('wind_speed_10m', [])[i],
+                'wind_direction': hourly.get('wind_direction_10m', [])[i],
+                'wind_gusts': hourly.get('wind_gusts_10m', [])[i],
+                'temperature': hourly.get('temperature_2m', [])[i],
+                'precipitation': hourly.get('precipitation', [])[i],
+                'pressure': hourly.get('pressure_msl', [])[i],
+                'cloud_cover': hourly.get('cloud_cover', [])[i]
+            })
+
+        result['default'] = model_result
+        logger.info(f"Retrieved {len(model_result)} hours of forecast data")
 
             if not model_data:
                 logger.warning(f"No data returned for model {model}")
