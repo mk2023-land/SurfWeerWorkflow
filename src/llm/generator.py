@@ -2,7 +2,9 @@
 SMS generator module met Claude Haiku 4.5.
 Genereert natuurlijke SMS berichten in stijl van referentie-forecaster van de referentie-forecaster.
 """
+import json
 import logging
+from datetime import datetime
 from typing import Dict, Optional
 import anthropic
 
@@ -203,6 +205,3 @@ class SMSGenerator:
         tomorrow_str = f"morgen {tomorrow_peak.total_score}" if tomorrow_peak else "morgen onbekend"
 
         return f"Nwijk {date_str}: {today_str}, {tomorrow_str}. Cam: surfweer.nl/webcams/noordwijk/"
-
-
-import json  # Import json at the end

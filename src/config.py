@@ -126,10 +126,11 @@ API_ENDPOINTS = {
     'rws_period': 'https://ddapi20-waterwebservices.rijkswaterstaat.nl/ONLINEWAARNEMINGENSERVICES/OphalenWaarnemingen'
 }
 
-# Anthropic configuratie
+# Anthropic configuratie. claude-3-5-haiku-20241022 is uitgefaseerd;
+# claude-haiku-4-5 is de huidige Haiku-generatie (snel, ~$1/$5 per M tokens).
 ANTHROPIC_CONFIG = {
     'api_key': os.getenv('ANTHROPIC_API_KEY'),
-    'model': 'claude-3-5-haiku-20241022',
+    'model': 'claude-haiku-4-5',
     'max_tokens': 320,
     'temperature': 0.7
 }
