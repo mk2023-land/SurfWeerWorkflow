@@ -94,6 +94,15 @@ class AlertEngine:
         Returns:
             Decision object
         """
+        # Kostenbeperking check
+        if not self._check_monthly_budget():
+            logger.warning("Monthly budget reached, skipping alerts")
+            return Decision(
+                send_digest=is_digest_time,
+                send_alerts=[],
+                skip_reason="Monthly budget reached (max €5/maand SMS + €3/maand Anthropic)"
+            )
+
         # Voer detectors uit
         triggered_alerts = self.detector_engine.detect_all(
             forecast, history, buoy_history, windows
@@ -186,6 +195,55 @@ class AlertEngine:
         explanation += f" ({window.peak_score} score, {window.duration_hours:.1f}h duration)"
 
         return explanation
+
+    def _check_monthly_budget(self) -> bool:
+        """Controleer of maandelijk budget nog niet bereikt is."""
+        try:
+            log_file = Path('data/forecasts_log.jsonl')
+            if not log_file.exists():
+                return True
+
+            # Tel aantal SMS en LLM aanroepen deze maand
+            sms_count = 0
+            llm_count = 0
+            current_month = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+            with open(log_file, 'r') as f:
+                for line in f:
+                    try:
+                        log_entry = json.loads(line)
+                        timestamp = datetime.fromisoformat(log_entry['timestamp'])
+
+                        if timestamp >= current_month:
+                            if log_entry.get('sms_sent'):
+                                sms_count += 1
+                            if log_entry.get('llm_used'):
+                                llm_count += 1
+                    except (json.JSONDecodeError, KeyError):
+                        continue
+
+            # Bereken kosten
+            sms_cost = sms_count * 0.08  # €0.08 per SMS
+            llm_cost = llm_count * 0.001  # ~€0.001 per LLM aanroep
+
+            # Check limits
+            max_sms_cost = ALERT_CONFIG.get('max_sms_cost_per_month_eur', 5.0)
+            max_llm_cost = ALERT_CONFIG.get('max_anthropic_cost_per_month_eur', 3.0)
+
+            if sms_cost >= max_sms_cost:
+                logger.warning(f"SMS budget reached: €{sms_cost:.2f}/€{max_sms_cost}")
+                return False
+
+            if llm_cost >= max_llm_cost:
+                logger.warning(f"LLM budget reached: €{llm_cost:.2f}/€{max_llm_cost}")
+                return False
+
+            logger.info(f"Budget status: SMS €{sms_cost:.2f}/€{max_sms_cost}, LLM €{llm_cost:.2f}/€{max_llm_cost}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error checking budget: {e}")
+            return True  # Bij error, door laten gaan
 
     def is_morning_first_run(self) -> bool:
         """

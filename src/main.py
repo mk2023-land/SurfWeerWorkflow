@@ -45,7 +45,7 @@ from alerts.detectors import AlertDetectorEngine
 from llm.generator import SMSGenerator
 from llm.validator import SMSValidator
 
-from sms.messagebird import MessageBirdClient, format_sms_for_logging
+from sms.twilio import TwilioClient, format_sms_for_logging
 
 # Setup logging
 logging.basicConfig(
@@ -68,7 +68,7 @@ class SurfAlertSystem:
         self.alert_engine = AlertEngine()
         self.sms_generator = SMSGenerator()
         self.sms_validator = SMSValidator()
-        self.messagebird_client = MessageBirdClient()
+        self.twilio_client = TwilioClient()
 
         # Zorg dat data directory bestaat
         Path('data').mkdir(parents=True, exist_ok=True)
@@ -85,17 +85,32 @@ class SurfAlertSystem:
 
         run_log = RunLog(
             timestamp=start_time,
-            run_type="manual" if self.dry_run else "scheduled"
+            run_type="manual" if self.dry_run else "scheduled",
+            scores_today_peak=0,
+            scores_tomorrow_peak=0,
+            alert_types_detected=[],
+            windows_total=0,
+            windows_alertworthy=0,
+            decision="skip"
         )
 
         try:
             # Stap 1: Haal data op (parallel)
             logger.info("Fetching data from all sources...")
 
-            openmeteo_data, rws_data = await asyncio.gather(
-                fetch_all_openmeteo_data(NOORDWIJK.lat, NOORDWIJK.lon),
-                fetch_all_rws_data()
-            )
+            # Open-Meteo data opslaan
+            try:
+                openmeteo_data = await fetch_all_openmeteo_data(NOORDWIJK.lat, NOORDWIJK.lon)
+            except Exception as e:
+                logger.error(f"Failed to fetch Open-Meteo data: {e}")
+                openmeteo_data = None
+
+            # RWS data proberen (tijdelijk optioneel)
+            rws_data = None
+            try:
+                rws_data = await fetch_all_rws_data()
+            except Exception as e:
+                logger.warning(f"RWS data unavailable (API transition): {e}")
 
             # Stap 2: Bouw HourStates
             logger.info("Building hour states...")
@@ -263,7 +278,7 @@ class SurfAlertSystem:
 
         # Verstuur SMS (niet in dry run)
         if not self.dry_run:
-            result = self.messagebird_client.send_alert_sms(sms_text)
+            result = self.twilio_client.send_alert_sms(sms_text)
         else:
             result = {'success': True, 'debug_mode': True, 'message': sms_text}
 
@@ -287,7 +302,7 @@ class SurfAlertSystem:
 
         # Verstuur SMS (niet in dry run)
         if not self.dry_run:
-            result = self.messagebird_client.send_digest_sms(sms_text)
+            result = self.twilio_client.send_digest_sms(sms_text)
         else:
             result = {'success': True, 'debug_mode': True, 'message': sms_text}
 

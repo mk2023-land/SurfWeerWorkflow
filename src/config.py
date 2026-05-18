@@ -84,8 +84,10 @@ ALERT_CONFIG = {
     'max_score_drop_in_window': 15,
     'min_rarity_percentile': 70,
     'cooldown_hours_between_alerts': int(os.getenv('COOLDOWN_HOURS', '4')),
-    'max_alerts_per_week': int(os.getenv('MAX_ALERTS_PER_WEEK', '8')),
-    'alerts_enabled': os.getenv('ALERTS_ENABLED', 'false').lower() == 'true'
+    'max_alerts_per_week': int(os.getenv('MAX_ALERTS_PER_WEEK', '8')),  # Geen limiet meer
+    'alerts_enabled': os.getenv('ALERTS_ENABLED', 'false').lower() == 'true',
+    'max_sms_cost_per_month_eur': 5.0,  # Max €5/maand = ~62 SMS
+    'max_anthropic_cost_per_month_eur': 3.0,  # Max €3/maand = ~3000 aanroepen
 }
 
 # Scoring gewichten
