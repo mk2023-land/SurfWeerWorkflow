@@ -33,7 +33,7 @@ from data.models import (
 )
 
 from data.sources.open_meteo import fetch_all_openmeteo_data, OpenMeteoClient
-from data.sources.rws import fetch_all_rws_data, RWSClient
+from data.sources.rws import fetch_all_rws_data, RWSClient, tide_state_at
 
 from scoring.deconstruct import decompose_spectrum
 from scoring.hourly import score_hour, calculate_confidence
@@ -214,6 +214,9 @@ class SurfAlertSystem:
                 logger.warning("Missing marine or forecast data")
                 return []
 
+            tide_data = (rws_data or {}).get('tide') or {}
+            openmeteo_client = OpenMeteoClient()
+
             # Merge marine en forecast data per uur
             for i in range(min(len(marine_data), len(primary_model))):
                 marine = marine_data[i]
@@ -223,24 +226,15 @@ class SurfAlertSystem:
                 if abs((marine['timestamp'] - weather['timestamp']).total_seconds()) > 3600:
                     continue
 
-                # Maak wave spectrum
-                openmeteo_client = OpenMeteoClient()
                 wave_spectrum = openmeteo_client.marine_data_to_wave_spectrum(marine)
 
-                # Maak wind state
                 wind_state = WindState(
                     speed_kn=weather['wind_speed'],
                     direction_deg=int(weather['wind_direction']),
                     gusts_kn=weather['wind_gusts']
                 )
 
-                # Maak tide state (simplificeerd voor nu)
-                tide_state = TideState(
-                    level_m=0.0,  # Placeholder
-                    phase="onbekend",
-                    next_low=datetime.now() + timedelta(hours=6),
-                    next_high=datetime.now() + timedelta(hours=12)
-                )
+                tide_state = tide_state_at(tide_data, marine['timestamp'])
 
                 hour_state = HourState(
                     timestamp=marine['timestamp'],

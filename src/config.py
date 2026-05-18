@@ -33,7 +33,9 @@ NOORDWIJK = LocationConfig(
     blocked_swell_dir_max=0
 )
 
-# Rijkswaterstaat boei definities
+# Rijkswaterstaat boei definities.
+# `code` is de externe label, `rws_code` is de exacte locatiecode in de nieuwe DDAPI20
+# WaterWebservices (zie https://ddapi20-waterwebservices.rijkswaterstaat.nl).
 RWS_STATIONS = {
     'IJG1': {
         'name': 'IJgeul',
@@ -41,7 +43,8 @@ RWS_STATIONS = {
         'lon': 4.050,
         'use_for': ['noordwijk', 'zandvoort', 'scheveningen'],
         'lead_time_hours': 1,
-        'code': 'IJG1'
+        'code': 'IJG1',
+        'rws_code': 'ijgeul.1'
     },
     'A12': {
         'name': 'A12 platform',
@@ -49,7 +52,8 @@ RWS_STATIONS = {
         'lon': 3.817,
         'use_for': ['early_warning_north_swell'],
         'lead_time_hours': 10,
-        'code': 'A12'
+        'code': 'A12',
+        'rws_code': 'a12'
     },
     'K13': {
         'name': 'K13 platform',
@@ -57,7 +61,8 @@ RWS_STATIONS = {
         'lon': 3.217,
         'use_for': ['early_warning_west_north'],
         'lead_time_hours': 4,
-        'code': 'K13'
+        'code': 'K13',
+        'rws_code': 'k13a.1'
     },
     'J6': {
         'name': 'J6 platform',
@@ -65,7 +70,8 @@ RWS_STATIONS = {
         'lon': 2.950,
         'use_for': ['early_warning_north_swell_short'],
         'lead_time_hours': 5,
-        'code': 'J6'
+        'code': 'J6',
+        'rws_code': 'j6'
     },
     'MUN1': {
         'name': 'IJmuiden Munitiestort',
@@ -73,7 +79,8 @@ RWS_STATIONS = {
         'lon': 4.583,
         'use_for': ['wijk_aan_zee'],
         'lead_time_hours': 0,
-        'code': 'MUN1'
+        'code': 'MUN1',
+        'rws_code': 'ijmuiden.munitiestort.1'
     }
 }
 
@@ -106,13 +113,15 @@ WIND_DIRECTIONS = {
     'side_onshore': (315, 360) # NW tot N
 }
 
-# API endpoints
+# API endpoints. RWS migreerde de WaterWebservices in 2026 van
+# waterwebservices.rijkswaterstaat.nl (deprecated, retourneert 301) naar
+# ddapi20-waterwebservices.rijkswaterstaat.nl/ONLINEWAARNEMINGENSERVICES.
 API_ENDPOINTS = {
     'open_meteo_marine': 'https://marine-api.open-meteo.com/v1/marine',
     'open_meteo_forecast': 'https://api.open-meteo.com/v1/forecast',
     'open_meteo_archive': 'https://archive-api.open-meteo.com/v1/archive',
-    'rws_observation': 'https://waterwebservices.rijkswaterstaat.nl/ONLINEWAARNEMINGENSERVICES_DBO/OphalenLaatsteWaarnemingen',
-    'rws_tide': 'https://waterwebservices.rijkswaterstaat.nl/ONLINEWAARNEMINGENSERVICES_DBO/OphalenWaarnemingen'
+    'rws_latest': 'https://ddapi20-waterwebservices.rijkswaterstaat.nl/ONLINEWAARNEMINGENSERVICES/OphalenLaatsteWaarnemingen',
+    'rws_period': 'https://ddapi20-waterwebservices.rijkswaterstaat.nl/ONLINEWAARNEMINGENSERVICES/OphalenWaarnemingen'
 }
 
 # Anthropic configuratie
