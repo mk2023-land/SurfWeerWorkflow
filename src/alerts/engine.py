@@ -3,10 +3,13 @@ Alert engine module.
 Coördineert detectie, besluitvorming, en state management.
 """
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional, Set
+from zoneinfo import ZoneInfo
 import json
 from pathlib import Path
+
+_NL = ZoneInfo('Europe/Amsterdam')
 
 from src.data.models import (
     HourState,
@@ -18,10 +21,7 @@ from src.data.models import (
     ScoreBreakdown
 )
 
-from src.config import (
-    ALERT_CONFIG,
-    DEBUG
-)
+from src.config import ALERT_CONFIG
 
 from .detectors import AlertDetectorEngine
 
@@ -247,24 +247,26 @@ class AlertEngine:
 
     def is_morning_first_run(self) -> bool:
         """
-        Controleer of dit de eerste run van de ochtend is (07:00 NL tijd).
+        True als dit de eerste run van vandaag is in het ochtend-venster (05-10 NL tijd).
 
-        Returns:
-            True als dit de daily digest time is
+        Gebruikt Europe/Amsterdam expliciet — GitHub Actions runners zijn UTC, dus
+        een naive `datetime.now().hour` geeft daar UTC-uren en mist het venster.
+        Het brede 5-10 venster vangt zowel CET-cron (06:15) als CEST-cron (07:15) op.
         """
-        now = datetime.now()
+        now_nl = datetime.now(_NL)
+        if not (5 <= now_nl.hour <= 10):
+            return False
 
-        # Check of dit de eerste run van vandaag is
         if self.state.last_digest_time:
-            last_digest_date = self.state.last_digest_time.date()
-            if last_digest_date == now.date():
-                return False  # Alleen digest gestuurd vandaag
+            last = self.state.last_digest_time
+            if last.tzinfo is None:
+                last = last.replace(tzinfo=timezone.utc)
+            if last.astimezone(_NL).date() == now_nl.date():
+                return False  # vandaag al verstuurd
 
-        # Check tijd (07:00-08:00 NL tijd)
-        hour = now.hour
-        return hour == 7  # 07:00-08:00
+        return True
 
     def record_digest_sent(self):
-        """Registreer dat een digest is verstuurd."""
-        self.state.last_digest_time = datetime.now()
+        """Registreer dat een digest is verstuurd (tz-aware, UTC)."""
+        self.state.last_digest_time = datetime.now(timezone.utc)
         self._save_state()

@@ -47,12 +47,17 @@ python main.py --dry-run
 ### GitHub Actions setup
 
 1. **Repository aanmaken** (private aanbevolen)
-2. **GitHub Secrets configureren**:
+2. **GitHub Secrets configureren** (Settings → Secrets and variables → Actions → New repository secret):
    - `ANTHROPIC_API_KEY`: Anthropic API key (voor Claude Haiku)
-   - `MESSAGEBIRD_API_KEY`: MessageBird API key
-   - `MESSAGEBIRD_ORIGINATOR`: Afzender naam (bijv. "SurfAlert")
-   - `RECIPIENT_PHONE_NUMBER`: Jouw telefoonnummer (+31612345678)
-   - `ALERTS_ENABLED`: `true` om alerts aan te zetten, `false` voor digest only
+   - `TWILIO_ACCOUNT_SID`: Twilio Account SID (begint met `AC...`)
+   - `TWILIO_AUTH_TOKEN`: Twilio Auth Token
+   - `TWILIO_PHONE_NUMBER`: Twilio afzender-nummer (`+1...`)
+   - `RECIPIENT_PHONE_NUMBER`: Jouw telefoonnummer (`+31612345678`)
+
+   **Variables** (Settings → Variables) — optioneel, hebben sensible defaults:
+   - `ALERTS_ENABLED`: `true` (default) of `false` voor alleen daily digest
+   - `COOLDOWN_HOURS`: `4` (default) — minimaal aantal uren tussen alerts
+   - `MAX_ALERTS_PER_WEEK`: `8` (default)
 
 3. **Workflows activeren**:
    - `check.yml`: Draait automatisch 4x per dag
@@ -104,15 +109,17 @@ tests/
 3. Genereer API key
 4. Sla op als GitHub Secret: `ANTHROPIC_API_KEY`
 
-### MessageBird SMS
+### Twilio SMS
 
-1. Ga naar https://www.messagebird.com/en-gb/sign-up
-2. Maak account aan
-3. Genereer API key
-4. Configureer originator (bijv. "SurfAlert")
-5. Sla op als GitHub Secrets:
-   - `MESSAGEBIRD_API_KEY`
-   - `MESSAGEBIRD_ORIGINATOR`
+1. Maak een Twilio account aan op https://www.twilio.com/try-twilio
+2. Activeer een phone number (Twilio console → Phone Numbers → Manage → Buy a number)
+3. Noteer Account SID, Auth Token (console homepage) en het Twilio phone number
+4. Sla op als GitHub Secrets:
+   - `TWILIO_ACCOUNT_SID`
+   - `TWILIO_AUTH_TOKEN`
+   - `TWILIO_PHONE_NUMBER`
+
+Lokaal staan dezelfde waardes in `.env` (zie `.env.example` als template).
 
 ### Telefoonnummer
 
@@ -258,11 +265,11 @@ Nwijk wo 09-10: vandaag 82, morgen 28. Cam: surfweer.nl/webcams/noordwijk/
 
 | Service | Kosten |
 |---------|--------|
-| MessageBird | ~€0.08/SMS (~€0.65/week bij 8 SMS) |
+| Twilio SMS | ~€0.07-0.09/SMS NL (~€0.50-0.65/week bij 7-8 SMS) |
 | Anthropic Haiku | ~€0.001/SMS (verwaarloosbaar) |
 | Open-Meteo | Gratis |
-| Rijkswaterstaat | Gratis |
-| GitHub Actions | Gratis (publiek repo) |
+| Rijkswaterstaat WaterWebservices | Gratis |
+| GitHub Actions | Gratis (publiek repo, 2000 min/maand privé) |
 
 ## 🤝 Bijdragen
 

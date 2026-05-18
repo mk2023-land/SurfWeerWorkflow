@@ -6,7 +6,7 @@ import logging
 from typing import Dict, Optional
 import anthropic
 
-from src.config import ANTHROPIC_CONFIG, DEBUG
+from src.config import ANTHROPIC_CONFIG
 from src.data.models import AlertCandidate, Decision, ScoreBreakdown
 
 logger = logging.getLogger(__name__)

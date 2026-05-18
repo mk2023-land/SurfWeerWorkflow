@@ -2,82 +2,73 @@ name: Surf Alert Check
 
 on:
   schedule:
-    # Run 4x per dag NL tijd: 06:15, 12:15, 18:15, 00:15
-    # UTC = NL tijd - 1 uur (in winter) of - 2 uur (in zomer)
-    # We gebruiken UTC tijden die overeenkomen met NL tijd in beide seizoenen
-    - cron: '15 5,11,17,23 * * *'  # 06:15, 12:15, 18:15, 00:15 NL tijd (winter)
-  workflow_dispatch:  # Handmatige trigger
+    # 4x per dag. UTC tijden — in CEST (zomer) = +2u, in CET (winter) = +1u.
+    # Doel: ochtend-run rond 6-8 NL (digest-venster), middag, avond, nacht.
+    - cron: '15 5,11,17,23 * * *'
+  workflow_dispatch:
 
 jobs:
   check-surf-conditions:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10'
-        cache: 'pip'
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-    - name: Create data directory
-      run: mkdir -p data
+      - name: Restore persistent state cache
+        uses: actions/cache@v4
+        with:
+          path: data/state.json
+          key: surf-state-${{ github.run_id }}
+          restore-keys: |
+            surf-state-
 
-    - name: Load state from cache
-      uses: actions/cache@v3
-      with:
-        path: data/state.json
-        key: surf-state-${{ github.run_id }}
-        restore-keys: |
-          surf-state-
+      - name: Restore seasonal baseline cache
+        uses: actions/cache@v4
+        with:
+          path: data/seasonal_baseline.json
+          key: surf-baseline-${{ github.run_id }}
+          restore-keys: |
+            surf-baseline-
 
-    - name: Load baseline from cache
-      uses: actions/cache@v3
-      with:
-        path: data/seasonal_baseline.json
-        key: surf-baseline
-        restore-keys: |
-          surf-baseline-
+      - name: Run surf alert check
+        env:
+          ANTHROPIC_API_KEY:      ${{ secrets.ANTHROPIC_API_KEY }}
+          TWILIO_ACCOUNT_SID:     ${{ secrets.TWILIO_ACCOUNT_SID }}
+          TWILIO_AUTH_TOKEN:      ${{ secrets.TWILIO_AUTH_TOKEN }}
+          TWILIO_PHONE_NUMBER:    ${{ secrets.TWILIO_PHONE_NUMBER }}
+          RECIPIENT_PHONE_NUMBER: ${{ secrets.RECIPIENT_PHONE_NUMBER }}
+          ALERTS_ENABLED:         ${{ vars.ALERTS_ENABLED || 'true' }}
+          COOLDOWN_HOURS:         ${{ vars.COOLDOWN_HOURS || '4' }}
+          MAX_ALERTS_PER_WEEK:    ${{ vars.MAX_ALERTS_PER_WEEK || '8' }}
+          DEBUG: 'false'
+        run: |
+          mkdir -p data
+          python src/main.py
 
-    - name: Run surf alert check
-      env:
-        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        MESSAGEBIRD_API_KEY: ${{ secrets.MESSAGEBIRD_API_KEY }}
-        MESSAGEBIRD_ORIGINATOR: ${{ secrets.MESSAGEBIRD_ORIGINATOR }}
-        RECIPIENT_PHONE_NUMBER: ${{ secrets.RECIPIENT_PHONE_NUMBER }}
-        ALERTS_ENABLED: ${{ secrets.ALERTS_ENABLED || 'false' }}
-      run: |
-        cd src
-        python main.py
+      - name: Upload forecasts log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: forecasts-log-${{ github.run_id }}
+          path: data/forecasts_log.jsonl
+          retention-days: 90
 
-    - name: Upload state to cache
-      uses: actions/cache/save@v3
-      with:
-        path: data/state.json
-        key: surf-state-${{ github.run_id }}
-
-    - name: Upload forecasts log
-      uses: actions/upload-artifact@v3
-      with:
-        name: forecasts-log
-        path: data/forecasts_log.jsonl
-        retention-days: 90
-
-    - name: Upload surf alert log
-      uses: actions/upload-artifact@v3
-      with:
-        name: surf-alert-log
-        path: data/surf_alert.log
-        retention-days: 30
-
-    - name: Notify on failure
-      if: failure()
-      run: |
-        echo "Surf alert check failed. Check logs for details."
+      - name: Upload surf alert log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surf-alert-log-${{ github.run_id }}
+          path: data/surf_alert.log
+          retention-days: 30
