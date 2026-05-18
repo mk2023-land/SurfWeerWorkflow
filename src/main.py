@@ -173,7 +173,7 @@ class SurfAlertSystem:
 
             elif decision.send_digest:
                 logger.info("Generating and sending digest SMS...")
-                sms_result = self._handle_digest(hourly_scores)
+                sms_result = self._handle_digest(hour_states, hourly_scores, windows)
                 run_log.sms_sent = format_sms_for_logging(sms_result)
                 run_log.llm_used = True
                 self.alert_engine.record_digest_sent()
@@ -278,28 +278,32 @@ class SurfAlertSystem:
 
         return result
 
-    def _handle_digest(self, hourly_scores: List[ScoreBreakdown]) -> dict:
+    def _handle_digest(
+        self,
+        hour_states: List[HourState],
+        hourly_scores: List[ScoreBreakdown],
+        windows: List[SurfWindow],
+    ) -> dict:
         """Genereer en verstuur digest SMS."""
-        # Genereer SMS
         forecast_summary = {
             'total_hours': len(hourly_scores),
             'surfable_hours': len([s for s in hourly_scores if s.is_surfable()])
         }
 
-        sms_text = self.sms_generator.generate_digest_sms(hourly_scores, forecast_summary)
+        sms_text = self.sms_generator.generate_digest_sms(
+            hour_states, hourly_scores, windows, forecast_summary
+        )
 
-        # Valideer SMS
-        validation_result = self.sms_validator.validate_digest_format(sms_text)
+        # Valideer (zelfde behandeling als alerts): bij falen → deterministische fallback.
+        format_ok = self.sms_validator.validate_digest_format(sms_text)
+        if not format_ok:
+            logger.warning(f"Digest format validation failed: {format_ok.issues}, using fallback template")
+            sms_text = self.sms_generator._fallback_digest_template(hour_states, hourly_scores, windows)
 
-        if not validation_result:
-            logger.warning(f"Digest format validation failed: {validation_result.issues}")
-
-        # Verstuur SMS (niet in dry run)
         if not self.dry_run:
             result = self.twilio_client.send_digest_sms(sms_text)
         else:
             result = {'success': True, 'debug_mode': True, 'message': sms_text}
-
         return result
 
     def _update_run_log(

@@ -21,7 +21,9 @@ from src.data.sources.open_meteo import fetch_all_openmeteo_data, OpenMeteoClien
 from src.data.sources.rws import fetch_all_rws_data, tide_state_at
 from src.data.models import HourState, WindState
 from src.scoring.hourly import score_hour
+from src.scoring.windows import analyze_windows
 from src.llm.generator import SMSGenerator
+from src.llm.validator import SMSValidator
 from src.sms.twilio import TwilioClient
 
 
@@ -64,17 +66,26 @@ async def main() -> int:
         ))
 
     scores = [score_hour(s) for s in hour_states]
+    windows = analyze_windows(scores)
     peak_today = max((s.total_score for s in scores[:24]), default=0)
     peak_tomorrow = max((s.total_score for s in scores[24:48]), default=0)
-    print(f"→ Peak vandaag: {peak_today}, peak morgen: {peak_tomorrow}")
+    print(f"→ Peak vandaag: {peak_today}, peak morgen: {peak_tomorrow}, windows: {len(windows)}")
 
     print("→ Tekst genereren via Claude Haiku...")
     generator = SMSGenerator()
+    validator = SMSValidator()
     summary = {
         'total_hours': len(scores),
         'surfable_hours': sum(1 for s in scores if s.is_surfable()),
     }
-    sms_text = generator.generate_digest_sms(scores, summary)
+    sms_text = generator.generate_digest_sms(hour_states, scores, windows, summary)
+
+    # Zelfde fallback-behandeling als main.py
+    format_ok = validator.validate_digest_format(sms_text)
+    if not format_ok:
+        print(f"⚠ Format-validatie faalde ({format_ok.issues}), fallback template gebruikt.")
+        sms_text = generator._fallback_digest_template(hour_states, scores, windows)
+
     print(f"→ Bericht ({len(sms_text)} tekens):")
     print("  " + sms_text.replace("\n", "\n  "))
 
