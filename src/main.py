@@ -105,10 +105,10 @@ class SurfAlertSystem:
                 logger.error(f"Failed to fetch Open-Meteo data: {e}")
                 openmeteo_data = None
 
-            # RWS data proberen (tijdelijk optioneel)
-            rws_data = None
+            # RWS data proberen (tijdelijk optioneel — API is verhuisd)
+            rws_data = {}
             try:
-                rws_data = await fetch_all_rws_data()
+                rws_data = await fetch_all_rws_data() or {}
             except Exception as e:
                 logger.warning(f"RWS data unavailable (API transition): {e}")
 

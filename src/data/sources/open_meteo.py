@@ -124,55 +124,15 @@ class OpenMeteoClient:
         hours: int = 168
     ) -> Dict[str, List[Dict[str, Any]]]:
         """
-        Haal forecast data op met meerdere modellen.
-
-        Args:
-            models: Lijst van model namen (knmi_seamless, ecmwf_ifs025, gfs_seamless, ukmo_global_deterministic)
+        Haal forecast data op (wind, temperatuur, neerslag) van Open-Meteo.
 
         Returns:
-            Dictionary met model naam als key en lijst van uurlijkse data als value
+            Dictionary met 'knmi_seamless' als key en lijst van uurlijkse data als value.
         """
         if lat is None:
             lat = NOORDWIJK.lat
         if lon is None:
             lon = NOORDWIJK.lon
-
-        if models is None:
-            models = []  # Geen models, gebruikt default
-
-        params = {
-            'latitude': lat,
-            'longitude': lon,
-            'hourly': ','.join([
-                'wind_speed_10m',
-                'wind_direction_10m',
-                'wind_gusts_10m',
-                'temperature_2m',
-                'precipitation',
-                'pressure_msl',
-                'cloud_cover'
-            ]),
-            'wind_speed_unit': 'kn',
-            'timezone': TIMEZONE,
-            'forecast_days': min(16, hours // 24 + 1),
-            'models': ','.join(models)
-        }
-        """
-        Haal forecast data op met meerdere modellen.
-
-        Args:
-            models: Lijst van model namen (knmi_seamless, ecmwf_ifs025, gfs_seamless, ukmo_global_deterministic)
-
-        Returns:
-            Dictionary met model naam als key en lijst van uurlijkse data als value
-        """
-        if lat is None:
-            lat = NOORDWIJK.lat
-        if lon is None:
-            lon = NOORDWIJK.lon
-
-        if models is None:
-            models = ['knmi_harmonie', 'ecmwf_ifs025']
 
         params = {
             'latitude': lat,
@@ -191,15 +151,9 @@ class OpenMeteoClient:
             'forecast_days': min(16, hours // 24 + 1)
         }
 
-        # Voeg models toe als array parameter (meerdere keren dezelfde param)
-        for model in models:
-            params['models'] = model
-
-        logger.info(f"Fetching forecast data (default model)")
+        logger.info(f"Fetching forecast data from Open-Meteo for {lat}, {lon}")
         data = await self._request_with_retry(self.base_url, params)
 
-        # Parse response (single model, default)
-        result = {}
         hourly = data.get('hourly', {})
         times = hourly.get('time', [])
 
@@ -215,10 +169,9 @@ class OpenMeteoClient:
                 'pressure': hourly.get('pressure_msl', [])[i],
                 'cloud_cover': hourly.get('cloud_cover', [])[i]
             })
-        result['default'] = model_result
-        logger.info(f"Retrieved {len(model_result)} hours of forecast data")
 
-        return result
+        logger.info(f"Retrieved {len(model_result)} hours of forecast data")
+        return {'knmi_seamless': model_result}
 
     async def fetch_archive_data(
         self,
@@ -322,25 +275,26 @@ class OpenMeteoClient:
         """
         timestamp = marine_data['timestamp']
 
-        # Maak spectrale pieken voor wind sea en swell
+        def _num(key: str) -> float:
+            """Coerce None / missing → 0.0 (Open-Meteo returns null voor lege uren)."""
+            return marine_data.get(key) or 0.0
+
         peaks = []
 
-        # Wind sea piek (indien aanwezig)
-        if marine_data.get('wind_wave_height', 0) > 0.1:
-            wind_sea_peak = SpectralPeak(
-                frequency_mhz=1000 / marine_data['wind_wave_period'],
-                period_s=marine_data['wind_wave_period'],
-                height_m=marine_data['wind_wave_height'],
-                direction_deg=int(marine_data['wind_wave_direction']),
+        wind_wave_height = _num('wind_wave_height')
+        wind_wave_period = _num('wind_wave_period')
+        if wind_wave_height > 0.1 and wind_wave_period > 0:
+            peaks.append(SpectralPeak(
+                frequency_mhz=1000 / wind_wave_period,
+                period_s=wind_wave_period,
+                height_m=wind_wave_height,
+                direction_deg=int(_num('wind_wave_direction')),
                 type=SwellType.WIND_SEA
-            )
-            peaks.append(wind_sea_peak)
+            ))
 
-        # Swell piek (indien aanwezig)
-        if marine_data.get('swell_wave_height', 0) > 0.1:
-            swell_period = marine_data['swell_wave_period']
-
-            # Classificeer swell type
+        swell_height = _num('swell_wave_height')
+        swell_period = _num('swell_wave_period')
+        if swell_height > 0.1 and swell_period > 0:
             if swell_period >= 9:
                 swell_type = SwellType.GROUND_SWELL
             elif swell_period >= 7:
@@ -348,31 +302,30 @@ class OpenMeteoClient:
             else:
                 swell_type = SwellType.WIND_SEA
 
-            swell_peak = SpectralPeak(
+            peaks.append(SpectralPeak(
                 frequency_mhz=1000 / swell_period,
                 period_s=swell_period,
-                height_m=marine_data['swell_wave_height'],
-                direction_deg=int(marine_data['swell_wave_direction']),
+                height_m=swell_height,
+                direction_deg=int(_num('swell_wave_direction')),
                 type=swell_type
-            )
-            peaks.append(swell_peak)
+            ))
 
-        # Als geen pieken, maak dummy piek op basis van totaal
-        if not peaks and marine_data.get('wave_height', 0) > 0:
-            total_peak = SpectralPeak(
-                frequency_mhz=1000 / marine_data['wave_period'],
-                period_s=marine_data['wave_period'],
-                height_m=marine_data['wave_height'],
-                direction_deg=int(marine_data['wave_direction']),
-                type=SwellType.WIND_SEA  # Default
-            )
-            peaks.append(total_peak)
+        wave_height = _num('wave_height')
+        wave_period = _num('wave_period')
+        if not peaks and wave_height > 0 and wave_period > 0:
+            peaks.append(SpectralPeak(
+                frequency_mhz=1000 / wave_period,
+                period_s=wave_period,
+                height_m=wave_height,
+                direction_deg=int(_num('wave_direction')),
+                type=SwellType.WIND_SEA
+            ))
 
         return WaveSpectrum(
             timestamp=timestamp,
-            significant_height_total=marine_data.get('wave_height', 0.0),
-            mean_period=marine_data.get('wave_period', 0.0),
-            mean_direction=int(marine_data.get('wave_direction', 0.0)),
+            significant_height_total=wave_height,
+            mean_period=wave_period,
+            mean_direction=int(_num('wave_direction')),
             peaks=peaks
         )
 
