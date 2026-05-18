@@ -7,8 +7,6 @@ from typing import Optional
 from twilio.rest import Client
 from twilio.base.exceptions import TwilioRestException
 
-from src.config import DEBUG
-
 logger = logging.getLogger(__name__)
 
 
@@ -105,51 +103,13 @@ class TwilioClient:
             }
 
     def send_alert_sms(self, message: str, recipient: str = None) -> dict:
-        """
-        Verstuurt alert SMS.
-
-        Args:
-            message: Alert SMS tekst
-            recipient: Ontvanger telefoonnummer (optioneel)
-
-        Returns:
-            Dictionary met success status en details
-        """
+        """Verstuurt alert SMS. Dry-run wordt door main.py `--dry-run` afgevangen."""
         logger.info(f"Sending alert SMS to {recipient or self.to_number}")
-
-        # In debug mode: log alleen, verzend niet
-        if DEBUG:
-            logger.info(f"DEBUG MODE: Would send SMS: {message}")
-            return {
-                'success': True,
-                'debug_mode': True,
-                'message': message
-            }
-
         return self.send_sms(message, recipient)
 
     def send_digest_sms(self, message: str, recipient: str = None) -> dict:
-        """
-        Verstuurt digest SMS.
-
-        Args:
-            message: Digest SMS tekst
-            recipient: Ontvanger telefoonnummer (optioneel)
-
-        Returns:
-            Dictionary met success status en details
-        """
+        """Verstuurt digest SMS. Dry-run wordt door main.py `--dry-run` afgevangen."""
         logger.info(f"Sending digest SMS to {recipient or self.to_number}")
-
-        # In debug mode: log alleen, verzend niet
-        if DEBUG:
-            logger.info(f"DEBUG MODE: Would send SMS: {message}")
-            return {
-                'success': True,
-                'debug_mode': True,
-                'message': message
-            }
-
         return self.send_sms(message, recipient)
 
     def check_balance(self) -> Optional[dict]:

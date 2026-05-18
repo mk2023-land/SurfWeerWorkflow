@@ -1,49 +1,48 @@
 name: Rebuild Seasonal Baseline
 
 on:
-  workflow_dispatch:  # Handmatige trigger
+  workflow_dispatch:
   schedule:
-    # Jaarlijks op 1 januari om 03:00 NL tijd
-    - cron: '0 2 1 1 *'  # 03:00 NL tijd (winter UTC+1)
+    # Jaarlijks op 1 januari om 02:00 UTC (~03:00 NL CET).
+    - cron: '0 2 1 1 *'
 
 jobs:
   rebuild-baseline:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10'
-        cache: 'pip'
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-    - name: Create data directory
-      run: mkdir -p data
+      - name: Rebuild seasonal baseline
+        run: |
+          mkdir -p data
+          python src/baseline/seasonal.py
 
-    - name: Rebuild seasonal baseline
-      run: |
-        cd src
-        python baseline/seasonal.py
+      - name: Upload baseline artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: seasonal-baseline
+          path: data/seasonal_baseline.json
+          retention-days: 365
 
-    - name: Upload baseline artifact
-      uses: actions/upload-artifact@v3
-      with:
-        name: seasonal-baseline
-        path: data/seasonal_baseline.json
-        retention-days: 365
-
-    - name: Commit new baseline
-      run: |
-        git config user.name "GitHub Actions"
-        git config user.email "actions@github.com"
-        git add data/seasonal_baseline.json
-        git diff --staged --quiet || git commit -m "Update seasonal baseline $(date +'%Y-%m-%d')"
-        git push
+      - name: Commit new baseline
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add data/seasonal_baseline.json
+          git diff --staged --quiet || git commit -m "Update seasonal baseline $(date +'%Y-%m-%d')"
+          git push

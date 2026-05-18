@@ -13,7 +13,6 @@ from src.config import (
     API_ENDPOINTS,
     NOORDWIJK,
     TIMEZONE,
-    DEBUG
 )
 
 logger = logging.getLogger(__name__)
