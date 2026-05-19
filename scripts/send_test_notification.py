@@ -1,13 +1,16 @@
 """
-One-shot test: stuur een echte digest-notificatie (ntfy / email / SMS) met de
-huidige Noordwijk-forecast. Loopt buiten het morning-digest-venster om.
+One-shot test: bouw een digest-bericht voor Noordwijk en (optioneel) verzend
+het. STANDAARD wordt het bericht alleen geprint — gebruik --send om écht
+naar de notifier te pushen, zodat je eerst kunt benchmarken.
 
 Backend wordt bepaald door $NOTIFIER (default 'ntfy'):
   - 'ntfy'   → NTFY_TOPIC moet gezet zijn
   - 'email'  → SMTP_USER + SMTP_PASSWORD + RECIPIENT_EMAIL
   - 'twilio' → TWILIO_* + RECIPIENT_PHONE_NUMBER
 
-Gebruik:   python scripts/send_test_notification.py
+Gebruik:
+    python scripts/send_test_notification.py            # dry-run, print alleen
+    python scripts/send_test_notification.py --send     # daadwerkelijk verzenden
 """
 import asyncio
 import sys
@@ -75,14 +78,44 @@ async def main() -> int:
     val = SMSValidator()
     summary = {'total_hours': len(scores),
                'surfable_hours': sum(1 for s in scores if s.is_surfable())}
-    text = gen.generate_digest_sms(states, scores, windows, summary)
+    # Build input expliciet zodat we het ook door de contextuele validator kunnen halen
+    structured_input = gen._prepare_digest_input(states, scores, windows, summary)
+    text = gen._call_claude(structured_input) if gen.client else None
+    if text:
+        print(f"→ LLM-output ({len(text)} tekens):")
+        print("  " + text.replace("\n", "\n  "))
 
-    if not val.validate_digest_format(text):
-        print("⚠ Format-validatie faalde, fallback template gebruikt.")
+    # Drie validaties: (1) basis format, (2) full contextual (anti-hallucinatie),
+    # (3) fallback als één faalt.
+    used_fallback = False
+    if not text:
+        used_fallback = True
+        print("⚠ Geen LLM-output, fallback template gebruikt.")
+    elif not val.validate_digest_format(text):
+        used_fallback = True
+        print(f"⚠ Format-validatie faalde, fallback gebruikt.")
+    else:
+        full_result = val.validate_sms(text, structured_input)
+        if not full_result.passed:
+            used_fallback = True
+            print(f"⚠ Contextuele validatie faalde ({len(full_result.issues)} issues):")
+            for issue in full_result.issues:
+                print(f"   - {issue}")
+            print("→ Fallback template gebruikt.")
+        else:
+            print(f"✓ Validatie geslaagd (geen hallucinaties gedetecteerd)")
+
+    if used_fallback:
         text = gen._fallback_digest_template(states, scores, windows)
 
     print(f"→ Bericht ({len(text)} tekens):")
     print("  " + text.replace("\n", "\n  "))
+
+    send_flag = '--send' in sys.argv
+    if not send_flag:
+        print()
+        print("→ DRY-RUN — bericht NIET verzonden. Gebruik --send om te pushen.")
+        return 0
 
     notifier = get_notifier()
     print(f"→ Versturen via {notifier.channel}...")

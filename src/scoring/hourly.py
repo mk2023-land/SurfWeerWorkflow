@@ -20,8 +20,98 @@ from src.data.models import (
 from src.config import (
     NOORDWIJK,
     SCORING_WEIGHTS,
-    WIND_DIRECTIONS
+    SURF_MINIMUMS,
+    WIND_DIRECTIONS,
 )
+
+
+def _wind_direction_cosine(wind_dir_deg: int, beach_normal_deg: int) -> float:
+    """
+    Cosinus van de hoek tussen de wind-richting en de pure offshore-richting.
+
+    Pure offshore = anti-beach-normal (beach faces 285° → offshore wind FROM 105°).
+    Return value: +1.0 = pure offshore, 0.0 = pure cross-shore, −1.0 = pure onshore.
+
+    Dit vervangt de oude 4-bucket aanpak (offshore/side-offshore/onshore) met een
+    continu signaal dat geen kunstmatige sprongen rond 225°/315° heeft.
+    """
+    offshore_dir = (beach_normal_deg + 180) % 360
+    delta_raw = (wind_dir_deg - offshore_dir) % 360
+    delta = delta_raw if delta_raw <= 180 else 360 - delta_raw
+    return math.cos(math.radians(delta))
+
+
+def recommend_boards(
+    hs_m: float,
+    tp_s: float,
+    wind_speed_kn: float,
+    wind_direction_deg: int,
+    beach_normal_deg: int = None,
+) -> list:
+    """
+    Geef terug welke board-types op dit moment surfbaar zijn.
+
+    Returns: subset van ['longboard', 'midlength', 'fish', 'shortboard'].
+    Lege lijst = niet surfbaar (te klein, te korte periode, of stormwind).
+
+    Categorisering (NL-context, ervaring + referentie-forecaster' lexicon):
+
+    - **Longboard** (8'-10'+): drijfvermogen vangt elke knietjeshoge golf.
+      Min Hs 0.30m. Tolereert chop en aanlandige wind redelijk.
+
+    - **Midlength** (6'8"-7'10"): brug tussen long en short, iets minder
+      forgiving dan longboard. Min Hs 0.40m.
+
+    - **Fish** (5'4"-6'2" breed): houdt van punchy wind-sea, snel paddel.
+      Heeft wat power nodig — min Hs 0.50m. Begint te falen bij >25kn wind.
+
+    - **Shortboard** (5'8"-6'4" thruster): wil clean face, voldoende energie.
+      Min Hs 1.00m, Tp ≥ 5s. Sterke aanlandige wind (cos ≤ -0.5, >12kn)
+      maakt shortboard frustrerend onmogelijk; longboard kan dan nog wel.
+
+    Hard floor: Hs < 0.30m OF Tp < 4.0s OF wind > 28kn = niets.
+    """
+    from src.config import SURF_MINIMUMS
+
+    if hs_m < SURF_MINIMUMS['min_hs_m']:
+        return []
+    if tp_s < SURF_MINIMUMS['min_period_s']:
+        return []
+    if wind_speed_kn > 28:
+        return []  # storm-wind, alles plat
+
+    if beach_normal_deg is None:
+        beach_normal_deg = NOORDWIJK.beach_normal_deg
+
+    cos_offshore = _wind_direction_cosine(wind_direction_deg, beach_normal_deg)
+
+    boards = []
+
+    # Longboard: laagste lat. Pakt knietjeshoge golven, drijfvermogen wint.
+    if hs_m >= SURF_MINIMUMS['min_hs_longboard_m']:
+        boards.append('longboard')
+
+    # Midlength: iets meer hoogte nodig dan longboard.
+    if hs_m >= SURF_MINIMUMS['min_hs_midlength_m']:
+        boards.append('midlength')
+
+    # Fish: wil echte energie + niet té veel wind (anders gewoon rommel).
+    if hs_m >= SURF_MINIMUMS['min_hs_fish_m'] and wind_speed_kn < 25:
+        boards.append('fish')
+
+    # Shortboard: strenge criteria — moet écht werken.
+    # Min hoogte 1.0m, min periode 5s, EN clean face (geen significante onshore).
+    # cos > -0.3 = max side-onshore acceptabel. Pure cross-shore (cos=0) of meer
+    # offshore is prima; alles wat 30%+ onshore is, ruïneert de wave face voor
+    # shortboard maar laat longboard wel werken.
+    # Uitzondering: lichte wind (≤10kn) kan zelfs bij onshore nog shortboard
+    # toelaten omdat de chop minimaal is.
+    if (hs_m >= SURF_MINIMUMS['min_hs_shortboard_m']
+            and tp_s >= SURF_MINIMUMS['min_period_shortboard_s']):
+        if cos_offshore > -0.3 or wind_speed_kn <= 10:
+            boards.append('shortboard')
+
+    return boards
 
 from src.scoring.deconstruct import (
     decompose_spectrum,
@@ -33,17 +123,55 @@ from src.scoring.daylight import is_daylight_noordwijk
 logger = logging.getLogger(__name__)
 
 
+def _period_factor(period_s: float) -> float:
+    """
+    Continue periode-multiplier voor golf-score.
+
+    Vervangt de oude binaire type_multiplier (0.8/1.0/1.2 op basis van
+    SwellType bucket). referentie-forecaster' eigen uitleg: "vanaf 5s wordt het pas een
+    beetje surfbaar; ideaal is 6,5-7s omdat dan niet te veel energie
+    verloren gaat over de zandbanken". Voor groundswell (≥9s) extra premium.
+
+    Curve:
+      <4s    : 0.60  (te kort, choppy/onsurfbaar)
+      4-5s   : 0.60 → 0.75 (wind sea)
+      5-6s   : 0.75 → 0.85
+      6-7s   : 0.85 → 1.00 (NL sweet spot wind-swell)
+      7-9s   : 1.00 → 1.15 (kwaliteits-windswell)
+      9-13s  : 1.15 (groundswell plateau)
+      13-17s : 1.15 → 0.95 (te lang, beachbreak closeout)
+      >17s   : 0.90
+    """
+    T = period_s
+    if T < 4:
+        return 0.60
+    if T < 5:
+        return 0.60 + (T - 4) * 0.15
+    if T < 6:
+        return 0.75 + (T - 5) * 0.10
+    if T < 7:
+        return 0.85 + (T - 6) * 0.15
+    if T < 9:
+        return 1.00 + (T - 7) * 0.075
+    if T < 13:
+        return 1.15
+    if T < 17:
+        return 1.15 - (T - 13) * 0.05
+    return 0.90
+
+
 def score_golf_component(wave_spectrum: WaveSpectrum) -> float:
     """
-    Bereken golf score (max 40 punten).
+    Bereken golf score (max SCORING_WEIGHTS['golf_max']).
 
     Factoren:
     - Totale hoogte (0-1.0m = 0-20pt, 1.0-2.0m = 20-40pt, >2.0m = 40pt)
-    - Swell type (groundswell = 1.2x multiplier, wind swell = 1.0x, wind sea = 0.8x)
+    - Periode-factor (continue curve, optimum 7-13s — zie `_period_factor`)
     - Groundswell door wind sea bonus (+1pt)
     - Clean swell bonus (+1pt)
 
-    Bonussen zijn klein zodat een 1.4m golf niet aan dezelfde cap zit als een 2m+ golf.
+    Periode komt uit de dominante (hoogste) spectrale piek; bij geen pieken
+    gebruiken we de Tm02 mean_period uit het spectrum.
     """
     decomposition = decompose_spectrum(wave_spectrum)
     total_height = decomposition['total_height']
@@ -57,14 +185,14 @@ def score_golf_component(wave_spectrum: WaveSpectrum) -> float:
     else:
         height_score = 40
 
-    if decomposition['ground_swell']:
-        type_multiplier = 1.2
-    elif decomposition['wind_swell']:
-        type_multiplier = 1.0
+    # Periode uit dominante piek; fallback mean_period
+    if wave_spectrum.peaks:
+        dominant = max(wave_spectrum.peaks, key=lambda p: p.height_m)
+        T = dominant.period_s
     else:
-        type_multiplier = 0.8
+        T = wave_spectrum.mean_period or 5.0
 
-    height_score *= type_multiplier
+    height_score *= _period_factor(T)
 
     if has_groundswell_through_windsea(wave_spectrum):
         height_score += 1
@@ -77,34 +205,43 @@ def score_golf_component(wave_spectrum: WaveSpectrum) -> float:
 
 def score_wind_component(wind_speed_kn: float, wind_direction_deg: int) -> float:
     """
-    Bereken wind score (max 35 punten).
+    Bereken wind score (max SCORING_WEIGHTS['wind_max'], default 32).
 
-    Factoren:
-    - Snelheid (0-5kn = 35pt, 5-10kn = 30-25pt, 10-15kn = 25-10pt, >15kn = 10-0pt)
-    - Richting (offshore = 1.2x, side-offshore = 1.0x, onshore = 0.5x)
+    Speed + direction worden ADDITIEF gecombineerd, niet multiplicatief.
+    Oude versie was te punitief op 15-22 kn (cruciaal NL-bereik):
+    een 17 kn ZW wind kreeg score 3 en filterde referentie-forecaster' longboard-windows weg.
+
+    Speed-score (max 25, monotoon dalend):
+      0-8 kn   : 25      (sweet spot offshore én onshore)
+      8-15 kn  : 25 → 17 (toenemend chop)
+      15-22 kn : 17 → 8  (rideable, longboard-territorium NL)
+      22-30 kn : 8 → 0   (stormwind, surf-onvriendelijk)
+
+    Direction-bonus (additief, ±7):
+      pure offshore : +7
+      pure cross    : 0
+      pure onshore  : -7
+      Continu via cosinus, geen sprongen.
+
+    Totaal wordt geclamped op [0, wind_max].
     """
-    # Score op snelheid (lager is beter)
-    if wind_speed_kn <= 5:
-        speed_score = 35
-    elif wind_speed_kn <= 10:
-        speed_score = 30 - (wind_speed_kn - 5) * 1.0  # 30-25pt
+    # Speed-score in segmenten — monotoon dalend, gladde overgangen
+    if wind_speed_kn <= 8:
+        speed_score = 25.0
     elif wind_speed_kn <= 15:
-        speed_score = 25 - (wind_speed_kn - 10) * 3.0  # 25-10pt
+        speed_score = 25.0 - (wind_speed_kn - 8) * (8.0 / 7.0)       # 25 → 17
+    elif wind_speed_kn <= 22:
+        speed_score = 17.0 - (wind_speed_kn - 15) * (9.0 / 7.0)      # 17 → 8
+    elif wind_speed_kn <= 30:
+        speed_score = max(0.0, 8.0 - (wind_speed_kn - 22) * (8.0 / 8.0))  # 8 → 0
     else:
-        speed_score = max(0, 10 - (wind_speed_kn - 15) * 2.0)  # 10-0pt
+        speed_score = 0.0
 
-    # Richting multiplier. Side-offshore is cross-shore, niet vergelijkbaar met
-    # echte offshore — daarom 0.73 ipv 1.0.
-    if WIND_DIRECTIONS['offshore'][0] <= wind_direction_deg <= WIND_DIRECTIONS['offshore'][1]:
-        direction_multiplier = 1.2
-    elif WIND_DIRECTIONS['side_offshore'][0] <= wind_direction_deg <= WIND_DIRECTIONS['side_offshore'][1]:
-        direction_multiplier = 0.73
-    elif WIND_DIRECTIONS['onshore'][0] <= wind_direction_deg <= WIND_DIRECTIONS['onshore'][1]:
-        direction_multiplier = 0.5
-    else:
-        direction_multiplier = 0.8  # Side-onshore
+    # Direction-bonus: cosinus van hoek t.o.v. pure offshore, schaal ±7
+    cos_term = _wind_direction_cosine(wind_direction_deg, NOORDWIJK.beach_normal_deg)
+    direction_bonus = 7.0 * cos_term
 
-    return min(SCORING_WEIGHTS['wind_max'], speed_score * direction_multiplier)
+    return max(0.0, min(SCORING_WEIGHTS['wind_max'], speed_score + direction_bonus))
 
 
 def score_tide_component(
@@ -113,6 +250,7 @@ def score_tide_component(
     dominant_period_s: float = 8.0,
     tide_range_m: Optional[float] = None,
     hours_to_next_high: Optional[float] = None,
+    tidal_current_intensity: float = 0.0,
 ) -> float:
     """
     Bereken tij score (max 20 punten).
@@ -132,8 +270,14 @@ def score_tide_component(
     Phase bonus +2 voor opgaand (push laag→mid is gunstig op NL-beachbreaks).
 
     Timing-fit modifier: +1 wanneer we 1-2.5u vóór hoogtij zitten én tij stijgt
-    (klassieke "push naar HW" — surfweer-conventie). Soft cap blijft op
-    SCORING_WEIGHTS['tide_max'].
+    (klassieke "push naar HW" — surfweer-conventie).
+
+    Tidal-current penalty (referentie-forecaster' "vloedstroom"): horizontale stroming piekt
+    mid-cycle (3u na slack) en is nul op kentering. Sterke stroming maakt het
+    moeilijker te peddelen en kort surf-vensters in. Penalty schaalt
+    kwadratisch: penalty = -8 · intensity² (max -8pt bij springtij mid-cycle).
+
+    Soft cap blijft op SCORING_WEIGHTS['tide_max'].
     """
     # 1) Bepaal optimaal niveau-venster op basis van dominante periode
     if dominant_period_s >= 9:
@@ -170,7 +314,13 @@ def score_tide_component(
             and 1.0 <= hours_to_next_high <= 2.5):
         timing_bonus = 1.0
 
-    return min(SCORING_WEIGHTS['tide_max'], level_score + phase_bonus + timing_bonus)
+    # 6) Tidal-current penalty: piekt mid-cycle, nul op kentering.
+    # Squared om de hoek mid-cycle te accentueren — kentering-flanks krijgen
+    # nauwelijks penalty, mid-cycle krijgt vol penalty.
+    current_penalty = -8.0 * (tidal_current_intensity ** 2)
+
+    total = level_score + phase_bonus + timing_bonus + current_penalty
+    return max(0.0, min(SCORING_WEIGHTS['tide_max'], total))
 
 
 def score_swell_direction_bonus(swell_direction_deg: int) -> float:
@@ -260,6 +410,23 @@ def score_hour(state: HourState) -> ScoreBreakdown:
             swell_dir_bonus=0.0,
         )
 
+    # FYSIEKE MINIMUM-GATE: onder een absolute Hs- of Tp-drempel is GEEN bord
+    # in NL surfbaar — ongeacht hoe goed de wind, het tij of de richting is.
+    # Voorheen liet de combinatie "perfect wind + perfect tij + clean_swell-bonus"
+    # een 0,16m wave-hour tot score 60 oplopen (= 'surfable'). Dit is fysiek
+    # onmogelijk — referentie-forecaster noemt zo'n dag "windhoogte 20cm, rimpelsurf, niets aan".
+    # De gate zet ALLES op 0 zodat het uur niet in windows of als piek verschijnt.
+    Hs = state.wave_spectrum.significant_height_total
+    Tp = _dominant_period_for_tide(state.wave_spectrum)
+    if Hs < SURF_MINIMUMS['min_hs_m'] or Tp < SURF_MINIMUMS['min_period_s']:
+        return ScoreBreakdown(
+            timestamp=state.timestamp,
+            golf_score=0.0,
+            wind_score=0.0,
+            tide_score=0.0,
+            swell_dir_bonus=0.0,
+        )
+
     # Golf component
     golf_score = score_golf_component(state.wave_spectrum)
 
@@ -267,14 +434,17 @@ def score_hour(state: HourState) -> ScoreBreakdown:
     wind_score = score_wind_component(state.wind.speed_kn, state.wind.direction_deg)
 
     # Tij component — periode-afhankelijk venster + spring/doodtij + timing-fit
+    # + tidal-current penalty (referentie-forecaster' "vloedstroom" effect)
     dominant_period_s = _dominant_period_for_tide(state.wave_spectrum)
     hours_to_high = _hours_until(state.timestamp, state.tide.next_high)
+    tidal_current = state.tide.tidal_current_intensity(state.timestamp)
     tide_score = score_tide_component(
         state.tide.normalized_level,
         state.tide.phase,
         dominant_period_s=dominant_period_s,
         tide_range_m=state.tide.daily_range_m,
         hours_to_next_high=hours_to_high,
+        tidal_current_intensity=tidal_current,
     )
 
     # Swell richting bonus (gebruik dominant swell richting)

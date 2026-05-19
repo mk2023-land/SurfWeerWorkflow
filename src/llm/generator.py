@@ -176,61 +176,137 @@ def moon_phase_info(when: datetime) -> Tuple[float, str, bool]:
 SYSTEM_PROMPT = """Je schrijft surf-berichten voor Noordwijk in de stijl van referentie-forecaster van
 de referentie-forecaster. Lopende zinnen, surfers-jargon mag, géén overdrijving, géén voorbehouden.
 
-STIJL & LENGTE:
-- Schrijf SPREEKTAAL met lopende zinnen, geen telegram-stijl. Mag een grapje, mag
-  een korte duiding ("wind blijft te hard", "swell loopt af", "mss zaterdag wat
-  nieuws", "ochtend ziet er aardig uit voor longboarders").
-- Begin met "Nwijk [day_label_today]: " (of "NWIJK ALERT [datum]" bij alerts).
-- Max ~500 tekens. Liever rond de 350-480 — kort en pittig, niet kaal.
+═══════════════════════════════════════════════════════════════════════
+ANTI-HALLUCINATIE — DIT IS DE BELANGRIJKSTE REGEL
+═══════════════════════════════════════════════════════════════════════
+Je MAG NOOIT een getal, tijd, richting, hoogte, periode, windsnelheid,
+tij-stand of tij-tijdstip noemen dat niet LETTERLIJK in de JSON-input
+staat. NOOIT.
 
-PER DAG IN `days` (vandaag → +3, dus 4 dagen) schrijf je 1-2 lopende zinnen met:
-1. Een tijdsaanduiding — STRIKT:
-   - ALLEEN als best_window.is_surfable=true mag je een tijdblok
-     "start_time-end_time" noemen. Dit is een echt surfvenster van ≥1 uur uit
-     de data ("14:00-19:00 surfbaar"). ALS best_window.duration_hours > 3,
-     noem je ALTIJD ook best_window.peak_block als de top-uren binnen het
-     venster, als RANGE ("piek 14-16u", "top tussen 14:00-16:00"). Voor
-     korte vensters (≤3u) of als peak_block.duration_hours == 1 mag je
-     best_window.peak_time als enkel tijdstip noemen ("piek 15u").
-   - Als best_window.is_surfable=false: NOOIT een tijdblok of "HH:MM-HH:MM"
-     opbouwen. Gebruik dan peak_hour.time als één enkel anker-punt
-     ("rond 14u") of zeg "flat". Combineer peak_hour.time NIET met
-     next_high_time/next_low_time tot een nep-venster — dat zijn losse
-     tij-events, geen venster-grenzen.
-   - Vermeld NOOIT uren in het donker — alle peak_hours zijn al gefilterd op
-     daglicht, dus blijf binnen wat de data geeft.
-2. Golfhoogte (m) + periode (s) + golfrichting (wave_direction_compass).
-3. Wind: speed (kn) + wind_direction_compass + wind_label (aflandig / zijaflandig /
-   aanlandig).
-4. Tij — verweven in de zin, NIET als window-grens:
-   - tide_summary.next_high_time / next_low_time zijn TIJ-EVENTS (moment van
-     HW of LW), geen surfvenster-grenzen. Verwoord ze als losse referenties:
-     "hoog rond 14u", "laag rond 17u". NIET "surfen 10:00-14:00" alleen omdat
-     HW om 14u is.
-   - Bij opgaand met hours_to_next_high tussen 1-3u mag je "opkomend richting
-     hoog rond [HW-tijd]" zeggen — geeft de richting van het tij aan.
-   - Bij afgaand met hours_to_next_low tussen 1-3u: "afgaand richting laag rond
-     [LW-tijd]".
-   - Anders: noem fase + eerstvolgende keerpunt ("opgaand, hoog rond 14u").
-   - tide_window_quality="good" → mag je benoemen ("ideaal tij-venster",
-     "lekker mid-tij"). Bij "poor" mag je een kanttekening maken ("te laag tij",
-     "loopt vol bij hoog water").
+- Niet afronden: 0,7m blijft 0,7m, NIET 1m of 0,8m.
+- Niet interpoleren tussen waarden.
+- Niet "ongeveer" of "rond X" als X niet in de input staat.
+- Geen verzonnen tij-tijden, geen verzonnen wind-snelheden, geen
+  verzonnen golfhoogtes.
+- Geen woorden als "springtij" tenzij `tide_context.spring_tide=true`
+  of `tide_summary.spring_neap_label="springtij"` letterlijk in de
+  input staat voor die dag.
+- Geen "piekt het om HH" tenzij die HH in de input voorkomt als een
+  expliciet peak-veld VOOR DIE DAG.
 
-EXTRA SIGNALEN (kort vermelden wanneer relevant):
-- tide_context.spring_tide=true of tide_summary.spring_neap_label="springtij" →
-  noem "springtij" (sterker stroming, krapper venster).
-- tide_summary.spring_neap_label="doodtij" → mag je benoemen ("rustig doodtij").
-- peak_hour.swell_refracts_around_ijmuiden=true → noem dat de pier van IJmuiden
-  hindert / afschermt (klassieke NNO-refractie).
-- peak_hour.swell_type="groundswell" → benoem groundswell + periode ("8s groundswell").
+Cite-regel: elke getalwaarde die je in het bericht zet (m, s, kn, °, uur)
+MOET met je vinger te vinden zijn in het JSON-input-blok voor díe dag.
+Als je twijfelt: laat het getal weg en schrijf kwalitatief
+("kleine golfjes", "matige wind").
 
-STRIKTE REGELS:
-1. Gebruik UITSLUITEND getallen die in de JSON-input staan. Niet interpoleren, niet
-   afronden. Eenheden zijn EXPLICIET in de veldnaam (m/s/kn/deg). Score-getallen
-   (0-100) vermeld je NIET.
+ELKE dag in `days` heeft een `_allowed_citations` veld dat exact opsomt
+welke waarden je voor die dag mag noemen. Houd je daaraan.
+
+═══════════════════════════════════════════════════════════════════════
+WELK MOMENT IS DE "PIEK"?
+═══════════════════════════════════════════════════════════════════════
+Er zijn TWEE verschillende "piek"-begrippen, hou ze uit elkaar:
+
+1. `peak_height_hour` — het uur waarop de golf het HOOGSTE is (m).
+   Dit is wat surfers bedoelen met "piek": de moment dat het golfje
+   op zijn grootst is. Gebruik dit veld als je iets zegt over
+   "hoogste golf vandaag", "piekt op X meter".
+
+2. `best_window.peak_time` — alleen aanwezig als er een echt
+   surfvenster is. Dit is het beste-score-uur binnen dat venster.
+   Gebruik dit alleen in context van "surfen 14-16u, top om 15u".
+
+NOOIT het hoogste-score uur als "piek" presenteren als dat uur NIET
+in een surf-window valt. Een uur kan een hoge score hebben (combinatie
+wind+tij) zonder een goede golf te hebben.
+
+═══════════════════════════════════════════════════════════════════════
+STIJL & FORMAT — HARDE EISEN
+═══════════════════════════════════════════════════════════════════════
+- PLAIN TEXT. Geen Markdown headers (#, ##), geen vetgedrukt (**), geen
+  bullets, geen scheidingslijnen (---), geen emoji.
+- Schrijf SPREEKTAAL met lopende zinnen, geen telegram-stijl. Mag een
+  grapje, mag een korte duiding ("wind blijft te hard", "swell loopt af").
+- Begin EXACT met "Nwijk [day_label_today]: " (kleine letters voor de dag,
+  bv. "Nwijk di: "). Geen tekst ervoor.
+- Per dag één korte alinea, gescheiden door enkele nieuwe regel of dubbele
+  punt. Bv. "Nwijk di: ... Nwijk wo: ... Nwijk do: ... Nwijk vr: ..."
+- Lengte: ergens tussen 400-900 tekens. Hou het bondig en pittig.
+
+═══════════════════════════════════════════════════════════════════════
+BOARDS — HARDE REGEL
+═══════════════════════════════════════════════════════════════════════
+Elk uur (peak_height_hour, best_window.peak_conditions) heeft een
+`boards_suitable` veld. Dit is een lijst uit:
+  ['longboard', 'midlength', 'fish', 'shortboard']
+Of leeg ([]) bij is_unsurfable=true.
+
+REGEL: noem ALLEEN borden die in dit veld staan. Verzin GEEN borden.
+
+Vertaal als volgt naar tekst (referentie-forecaster-stijl):
+- `boards_suitable=[]` of `is_unsurfable=true` → "flat", "rimpelsurf",
+  "niet aan beginnen", "wachten op de volgende swell". NOOIT "surfbaar".
+- `['longboard']` → "alleen longboard", "longboard-uurtje", "knietjes voor long".
+- `['longboard', 'midlength']` → "voor longboard of midlength",
+  "long en mid".
+- `['longboard', 'midlength', 'fish']` → "voor long, mid en fish",
+  "longboard prima, fish kan ook".
+- `['longboard', 'midlength', 'fish', 'shortboard']` → "alles werkt",
+  "shortboard kan ook", "long en fish, ook shortboard mogelijk".
+
+NOOIT "surfbaar" zeggen zonder bordtype erbij. NOOIT "shortboard" noemen
+als 'shortboard' NIET in boards_suitable staat.
+
+═══════════════════════════════════════════════════════════════════════
+PER DAG IN `days` (4 dagen)
+═══════════════════════════════════════════════════════════════════════
+
+Casus A — `best_window` aanwezig EN `best_window.kind="surfable"`:
+- Noem het venster: "start_time-end_time" of "14-16u" stijl.
+- Bij duration_hours > 3: noem ook peak_block range.
+- Beschrijf condities op peak_time uit `best_window.peak_conditions`.
+- Gebruik de `boards_suitable` lijst om bord-aanbeveling te geven.
+
+Casus B — `best_window` aanwezig EN `best_window.kind="longboard"`:
+- Schrijf "longboard-uurtje" of "voor long en fish" zoals
+  `peak_conditions.boards_suitable` aangeeft (altijd ⊂ niet-shortboard).
+- Noem het venster maar maak duidelijk dat shortboard niet ideaal is.
+
+Casus C — GEEN best_window (dag is niet surfbaar):
+- NOOIT een tijdblok of "HH:MM-HH:MM" opbouwen.
+- Als `peak_height_hour.is_unsurfable=true`: schrijf "flat" / "rimpelsurf"
+  / "20cm windhoogte" / "niet aan beginnen". Mag wel het hoogste-golf
+  moment noemen met het feit dát het te klein is.
+- Combineer peak_height_hour.time NIET met next_high_time/next_low_time
+  tot een nep-venster.
+
+Daarna in alle gevallen:
+- Wind: gebruik exact `wind_speed_kn` + `wind_direction_compass` + `wind_label`.
+- Tij — verweven in de zin, NIET als window-grens:
+  - tide_summary.next_high_time / next_low_time zijn TIJ-EVENTS, geen
+    surfvenster-grenzen. Verwoord ze als losse referenties.
+  - tide_window_quality="good" → mag je benoemen.
+
+═══════════════════════════════════════════════════════════════════════
+EXTRA SIGNALEN
+═══════════════════════════════════════════════════════════════════════
+- `tide_context.spring_tide=true` voor de hele forecast OF
+  `tide_summary.spring_neap_label="springtij"` voor díe dag → noem
+  "springtij". Anders NIET noemen.
+- `peak_height_hour.swell_refracts_around_ijmuiden=true` → noem pier-blokkade.
+- `peak_height_hour.swell_type="groundswell"` → benoem groundswell + periode.
+
+═══════════════════════════════════════════════════════════════════════
+STRIKTE REGELS — SAMENVATTING
+═══════════════════════════════════════════════════════════════════════
+1. Gebruik UITSLUITEND getallen die letterlijk in de JSON-input staan.
+   Geen afronden, geen interpoleren, geen "ongeveer".
 2. Eindig met " Cam: surfweer.nl/webcams/noordwijk/"
 3. Geen "denk ik" / "waarschijnlijk" / "misschien" / emoji / disclaimers.
-4. Geen night-uren noemen (alles wat in de data zit is overdag).
+4. Geen night-uren noemen.
+5. Geen verzonnen tij-stand of tij-tijdstip.
+6. Geen "springtij" tenzij expliciet zo in input.
+7. Score-getallen (0-100) noem je nooit.
 """
 
 
@@ -374,41 +450,144 @@ class SMSGenerator:
         date_obj,
         label_nl: str,
     ) -> Dict:
-        peak_idx = max(range(len(day_scores)), key=lambda i: day_scores[i].total_score)
-        peak_state = day_states[peak_idx]
-        peak_score = day_scores[peak_idx]
+        """
+        Per-dag samenvatting voor de LLM met explicietere structuur:
+        - `peak_height_hour`: uur van hoogste golf (wat surfers "piek" noemen)
+        - `best_window`: alleen aanwezig als er een surfable OF longboard window
+          op deze dag is. Bevat `kind` zodat de LLM weet of het shortboard/longboard is.
+        - `_allowed_citations`: opsomming van getalwaarden die de LLM letterlijk
+          MAG noemen — anti-hallucinatie vangnet, ook gebruikt door validator.
+        """
+        # Hoogste golfhoogte van de dag — dit is "piek" in surfers-taal.
+        # ALLEEN daglicht-uren tellen mee (score > 0): een nacht-uur als "piek"
+        # presenteren leidt tot misleidende berichten ("piek om 23u").
+        daylight_indices = [i for i, sc in enumerate(day_scores) if sc.total_score > 0]
+        if daylight_indices:
+            peak_height_idx = max(
+                daylight_indices,
+                key=lambda i: day_states[i].wave_spectrum.significant_height_total,
+            )
+        else:
+            # Geen daglicht-uren (shouldn't happen — defensive fallback)
+            peak_height_idx = max(
+                range(len(day_states)),
+                key=lambda i: day_states[i].wave_spectrum.significant_height_total,
+            )
+        peak_height_state = day_states[peak_height_idx]
+        peak_height_score = day_scores[peak_height_idx]
 
-        day_windows = [w for w in all_windows
-                       if day_states[0].timestamp <= w.peak_hour <= day_states[-1].timestamp]
-        best_window = max(day_windows, key=lambda w: w.peak_score) if day_windows else None
+        # Best score-uur — voor windowdetectie, NIET als "piek" naar LLM
+        best_score_idx = max(range(len(day_scores)), key=lambda i: day_scores[i].total_score)
+        best_score = day_scores[best_score_idx]
 
-        peak_conditions = self._hour_state_to_conditions(peak_state)
+        # Windows op deze dag, gesplitst per kind
+        day_windows = [
+            w for w in all_windows
+            if day_states[0].timestamp <= w.peak_hour <= day_states[-1].timestamp
+        ]
+        surfable_windows = [w for w in day_windows if w.kind == 'surfable']
+        longboard_windows = [w for w in day_windows if w.kind == 'longboard']
+
+        # Surfable wint van longboard als beide bestaan
+        chosen_window = None
+        if surfable_windows:
+            chosen_window = max(surfable_windows, key=lambda w: w.peak_score)
+        elif longboard_windows:
+            chosen_window = max(longboard_windows, key=lambda w: w.peak_score)
+
+        peak_height_conditions = self._hour_state_to_conditions(peak_height_state)
 
         result: Dict = {
             "label_nl": label_nl,
             "date": date_obj.strftime("%Y-%m-%d"),
             "day_short": _DAY_NL_SHORT[date_obj.weekday()],
-            "is_surfable": peak_score.total_score >= 60,
-            "peak_score_0_100": round(peak_score.total_score, 1),
-            "peak_hour": peak_conditions,
-            "tide_summary": self._tide_summary_for_day(day_states, peak_state),
+            "is_surfable": best_score.total_score >= 60,
+            "peak_height_hour": peak_height_conditions,  # hier zit dé golfhoogte-piek
+            "tide_summary": self._tide_summary_for_day(day_states, peak_height_state),
         }
-        if best_window:
+
+        if chosen_window:
+            peak_state = next(
+                (s for s in day_states if s.timestamp == chosen_window.peak_hour),
+                day_states[0],
+            )
+            window_peak_conditions = self._hour_state_to_conditions(peak_state)
             result["best_window"] = {
-                "is_surfable": True,
-                "start_time": best_window.start.strftime("%H:%M"),
-                "end_time": best_window.end.strftime("%H:%M"),
-                "duration_hours": round(best_window.duration_hours, 1),
-                "peak_time": best_window.peak_hour.strftime("%H:%M"),
-                "peak_block": peak_block(best_window),
-                "peak_score_0_100": int(best_window.peak_score),
+                "is_surfable": chosen_window.kind == 'surfable',
+                "kind": chosen_window.kind,
+                "start_time": chosen_window.start.strftime("%H:%M"),
+                "end_time": chosen_window.end.strftime("%H:%M"),
+                "duration_hours": round(chosen_window.duration_hours, 1),
+                "peak_time": chosen_window.peak_hour.strftime("%H:%M"),
+                "peak_block": peak_block(chosen_window),
+                "peak_conditions": window_peak_conditions,
             }
         else:
-            result["best_window"] = {"is_surfable": False}
+            result["best_window"] = {"is_surfable": False, "kind": None}
+
+        # Anti-hallucinatie vangnet — exact wat de LLM mag citeren
+        result["_allowed_citations"] = self._build_allowed_citations(
+            peak_height_conditions, result.get("best_window"), result["tide_summary"]
+        )
+
         return result
+
+    def _build_allowed_citations(
+        self,
+        peak_height_conditions: Dict,
+        best_window: Optional[Dict],
+        tide_summary: Dict,
+    ) -> Dict:
+        """
+        Bouw een whitelist van getallen, tijden en richtingen die de LLM voor
+        deze dag mag noemen. Wordt ook door SMSValidator gebruikt om
+        hallucinaties te detecteren.
+        """
+        heights_m = {peak_height_conditions["wave_height_m"]}
+        periods_s = {peak_height_conditions["wave_period_s"]}
+        wind_speeds_kn = {peak_height_conditions["wind_speed_kn"]}
+        wind_dirs = {peak_height_conditions["wind_direction_compass"]}
+        wave_dirs = {peak_height_conditions["wave_direction_compass"]}
+        times_hhmm = {peak_height_conditions["time"]}
+
+        # Best_window kan 'surfable' of 'longboard' zijn — beide soorten leveren
+        # citeerbare condities (wind/golf/tijd) op voor de LLM en validator.
+        if best_window and best_window.get("kind") is not None:
+            pc = best_window.get("peak_conditions") or {}
+            if pc:
+                heights_m.add(pc.get("wave_height_m"))
+                periods_s.add(pc.get("wave_period_s"))
+                wind_speeds_kn.add(pc.get("wind_speed_kn"))
+                wind_dirs.add(pc.get("wind_direction_compass"))
+                wave_dirs.add(pc.get("wave_direction_compass"))
+            times_hhmm.add(best_window.get("start_time"))
+            times_hhmm.add(best_window.get("end_time"))
+            times_hhmm.add(best_window.get("peak_time"))
+            pb = best_window.get("peak_block") or {}
+            times_hhmm.add(pb.get("start_time"))
+            times_hhmm.add(pb.get("end_time"))
+
+        if tide_summary.get("next_high_time"):
+            times_hhmm.add(tide_summary["next_high_time"])
+        if tide_summary.get("next_low_time"):
+            times_hhmm.add(tide_summary["next_low_time"])
+
+        def _clean(seq):
+            return sorted({v for v in seq if v is not None})
+
+        return {
+            "wave_heights_m": _clean(heights_m),
+            "wave_periods_s": _clean(periods_s),
+            "wind_speeds_kn": _clean(wind_speeds_kn),
+            "wind_directions_compass": _clean(wind_dirs),
+            "wave_directions_compass": _clean(wave_dirs),
+            "times_hhmm": _clean(times_hhmm),
+        }
 
     def _hour_state_to_conditions(self, state: HourState) -> Dict:
         """Pak fysische condities uit HourState. Alles in expliciete eenheden."""
+        from src.scoring.hourly import recommend_boards
+
         spectrum = state.wave_spectrum
         dominant = max(spectrum.peaks, key=lambda p: p.height_m) if spectrum.peaks else None
 
@@ -428,6 +607,16 @@ class SMSGenerator:
         # "rond hoog water", "afgaand tot 17u laag").
         hours_to_high = _hours_to(state.timestamp, state.tide.next_high)
         hours_to_low = _hours_to(state.timestamp, state.tide.next_low)
+
+        # Board-aanbeveling: welke boards werken bij deze Hs/Tp/wind combo?
+        # Lege lijst = niet surfbaar voor enig bord. De LLM mag deze lijst
+        # letterlijk citeren maar GEEN borden noemen die hier NIET in staan.
+        boards_suitable = recommend_boards(
+            hs_m=spectrum.significant_height_total,
+            tp_s=dominant_period_s or 0.0,
+            wind_speed_kn=state.wind.speed_kn,
+            wind_direction_deg=state.wind.direction_deg,
+        )
 
         return {
             "time": state.timestamp.strftime("%H:%M"),
@@ -449,6 +638,8 @@ class SMSGenerator:
             "tide_window_quality": _tide_window_quality(
                 state.tide.normalized_level, dominant_period_s
             ),
+            "boards_suitable": boards_suitable,
+            "is_unsurfable": len(boards_suitable) == 0,
         }
 
     def _tide_summary_for_day(self, day_states: List[HourState], peak_state: HourState) -> Dict:
@@ -505,7 +696,12 @@ class SMSGenerator:
             if not day_states:
                 continue
             label = labels[i] or date_obj.strftime("%a %d/%m")
-            peak_idx = max(range(len(day_scores)), key=lambda i: day_scores[i].total_score)
+            # Gebruik wave-height-peak, niet score-peak — surfers bedoelen
+            # met "piek" de moment van hoogste golf, niet hoogste score.
+            peak_idx = max(
+                range(len(day_states)),
+                key=lambda i: day_states[i].wave_spectrum.significant_height_total,
+            )
             ps = day_states[peak_idx]
             spectrum = ps.wave_spectrum
             dom = max(spectrum.peaks, key=lambda p: p.height_m) if spectrum.peaks else None

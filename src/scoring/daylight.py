@@ -4,9 +4,14 @@ Daglicht-filter voor Noordwijk (lat 52.241°N, lon 4.428°E).
 Eenvoudige astronomische formule (zonnedeclinatie + uurhoek), ±5 min nauwkeurig
 — voldoende om night/day onderscheid te maken. Niet bedoeld voor astronomie.
 
-Het surf-daglicht-venster loopt asymmetrisch:
-- Start: zonsopgang - 1.5u  (dawn-sessies mogen meetellen)
-- Einde: zonsondergang + 0.5u  (kleine dusk-buffer, daarna écht donker)
+Het surf-daglicht-venster loopt rond civil twilight (zon 6° onder horizon):
+- Start: zonsopgang - 0.5u
+- Einde: zonsondergang + 0.5u
+
+Een ruimere buffer (zoals 1.5u 's ochtends) maakte de LLM kwetsbaar voor het
+benoemen van pre-dawn uren als "piek" — in mei begint daglicht pas rond 05:47
+lokaal, dus een 1.5u buffer liet 04:17 al door als surfbaar. Civil twilight
+is het minimum waarbij je werkelijk de golven kunt zien.
 
 Buiten dit venster geeft score_hour een 0-score, waardoor night-uren niet als
 piek of in surf-windows verschijnen.
@@ -50,14 +55,14 @@ def _sunrise_sunset_utc_hours(d: date) -> Tuple[float, float]:
 
 def is_daylight_noordwijk(
     dt: datetime,
-    morning_buffer_h: float = 1.5,
+    morning_buffer_h: float = 0.5,
     evening_buffer_h: float = 0.5,
 ) -> bool:
     """
     True als `dt` binnen het surf-daglicht-venster van Noordwijk valt.
 
-    Asymmetrisch:
-    - Start = zonsopgang - `morning_buffer_h` (default 1.5u, dawn-vriendelijk)
+    Default (civil twilight, symmetrisch):
+    - Start = zonsopgang - `morning_buffer_h` (default 0.5u ≈ civil twilight)
     - Einde = zonsondergang + `evening_buffer_h` (default 0.5u)
 
     Tz-naive datetimes worden als Europe/Amsterdam local geïnterpreteerd
