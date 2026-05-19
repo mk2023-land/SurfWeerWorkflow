@@ -10,9 +10,20 @@ Default is email.
 """
 import logging
 import os
+from datetime import datetime
 from typing import Protocol
 
 logger = logging.getLogger(__name__)
+
+
+_NL_DAYS_SHORT = ['ma', 'di', 'wo', 'do', 'vr', 'za', 'zo']
+_NL_MONTHS = ['januari', 'februari', 'maart', 'april', 'mei', 'juni',
+              'juli', 'augustus', 'september', 'oktober', 'november', 'december']
+
+
+def format_nl_date(dt: datetime) -> str:
+    """Format datum als 'ma 19 mei' — voor titels in notificaties."""
+    return f"{_NL_DAYS_SHORT[dt.weekday()]} {dt.day} {_NL_MONTHS[dt.month - 1]}"
 
 
 class Notifier(Protocol):

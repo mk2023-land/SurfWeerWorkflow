@@ -21,6 +21,8 @@ import smtplib
 from datetime import datetime
 from email.mime.text import MIMEText
 
+from src.notify import format_nl_date
+
 logger = logging.getLogger(__name__)
 
 
@@ -48,7 +50,7 @@ class EmailNotifier:
         return self._send(subject, message)
 
     def send_digest(self, message: str) -> dict:
-        subject = f"Nwijk surfdigest {datetime.now().strftime('%a %d-%m')}"
+        subject = f"Surfweerbericht van {format_nl_date(datetime.now())}"
         return self._send(subject, message)
 
     def _send(self, subject: str, body: str) -> dict:
