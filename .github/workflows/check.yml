@@ -44,14 +44,28 @@ jobs:
 
       - name: Run surf alert check
         env:
-          ANTHROPIC_API_KEY:      ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+          # Notifier-keuze (default email).
+          NOTIFIER: ${{ vars.NOTIFIER || 'email' }}
+
+          # Email (gratis, default)
+          SMTP_HOST:       ${{ vars.SMTP_HOST || 'smtp.gmail.com' }}
+          SMTP_PORT:       ${{ vars.SMTP_PORT || '587' }}
+          SMTP_USER:       ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD:   ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM_NAME:  ${{ vars.SMTP_FROM_NAME || 'Noordwijk Surf Alert' }}
+          RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+
+          # Twilio (alleen gebruikt als NOTIFIER=twilio)
           TWILIO_ACCOUNT_SID:     ${{ secrets.TWILIO_ACCOUNT_SID }}
           TWILIO_AUTH_TOKEN:      ${{ secrets.TWILIO_AUTH_TOKEN }}
           TWILIO_PHONE_NUMBER:    ${{ secrets.TWILIO_PHONE_NUMBER }}
           RECIPIENT_PHONE_NUMBER: ${{ secrets.RECIPIENT_PHONE_NUMBER }}
-          ALERTS_ENABLED:         ${{ vars.ALERTS_ENABLED || 'true' }}
-          COOLDOWN_HOURS:         ${{ vars.COOLDOWN_HOURS || '4' }}
-          MAX_ALERTS_PER_WEEK:    ${{ vars.MAX_ALERTS_PER_WEEK || '8' }}
+
+          ALERTS_ENABLED:      ${{ vars.ALERTS_ENABLED || 'true' }}
+          COOLDOWN_HOURS:      ${{ vars.COOLDOWN_HOURS || '4' }}
+          MAX_ALERTS_PER_WEEK: ${{ vars.MAX_ALERTS_PER_WEEK || '8' }}
           DEBUG: 'false'
         run: |
           mkdir -p data

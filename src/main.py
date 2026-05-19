@@ -45,7 +45,7 @@ from alerts.detectors import AlertDetectorEngine
 from llm.generator import SMSGenerator
 from llm.validator import SMSValidator
 
-from sms.twilio import TwilioClient, format_sms_for_logging
+from notify import get_notifier, format_send_result_for_logging
 
 # Setup logging
 logging.basicConfig(
@@ -68,7 +68,8 @@ class SurfAlertSystem:
         self.alert_engine = AlertEngine()
         self.sms_generator = SMSGenerator()
         self.sms_validator = SMSValidator()
-        self.twilio_client = TwilioClient()
+        self.notifier = get_notifier()
+        logger.info(f"Notifier kanaal: {self.notifier.channel}")
 
         # Zorg dat data directory bestaat
         Path('data').mkdir(parents=True, exist_ok=True)
@@ -164,17 +165,17 @@ class SurfAlertSystem:
                 forecast, history, buoy_history, windows, is_digest_time
             )
 
-            # Stap 7: Genereer en verstuur SMS
+            # Stap 7: Genereer en verstuur notificatie (mail of SMS)
             if decision.has_alert:
-                logger.info("Generating and sending alert SMS...")
-                sms_result = self._handle_alert(decision.send_alerts[0])
-                run_log.sms_sent = format_sms_for_logging(sms_result)
+                logger.info("Generating and sending alert notification...")
+                result = self._handle_alert(decision.send_alerts[0])
+                run_log.sms_sent = format_send_result_for_logging(result)
                 run_log.llm_used = True
 
             elif decision.send_digest:
-                logger.info("Generating and sending digest SMS...")
-                sms_result = self._handle_digest(hour_states, hourly_scores, windows)
-                run_log.sms_sent = format_sms_for_logging(sms_result)
+                logger.info("Generating and sending digest notification...")
+                result = self._handle_digest(hour_states, hourly_scores, windows)
+                run_log.sms_sent = format_send_result_for_logging(result)
                 run_log.llm_used = True
                 self.alert_engine.record_digest_sent()
 
@@ -255,28 +256,20 @@ class SurfAlertSystem:
         return hour_states
 
     def _handle_alert(self, alert) -> dict:
-        """Genereer en verstuur alert SMS."""
-        # Genereer SMS
+        """Genereer en verstuur alert-notificatie."""
         sms_text = self.sms_generator.generate_alert_sms(alert)
 
-        # Valideer SMS
         validation_result = self.sms_validator.validate_sms(
             sms_text,
             self.sms_generator._prepare_alert_input(alert)
         )
-
         if not validation_result:
-            logger.warning(f"SMS validation failed: {validation_result.issues}")
-            # Gebruik fallback template
+            logger.warning(f"Alert validation failed: {validation_result.issues}, fallback gebruikt")
             sms_text = self.sms_generator._fallback_alert_template(alert)
 
-        # Verstuur SMS (niet in dry run)
         if not self.dry_run:
-            result = self.twilio_client.send_alert_sms(sms_text)
-        else:
-            result = {'success': True, 'debug_mode': True, 'message': sms_text}
-
-        return result
+            return self.notifier.send_alert(sms_text)
+        return {'success': True, 'debug_mode': True, 'channel': self.notifier.channel, 'message': sms_text}
 
     def _handle_digest(
         self,
@@ -294,17 +287,14 @@ class SurfAlertSystem:
             hour_states, hourly_scores, windows, forecast_summary
         )
 
-        # Valideer (zelfde behandeling als alerts): bij falen → deterministische fallback.
         format_ok = self.sms_validator.validate_digest_format(sms_text)
         if not format_ok:
-            logger.warning(f"Digest format validation failed: {format_ok.issues}, using fallback template")
+            logger.warning(f"Digest format validation failed: {format_ok.issues}, fallback gebruikt")
             sms_text = self.sms_generator._fallback_digest_template(hour_states, hourly_scores, windows)
 
         if not self.dry_run:
-            result = self.twilio_client.send_digest_sms(sms_text)
-        else:
-            result = {'success': True, 'debug_mode': True, 'message': sms_text}
-        return result
+            return self.notifier.send_digest(sms_text)
+        return {'success': True, 'debug_mode': True, 'channel': self.notifier.channel, 'message': sms_text}
 
     def _update_run_log(
         self,
