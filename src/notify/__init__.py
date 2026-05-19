@@ -25,15 +25,18 @@ class Notifier(Protocol):
 
 
 def get_notifier() -> Notifier:
-    """Bouw de juiste notifier op basis van $NOTIFIER (default 'email')."""
-    kind = (os.getenv('NOTIFIER') or 'email').lower()
-    if kind == 'twilio':
-        from src.notify.twilio import TwilioNotifier
-        return TwilioNotifier()
+    """Bouw de juiste notifier op basis van $NOTIFIER (default 'ntfy')."""
+    kind = (os.getenv('NOTIFIER') or 'ntfy').lower()
+    if kind == 'ntfy':
+        from src.notify.ntfy import NtfyNotifier
+        return NtfyNotifier()
     if kind == 'email':
         from src.notify.mail import EmailNotifier
         return EmailNotifier()
-    raise ValueError(f"Onbekende NOTIFIER waarde: {kind!r} (verwacht 'email' of 'twilio')")
+    if kind == 'twilio':
+        from src.notify.twilio import TwilioNotifier
+        return TwilioNotifier()
+    raise ValueError(f"Onbekende NOTIFIER waarde: {kind!r} (verwacht 'ntfy', 'email' of 'twilio')")
 
 
 def format_send_result_for_logging(result: dict) -> str:
