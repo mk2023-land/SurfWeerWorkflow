@@ -1,9 +1,11 @@
 """
-One-shot test: stuur een echte digest-notificatie (email of SMS) met de
+One-shot test: stuur een echte digest-notificatie (ntfy / email / SMS) met de
 huidige Noordwijk-forecast. Loopt buiten het morning-digest-venster om.
 
-Backend wordt bepaald door $NOTIFIER (default 'email'). Voor mail moet
-SMTP_USER / SMTP_PASSWORD / RECIPIENT_EMAIL gezet zijn (zie .env.example).
+Backend wordt bepaald door $NOTIFIER (default 'ntfy'):
+  - 'ntfy'   → NTFY_TOPIC moet gezet zijn
+  - 'email'  → SMTP_USER + SMTP_PASSWORD + RECIPIENT_EMAIL
+  - 'twilio' → TWILIO_* + RECIPIENT_PHONE_NUMBER
 
 Gebruik:   python scripts/send_test_notification.py
 """

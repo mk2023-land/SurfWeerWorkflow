@@ -95,8 +95,10 @@ ALERT_CONFIG = {
     'cooldown_hours_between_alerts': int(os.getenv('COOLDOWN_HOURS', '4')),
     'max_alerts_per_week': int(os.getenv('MAX_ALERTS_PER_WEEK', '8')),  # Geen limiet meer
     'alerts_enabled': os.getenv('ALERTS_ENABLED', 'false').lower() == 'true',
-    'max_sms_cost_per_month_eur': 5.0,  # Max €5/maand = ~62 SMS
-    'max_anthropic_cost_per_month_eur': 3.0,  # Max €3/maand = ~3000 aanroepen
+    # max_sms_cost_per_month_eur fungeert als hard plafond voor de Twilio-fallback.
+    # Bij NOTIFIER=ntfy of NOTIFIER=email zijn de notificatie-kosten €0 en is de cap niet relevant.
+    'max_sms_cost_per_month_eur': 5.0,
+    'max_anthropic_cost_per_month_eur': 3.0,  # ~3000 Claude Haiku calls
 }
 
 # Scoring gewichten
@@ -143,7 +145,7 @@ TWILIO_CONFIG = {
     'recipient': os.getenv('RECIPIENT_PHONE_NUMBER', ''),
 }
 
-# Debug configuratie — alleen log-level. Voor "geen SMS verzenden" gebruik --dry-run.
+# Debug configuratie — alleen log-level. Voor "niet verzenden" gebruik --dry-run.
 DEBUG = os.getenv('DEBUG', 'false').lower() == 'true'
 
 # Timezone

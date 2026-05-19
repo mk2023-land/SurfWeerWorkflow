@@ -100,7 +100,7 @@ class AlertEngine:
             return Decision(
                 send_digest=is_digest_time,
                 send_alerts=[],
-                skip_reason="Monthly budget reached (max €5/maand SMS + €3/maand Anthropic)"
+                skip_reason="Maandelijks budget bereikt (notificatie + Anthropic gecombineerde cap)"
             )
 
         # Voer detectors uit
@@ -197,14 +197,20 @@ class AlertEngine:
         return explanation
 
     def _check_monthly_budget(self) -> bool:
-        """Controleer of maandelijk budget nog niet bereikt is."""
+        """
+        Controleer maandelijks budget. Kosten per notificatie hangen af van het
+        kanaal: ntfy.sh en SMTP-mail zijn €0, alleen Twilio-SMS kost ~€0.08.
+        """
         try:
             log_file = Path('data/forecasts_log.jsonl')
             if not log_file.exists():
                 return True
 
-            # Tel aantal SMS en LLM aanroepen deze maand
-            sms_count = 0
+            import os
+            channel = (os.getenv('NOTIFIER') or 'ntfy').lower()
+            cost_per_send = 0.08 if channel == 'twilio' else 0.0
+
+            notify_count = 0
             llm_count = 0
             current_month = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
@@ -213,37 +219,36 @@ class AlertEngine:
                     try:
                         log_entry = json.loads(line)
                         timestamp = datetime.fromisoformat(log_entry['timestamp'])
-
                         if timestamp >= current_month:
                             if log_entry.get('sms_sent'):
-                                sms_count += 1
+                                notify_count += 1
                             if log_entry.get('llm_used'):
                                 llm_count += 1
                     except (json.JSONDecodeError, KeyError):
                         continue
 
-            # Bereken kosten
-            sms_cost = sms_count * 0.08  # €0.08 per SMS
-            llm_cost = llm_count * 0.001  # ~€0.001 per LLM aanroep
+            notify_cost = notify_count * cost_per_send
+            llm_cost = llm_count * 0.001  # ~€0.001 per Claude Haiku call
 
-            # Check limits
-            max_sms_cost = ALERT_CONFIG.get('max_sms_cost_per_month_eur', 5.0)
+            max_notify_cost = ALERT_CONFIG.get('max_sms_cost_per_month_eur', 5.0)
             max_llm_cost = ALERT_CONFIG.get('max_anthropic_cost_per_month_eur', 3.0)
 
-            if sms_cost >= max_sms_cost:
-                logger.warning(f"SMS budget reached: €{sms_cost:.2f}/€{max_sms_cost}")
+            if cost_per_send > 0 and notify_cost >= max_notify_cost:
+                logger.warning(f"Notify budget reached: €{notify_cost:.2f}/€{max_notify_cost}")
                 return False
-
             if llm_cost >= max_llm_cost:
                 logger.warning(f"LLM budget reached: €{llm_cost:.2f}/€{max_llm_cost}")
                 return False
 
-            logger.info(f"Budget status: SMS €{sms_cost:.2f}/€{max_sms_cost}, LLM €{llm_cost:.2f}/€{max_llm_cost}")
+            logger.info(
+                f"Budget status ({channel}): notify €{notify_cost:.2f}/€{max_notify_cost}, "
+                f"LLM €{llm_cost:.2f}/€{max_llm_cost}"
+            )
             return True
 
         except Exception as e:
             logger.error(f"Error checking budget: {e}")
-            return True  # Bij error, door laten gaan
+            return True  # Bij error door laten gaan
 
     def is_morning_first_run(self) -> bool:
         """

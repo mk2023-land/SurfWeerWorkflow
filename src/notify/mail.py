@@ -1,5 +1,6 @@
 """
-SMTP-mail-notifier. Gratis alternatief voor Twilio.
+SMTP-mail-notifier. Gratis alternatief voor Twilio (en backup voor ntfy als je
+liever een echte e-mail in je inbox hebt dan een push-melding).
 
 Standaard config (overschrijfbaar via env):
     SMTP_HOST     = smtp.gmail.com
