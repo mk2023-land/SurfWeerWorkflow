@@ -3,6 +3,7 @@ Per-uur scoring module.
 Berekent scores voor golf, wind, tij en swell richting.
 """
 import logging
+from datetime import datetime, timezone
 from typing import Optional
 import math
 
@@ -103,27 +104,70 @@ def score_wind_component(wind_speed_kn: float, wind_direction_deg: int) -> float
     return min(SCORING_WEIGHTS['wind_max'], speed_score * direction_multiplier)
 
 
-def score_tide_component(tide_level_normalized: float, tide_phase: str) -> float:
+def score_tide_component(
+    tide_level_normalized: float,
+    tide_phase: str,
+    dominant_period_s: float = 8.0,
+    tide_range_m: Optional[float] = None,
+    hours_to_next_high: Optional[float] = None,
+) -> float:
     """
     Bereken tij score (max 20 punten).
 
-    Factoren:
-    - Hoogte (mid-tijd = beste, extremes = slechter)
-    - Fase (opgaand vs afgaand, kleine bonus voor opgaand: "push" van laag naar
-      mid is gunstig op NL-beachbreaks).
-    """
-    # Basis score op genormaliseerd niveau. Mid-tij (0.3-0.8) is beste,
-    # base 18 zodat opgaand-bonus naar 20 cap brengt, afgaand blijft 18.
-    if 0.3 <= tide_level_normalized <= 0.8:
-        level_score = 18
-    elif tide_level_normalized < 0.3:
-        level_score = tide_level_normalized / 0.3 * 17
-    else:
-        level_score = (1.0 - tide_level_normalized) / 0.2 * 17
+    Periode-afhankelijk optimaal niveau-venster (blok 2):
+    - Groundswell T≥9s: venster [0.20, 0.90] — lange swell voelt bodem eerder,
+      werkt op breder tij-venster.
+    - Wind-swell 7-9s: venster [0.35, 0.85] — middenklasse.
+    - Wind-sea T<7s: venster [0.50, 0.90] — korte swell heeft hoger water nodig
+      om door te breken op NL-zandbanken.
 
+    Spring/doodtij modulator:
+    - Springtij (range ≥ 2.0m): venster krimpt 5% aan beide zijden (sterkere
+      cross-shore stroming verkort het surfbare venster).
+    - Doodtij (range < 1.6m): venster verbreedt 2.5% (stabieler water).
+
+    Phase bonus +2 voor opgaand (push laag→mid is gunstig op NL-beachbreaks).
+
+    Timing-fit modifier: +1 wanneer we 1-2.5u vóór hoogtij zitten én tij stijgt
+    (klassieke "push naar HW" — surfweer-conventie). Soft cap blijft op
+    SCORING_WEIGHTS['tide_max'].
+    """
+    # 1) Bepaal optimaal niveau-venster op basis van dominante periode
+    if dominant_period_s >= 9:
+        lo, hi = 0.20, 0.90
+    elif dominant_period_s >= 7:
+        lo, hi = 0.35, 0.85
+    else:
+        lo, hi = 0.50, 0.90
+
+    # 2) Spring/doodtij modulator op het venster
+    if tide_range_m is not None:
+        if tide_range_m >= 2.0:
+            lo += 0.05
+            hi -= 0.05
+        elif tide_range_m < 1.6:
+            lo = max(0.0, lo - 0.025)
+            hi = min(1.0, hi + 0.025)
+
+    # 3) Level-score binnen het venster (vlakke max), lineair afval daarbuiten
+    if lo <= tide_level_normalized <= hi:
+        level_score = 18.0
+    elif tide_level_normalized < lo:
+        level_score = (tide_level_normalized / lo) * 17 if lo > 0 else 0.0
+    else:
+        level_score = ((1.0 - tide_level_normalized) / (1.0 - hi)) * 17 if hi < 1 else 0.0
+
+    # 4) Phase-bonus voor opgaand tij
     phase_bonus = 2.0 if tide_phase == "opgaand" else 0.0
 
-    return min(SCORING_WEIGHTS['tide_max'], level_score + phase_bonus)
+    # 5) Timing-fit: kleine bonus voor "push naar HW" (opgaand én 1-2.5u vóór HW)
+    timing_bonus = 0.0
+    if (tide_phase == "opgaand"
+            and hours_to_next_high is not None
+            and 1.0 <= hours_to_next_high <= 2.5):
+        timing_bonus = 1.0
+
+    return min(SCORING_WEIGHTS['tide_max'], level_score + phase_bonus + timing_bonus)
 
 
 def score_swell_direction_bonus(swell_direction_deg: int) -> float:
@@ -165,6 +209,37 @@ def score_swell_direction_bonus(swell_direction_deg: int) -> float:
     return 5.0
 
 
+def _dominant_period_for_tide(spectrum: WaveSpectrum) -> float:
+    """
+    Bepaal de dominante swell-periode voor tij-scoring.
+
+    Voorkeur: hoogste spectrale piek; fallback: spectrum.mean_period; bij geen
+    info default 8.0 (mid-band — neutraal venster).
+    """
+    if spectrum.peaks:
+        dominant = max(spectrum.peaks, key=lambda p: p.height_m)
+        return dominant.period_s
+    if spectrum.mean_period and spectrum.mean_period > 0:
+        return spectrum.mean_period
+    return 8.0
+
+
+def _hours_until(when: datetime, target: Optional[datetime]) -> Optional[float]:
+    """
+    Aantal uren tussen `when` en `target` (positief als target in toekomst).
+    Tz-naive timestamps worden als UTC geïnterpreteerd zodat we naive (Open-Meteo)
+    en aware (RWS) datetimes veilig kunnen vergelijken.
+    """
+    if target is None:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    if target.tzinfo is None:
+        target = target.replace(tzinfo=timezone.utc)
+    delta = (target - when).total_seconds() / 3600.0
+    return delta if delta >= 0 else None
+
+
 def score_hour(state: HourState) -> ScoreBreakdown:
     """
     Bereken totale score voor één uur.
@@ -181,8 +256,16 @@ def score_hour(state: HourState) -> ScoreBreakdown:
     # Wind component
     wind_score = score_wind_component(state.wind.speed_kn, state.wind.direction_deg)
 
-    # Tij component
-    tide_score = score_tide_component(state.tide.normalized_level, state.tide.phase)
+    # Tij component — periode-afhankelijk venster + spring/doodtij + timing-fit
+    dominant_period_s = _dominant_period_for_tide(state.wave_spectrum)
+    hours_to_high = _hours_until(state.timestamp, state.tide.next_high)
+    tide_score = score_tide_component(
+        state.tide.normalized_level,
+        state.tide.phase,
+        dominant_period_s=dominant_period_s,
+        tide_range_m=state.tide.daily_range_m,
+        hours_to_next_high=hours_to_high,
+    )
 
     # Swell richting bonus (gebruik dominant swell richting)
     decomposition = decompose_spectrum(state.wave_spectrum)

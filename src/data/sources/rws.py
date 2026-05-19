@@ -308,6 +308,8 @@ def tide_state_at(tide_data: Dict[str, Any], when: datetime) -> TideState:
     Bouw een `TideState` voor tijdstip `when` op basis van fetched tide data.
 
     Pakt het dichtstbijzijnde event (10-min raster) en de eerstvolgende hoog/laag.
+    Daily range wordt afgeleid uit de HW/LW direct rondom `when` — gebruikt voor
+    spring/doodtij modulatie in de scoring (springtij ≥ 2.0m, doodtij < 1.6m).
     Valt terug op een veilige placeholder als er geen data is.
     """
     events = tide_data.get('tide_events') or []
@@ -317,25 +319,42 @@ def tide_state_at(tide_data: Dict[str, Any], when: datetime) -> TideState:
             phase='onbekend',
             next_low=when + timedelta(hours=6),
             next_high=when + timedelta(hours=12),
+            daily_range_m=None,
         )
 
     when_utc = _to_utc(when)
     nearest = min(events, key=lambda e: abs((_to_utc(e['timestamp']) - when_utc).total_seconds()))
 
+    high_tides = tide_data.get('high_tides', [])
+    low_tides = tide_data.get('low_tides', [])
+
     next_high = next(
-        (h['timestamp'] for h in tide_data.get('high_tides', []) if _to_utc(h['timestamp']) >= when_utc),
+        (h['timestamp'] for h in high_tides if _to_utc(h['timestamp']) >= when_utc),
         when + timedelta(hours=12),
     )
     next_low = next(
-        (l['timestamp'] for l in tide_data.get('low_tides', []) if _to_utc(l['timestamp']) >= when_utc),
+        (l['timestamp'] for l in low_tides if _to_utc(l['timestamp']) >= when_utc),
         when + timedelta(hours=6),
     )
+
+    # Daily range = |dichtsbij HW level - dichtsbij LW level|. Pakt zo het
+    # lokale semi-diurnale cycle, niet een willekeurige max-min over heel
+    # de dataset (waar springtij-week alles overschaduwt).
+    daily_range_m: Optional[float] = None
+    if high_tides and low_tides:
+        nearest_hw = min(high_tides,
+                         key=lambda h: abs((_to_utc(h['timestamp']) - when_utc).total_seconds()))
+        nearest_lw = min(low_tides,
+                         key=lambda l: abs((_to_utc(l['timestamp']) - when_utc).total_seconds()))
+        if nearest_hw.get('level_m') is not None and nearest_lw.get('level_m') is not None:
+            daily_range_m = abs(nearest_hw['level_m'] - nearest_lw['level_m'])
 
     return TideState(
         level_m=nearest['level_m'],
         phase=nearest['phase'],
         next_low=next_low,
         next_high=next_high,
+        daily_range_m=daily_range_m,
     )
 
 

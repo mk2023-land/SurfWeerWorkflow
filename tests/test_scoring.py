@@ -107,6 +107,88 @@ class TestTideScoring:
         assert score <= 8
 
 
+class TestPeriodDependentTideWindow:
+    """Test dat het optimale tij-venster afhangt van swell-periode (blok 2)."""
+
+    def test_short_period_needs_higher_water(self):
+        """Wind-sea (T<7s) bij laag tij scoort beduidend lager dan groundswell."""
+        from src.scoring.hourly import score_tide_component
+        short = score_tide_component(0.25, "opgaand", dominant_period_s=5.0)
+        long = score_tide_component(0.25, "opgaand", dominant_period_s=10.0)
+        # Bij norm=0.25: wind-sea venster begint pas bij 0.50, groundswell bij 0.20
+        # → korte periode flink lager dan lange periode.
+        assert short < long
+        assert long >= 18  # Groundswell zit binnen venster
+        assert short <= 12  # Wind-sea zit ver buiten venster
+
+    def test_long_period_wider_window(self):
+        """Groundswell krijgt vol level-score op niveaus waar wind-sea al daalt."""
+        from src.scoring.hourly import score_tide_component
+        # Norm 0.30: net buiten wind-sea venster [0.50, 0.90],
+        # ruim binnen groundswell venster [0.20, 0.90].
+        wind_sea = score_tide_component(0.30, "afgaand", dominant_period_s=5.0)
+        groundswell = score_tide_component(0.30, "afgaand", dominant_period_s=10.0)
+        assert groundswell > wind_sea
+        assert groundswell == 18  # vol level, geen phase-bonus
+
+
+class TestSpringNeapTideModulator:
+    """Test springtij/doodtij modulator op het optimale venster (blok 2)."""
+
+    def test_spring_tide_shrinks_window(self):
+        """Springtij (≥2.0m range) maakt venster smaller → lagere edge-scores."""
+        from src.scoring.hourly import score_tide_component
+        # Norm 0.22 ligt net in groundswell venster [0.20, 0.90].
+        # Springtij krimpt venster tot [0.25, 0.85] → 0.22 valt eruit.
+        normal = score_tide_component(0.22, "afgaand", dominant_period_s=10.0, tide_range_m=1.8)
+        spring = score_tide_component(0.22, "afgaand", dominant_period_s=10.0, tide_range_m=2.2)
+        assert spring < normal
+        assert normal == 18  # In normale venster
+
+    def test_neap_tide_widens_window(self):
+        """Doodtij (<1.6m range) verbreedt venster → hogere edge-scores."""
+        from src.scoring.hourly import score_tide_component
+        # Norm 0.19 ligt net buiten groundswell venster [0.20, 0.90].
+        # Doodtij verbreedt naar [0.175, 0.925] → 0.19 valt erin.
+        normal = score_tide_component(0.19, "afgaand", dominant_period_s=10.0, tide_range_m=1.8)
+        neap = score_tide_component(0.19, "afgaand", dominant_period_s=10.0, tide_range_m=1.5)
+        assert neap > normal
+        assert neap == 18  # In verbreed venster
+
+
+class TestTimingFitBonus:
+    """Test timing-fit bonus (opgaand én 1-2.5u vóór HW) — blok 2."""
+
+    def test_timing_bonus_at_edge_level(self):
+        """Timing-fit voegt +1 toe wanneer level net buiten optimaal venster zit."""
+        from src.scoring.hourly import score_tide_component
+        # Norm 0.30 met T=8s zit net buiten venster [0.35, 0.85] →
+        # level=14.57 + phase=2 = 16.57. Met timing-fit +1 = 17.57.
+        no_timing = score_tide_component(0.30, "opgaand", dominant_period_s=8.0)
+        with_timing = score_tide_component(0.30, "opgaand", dominant_period_s=8.0,
+                                            hours_to_next_high=1.5)
+        assert with_timing == no_timing + 1.0
+
+    def test_timing_bonus_skipped_for_afgaand(self):
+        """Timing-fit geldt alleen bij opgaand tij."""
+        from src.scoring.hourly import score_tide_component
+        no_timing = score_tide_component(0.30, "afgaand", dominant_period_s=8.0)
+        with_timing = score_tide_component(0.30, "afgaand", dominant_period_s=8.0,
+                                            hours_to_next_high=1.5)
+        assert with_timing == no_timing
+
+    def test_timing_bonus_outside_window(self):
+        """Timing-fit alleen 1.0-2.5u vóór HW, niet eerder of later."""
+        from src.scoring.hourly import score_tide_component
+        base = score_tide_component(0.30, "opgaand", dominant_period_s=8.0)
+        too_early = score_tide_component(0.30, "opgaand", dominant_period_s=8.0,
+                                          hours_to_next_high=3.0)
+        too_close = score_tide_component(0.30, "opgaand", dominant_period_s=8.0,
+                                          hours_to_next_high=0.5)
+        assert too_early == base
+        assert too_close == base
+
+
 class TestSwellDirectionBonus:
     """Test swell richting bonus."""
 
