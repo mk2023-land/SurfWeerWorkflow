@@ -114,6 +114,8 @@ STIJL & LENGTE:
 PER DAG IN `days` (vandaag → +3, dus 4 dagen) schrijf je ÉÉN VOLLE ZIN met:
 1. Een tijdsaanduiding:
    - Surfable (best_window.is_surfable=true): noem het tijdblok "start_time-end_time".
+     ALS best_window.duration_hours > 3 noem je ALTIJD ook best_window.peak_time als
+     het top-moment binnen het venster ("top rond 10u", "piek 14:00", o.i.d.).
    - Anders: gebruik peak_hour.time als anker (bv. "rond 14u") of zeg "flat".
 2. Golfhoogte (m) + periode (s) + golfrichting (wave_direction_compass).
 3. Wind: speed (kn) + wind_direction_compass + wind_label (aflandig / zijaflandig /
