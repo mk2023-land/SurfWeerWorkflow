@@ -111,6 +111,9 @@ class TideState:
     phase: str                   # "opgaand", "afgaand", "hoogtij", "laagtij"
     next_low: datetime
     next_high: datetime
+    # Dagelijkse tij-range (HW - LW) in meters. Gebruikt voor spring/doodtij
+    # modulatie van het optimale tij-venster. None = onbekend → modulator uit.
+    daily_range_m: Optional[float] = None
 
     @property
     def normalized_level(self) -> float:
