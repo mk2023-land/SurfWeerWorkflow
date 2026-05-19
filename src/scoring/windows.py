@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 import statistics
 
+from src.config import SURF_THRESHOLDS
 from src.data.models import (
     ScoreBreakdown,
     SurfWindow,
@@ -16,7 +17,11 @@ from src.data.models import (
 logger = logging.getLogger(__name__)
 
 
-def cluster_consecutive_hours(scores: List[ScoreBreakdown], min_score: int = 60) -> List[List[ScoreBreakdown]]:
+def cluster_consecutive_hours(
+    scores: List[ScoreBreakdown],
+    min_score: int = None,
+    min_golf: float = 0.0,
+) -> List[List[ScoreBreakdown]]:
     """
     Cluster aaneengesloten uren met score boven minimum.
 
@@ -29,12 +34,18 @@ def cluster_consecutive_hours(scores: List[ScoreBreakdown], min_score: int = 60)
     """
     if not scores:
         return []
+    if min_score is None:
+        min_score = SURF_THRESHOLDS['surfable']
 
     clusters = []
     current_cluster = []
 
     for score in scores:
-        if score.total_score >= min_score:
+        # Beide voorwaarden moeten gelden: total-score boven combo-drempel
+        # ÉN golf_score boven wave-energy drempel. Dit voorkomt dat een uur
+        # met "alleen perfect tij/wind" maar zonder echte golven als
+        # surfbaar wordt geclusterd.
+        if score.total_score >= min_score and score.golf_score >= min_golf:
             current_cluster.append(score)
         else:
             if current_cluster:
@@ -127,7 +138,8 @@ def calculate_rarity_percentile(score: int, seasonal_baseline: dict) -> float:
 def create_surf_window(
     scores: List[ScoreBreakdown],
     triggers: List[AlertType],
-    seasonal_baseline: dict = None
+    seasonal_baseline: dict = None,
+    kind: str = 'surfable',
 ) -> SurfWindow:
     """
     Maak een SurfWindow object van een cluster van scores.
@@ -136,6 +148,7 @@ def create_surf_window(
         scores: Scores binnen het window
         triggers: Alert types die dit window triggerden
         seasonal_baseline: Seizoensbaseline data
+        kind: 'surfable' (shortboard-rideable) of 'longboard'
 
     Returns:
         SurfWindow object
@@ -165,7 +178,8 @@ def create_surf_window(
         triggers=triggers,
         stability=stability,
         rarity_percentile=rarity_percentile,
-        hourly_scores=scores
+        hourly_scores=scores,
+        kind=kind,
     )
 
 
@@ -175,7 +189,13 @@ def analyze_windows(
     seasonal_baseline: dict = None
 ) -> List[SurfWindow]:
     """
-    Analyseer alle surf windows in de forecast.
+    Analyseer alle surf windows in de forecast — zowel shortboard-surfable
+    (peak ≥ SURF_THRESHOLDS['surfable']) als longboard-only
+    (peak ≥ SURF_THRESHOLDS['longboard'] maar < surfable).
+
+    Een longboard-cluster dat een surfable-cluster volledig bevat wordt
+    overgeslagen om dubbeltelling te voorkomen — alleen "echte" longboard-
+    windows (die niet upgrade-baar zijn naar surfable) komen erbij.
 
     Args:
         hourly_scores: Uurlijkse scores
@@ -183,33 +203,58 @@ def analyze_windows(
         seasonal_baseline: Seizoensbaseline data
 
     Returns:
-        Lijst van SurfWindow objecten
+        Gecombineerde lijst SurfWindow objecten met `kind` ∈ {'surfable', 'longboard'}.
     """
     if triggers_dict is None:
         triggers_dict = {}
 
-    # Cluster uren
-    clusters = cluster_consecutive_hours(hourly_scores, min_score=60)
+    surfable_threshold = SURF_THRESHOLDS['surfable']
+    longboard_threshold = SURF_THRESHOLDS['longboard']
+    min_golf_surfable = SURF_THRESHOLDS['min_golf_surfable']
+    min_golf_longboard = SURF_THRESHOLDS['min_golf_longboard']
 
-    windows = []
-    for cluster in clusters:
-        # Verzamel triggers voor dit cluster
-        cluster_triggers = set()
-        for score in cluster:
-            timestamp = score.timestamp
-            if timestamp in triggers_dict:
-                cluster_triggers.update(triggers_dict[timestamp])
+    def _build(clusters, kind):
+        out = []
+        for cluster in clusters:
+            cluster_triggers = set()
+            for score in cluster:
+                if score.timestamp in triggers_dict:
+                    cluster_triggers.update(triggers_dict[score.timestamp])
+            out.append(create_surf_window(
+                scores=cluster,
+                triggers=list(cluster_triggers),
+                seasonal_baseline=seasonal_baseline,
+                kind=kind,
+            ))
+        return out
 
-        # Maak window
-        window = create_surf_window(
-            scores=cluster,
-            triggers=list(cluster_triggers),
-            seasonal_baseline=seasonal_baseline
-        )
-        windows.append(window)
+    surfable_clusters = cluster_consecutive_hours(
+        hourly_scores, min_score=surfable_threshold, min_golf=min_golf_surfable
+    )
+    surfable_windows = _build(surfable_clusters, 'surfable')
 
-    logger.info(f"Found {len(windows)} surf windows")
-    return windows
+    longboard_clusters = cluster_consecutive_hours(
+        hourly_scores, min_score=longboard_threshold, min_golf=min_golf_longboard
+    )
+    surfable_hours = {s.timestamp for w in surfable_windows for s in w.hourly_scores}
+
+    # Een longboard-cluster wordt alleen toegevoegd als peak NIET surfable is —
+    # anders is het al gedekt door de surfable-window.
+    longboard_only_windows = []
+    for cluster in longboard_clusters:
+        peak_score = max(s.total_score for s in cluster)
+        if peak_score >= surfable_threshold:
+            continue  # dit is een surfable window, al gedekt
+        # Check geen overlap met surfable hours (kan voorkomen rond drempel-flanks)
+        if any(s.timestamp in surfable_hours for s in cluster):
+            continue
+        longboard_only_windows.extend(_build([cluster], 'longboard'))
+
+    all_windows = surfable_windows + longboard_only_windows
+    logger.info(
+        f"Found {len(surfable_windows)} surfable + {len(longboard_only_windows)} longboard-only windows"
+    )
+    return all_windows
 
 
 def filter_alertworthy_windows(windows: List[SurfWindow]) -> List[SurfWindow]:

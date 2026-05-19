@@ -291,14 +291,24 @@ class TestDaylightFilter:
         score = score_hour(state)
         assert score.total_score > 60
 
-    def test_summer_dawn_4am_is_daylight(self):
-        """Zomer 04:30 NL → dawn-buffer dekt dit, geldt als daglicht."""
-        state = self._make_state(datetime(2025, 6, 21, 4, 30, 0))
+    def test_summer_pre_dawn_5am_in_may_is_night(self):
+        """Mei 05:00 NL → vóór zonsopgang (~05:47) + 0.5u civil-twilight buffer → night.
+
+        Dit was eerder een bug: een 1.5u morning buffer liet 05:00 in mei als
+        surfbaar door, waarna de LLM pre-dawn uren als 'piek' presenteerde.
+        """
+        state = self._make_state(datetime(2026, 5, 20, 5, 0, 0))
         score = score_hour(state)
-        assert score.total_score > 0  # daglicht → krijgt normale scoring
+        assert score.total_score == 0
+
+    def test_summer_dawn_5am_in_june_is_daylight(self):
+        """Juni 05:00 NL → zonsopgang ~05:20 lokaal, dus 05:00 valt binnen civil twilight (-0.5u)."""
+        state = self._make_state(datetime(2025, 6, 21, 5, 0, 0))
+        score = score_hour(state)
+        assert score.total_score > 0
 
     def test_summer_3am_is_night(self):
-        """Zomer 03:00 NL → vóór dawn-buffer → night → score 0."""
+        """Zomer 03:00 NL → ver vóór civil twilight → night → score 0."""
         state = self._make_state(datetime(2025, 6, 21, 3, 0, 0))
         score = score_hour(state)
         assert score.total_score == 0

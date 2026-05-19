@@ -298,7 +298,12 @@ def tide_state_at(tide_data: Dict[str, Any], when: datetime) -> TideState:
     """
     Bouw een `TideState` voor tijdstip `when` op basis van fetched tide data.
 
-    Pakt het dichtstbijzijnde event (10-min raster) en de eerstvolgende hoog/laag.
+    Pakt het dichtstbijzijnde event (10-min raster), de eerstvolgende hoog/laag,
+    en daarnaast `last_turn_time` (meest recente HW of LW) en `next_turn_time`
+    (eerstvolgende HW of LW) — beide nodig voor de tidal-current modeling
+    waarmee mid-cycle stroming-pieken worden onderscheiden van slack-water
+    kentering-flanks.
+
     Daily range wordt afgeleid uit de HW/LW direct rondom `when` — gebruikt voor
     spring/doodtij modulatie in de scoring (springtij ≥ 2.0m, doodtij < 1.6m).
     Valt terug op een veilige placeholder als er geen data is.
@@ -311,6 +316,8 @@ def tide_state_at(tide_data: Dict[str, Any], when: datetime) -> TideState:
             next_low=when + timedelta(hours=6),
             next_high=when + timedelta(hours=12),
             daily_range_m=None,
+            last_turn_time=None,
+            next_turn_time=None,
         )
 
     when_utc = _to_utc(when)
@@ -327,6 +334,18 @@ def tide_state_at(tide_data: Dict[str, Any], when: datetime) -> TideState:
         (l['timestamp'] for l in low_tides if _to_utc(l['timestamp']) >= when_utc),
         when + timedelta(hours=6),
     )
+
+    # Bepaal de meest recente kentering (HW of LW vóór `when`) en de
+    # eerstvolgende (HW of LW na `when`) — beide nodig voor tidal-current
+    # intensity berekening.
+    all_turns = (
+        [(_to_utc(h['timestamp']), h['timestamp']) for h in high_tides] +
+        [(_to_utc(l['timestamp']), l['timestamp']) for l in low_tides]
+    )
+    past_turns = [t for t in all_turns if t[0] <= when_utc]
+    future_turns = [t for t in all_turns if t[0] > when_utc]
+    last_turn_time = max(past_turns, key=lambda x: x[0])[1] if past_turns else None
+    next_turn_time = min(future_turns, key=lambda x: x[0])[1] if future_turns else None
 
     # Daily range = |dichtsbij HW level - dichtsbij LW level|. Pakt zo het
     # lokale semi-diurnale cycle, niet een willekeurige max-min over heel
@@ -346,6 +365,8 @@ def tide_state_at(tide_data: Dict[str, Any], when: datetime) -> TideState:
         next_low=next_low,
         next_high=next_high,
         daily_range_m=daily_range_m,
+        last_turn_time=last_turn_time,
+        next_turn_time=next_turn_time,
     )
 
 
@@ -384,13 +405,28 @@ async def fetch_early_warning_buoys() -> Dict[str, Any]:
 
 
 async def fetch_all_rws_data() -> Dict[str, Any]:
-    """Haal alle RWS-data op (primaire boei + early warning + tij)."""
+    """
+    Haal alle RWS-data op (primaire boei + early warning + tij).
+
+    Tide-station komt uit NOORDWIJK.tide_station ('ijmuiden') — closer fit
+    dan scheveningen voor de Noordwijk-cyclus. Als ijmuiden geen data
+    levert, fallback naar scheveningen (impliciet in fetch_tide_predictions,
+    die een lege placeholder returnt).
+    """
+    from src.config import NOORDWIJK
     client = RWSClient()
+    primary_station = NOORDWIJK.tide_station
     primary_buoy, early_warning, tide = await asyncio.gather(
         fetch_primary_buoy_data(),
         fetch_early_warning_buoys(),
-        client.fetch_tide_predictions('scheveningen', days_ahead=7),
+        client.fetch_tide_predictions(primary_station, days_ahead=7),
     )
+    # Fallback: als primaire station leeg blijft, probeer scheveningen
+    if (not tide.get('tide_events')) and primary_station != 'scheveningen':
+        logger.warning(
+            f"Tide station '{primary_station}' leverde geen data; fallback naar scheveningen"
+        )
+        tide = await client.fetch_tide_predictions('scheveningen', days_ahead=7)
     return {
         'primary_buoy': primary_buoy,
         'early_warning_buoys': early_warning,

@@ -114,6 +114,12 @@ class TideState:
     # Dagelijkse tij-range (HW - LW) in meters. Gebruikt voor spring/doodtij
     # modulatie van het optimale tij-venster. None = onbekend → modulator uit.
     daily_range_m: Optional[float] = None
+    # Tijden van het meest recente en eerstvolgende kerntij-event (HW of LW).
+    # Gebruikt voor tidal-current modeling: stroming is 0 op een kentering
+    # (HW/LW), piekt mid-cycle, en is asymmetrisch (HW→LW kan langer duren
+    # dan LW→HW in NL door semi-diurnale ongelijkheid).
+    last_turn_time: Optional[datetime] = None
+    next_turn_time: Optional[datetime] = None
 
     @property
     def normalized_level(self) -> float:
@@ -126,6 +132,54 @@ class TideState:
         total_range = 3.0  # Typische getij variatie in NL
         normalized = (self.level_m + 1.5) / total_range  # -1.5m = laag, +1.5m = hoog
         return max(0.0, min(1.0, normalized))
+
+    def tidal_current_intensity(self, now: datetime) -> float:
+        """
+        Schatting van de horizontale tij-stroming-sterkte op moment `now`,
+        genormaliseerd op 0.0 (slack water) tot ~1.2 (springtij mid-cycle).
+
+        Theorie:
+        - Op een kentering (HW of LW) is de stroming nul (slack water).
+        - Halverwege het halve-tij-venster bereikt de stroming maximum.
+        - Voor één halve cyclus: intensity = sin(π · fraction_through),
+          met fraction_through = tijd_sinds_kentering / lengte_half_cycle.
+        - Spring/neap modulator: bij springtij (daily_range ≥ 2.0m) wordt
+          de stroming sterker, bij doodtij (< 1.6m) zwakker.
+
+        Asymmetrische half-cycle lengte (typisch in NL: HW→LW ~6-8u,
+        LW→HW ~4-6u) wordt expliciet meegenomen via last_turn_time en
+        next_turn_time.
+
+        Returns 0.0 als kentering-tijden niet beschikbaar zijn.
+        """
+        import math
+        if not (self.last_turn_time and self.next_turn_time):
+            return 0.0
+
+        # Naive timestamp handling consistent met de rest van de codebase:
+        # neem ruwe datetime-arithmetiek aan (alle tijden in dezelfde TZ).
+        def _strip(d):
+            return d.replace(tzinfo=None) if d.tzinfo else d
+
+        now_n = _strip(now)
+        last_n = _strip(self.last_turn_time)
+        next_n = _strip(self.next_turn_time)
+
+        half_cycle_h = (next_n - last_n).total_seconds() / 3600.0
+        if half_cycle_h <= 0:
+            return 0.0
+
+        elapsed_h = (now_n - last_n).total_seconds() / 3600.0
+        fraction = max(0.0, min(1.0, elapsed_h / half_cycle_h))
+        intensity = math.sin(math.pi * fraction)
+
+        # Spring/neap modulator. Range ~1.6m = doodtij (~0.8x),
+        # ~2.0m = gemiddelde springtij (~1.0x), ~2.5m+ = extreme spring (~1.2x).
+        if self.daily_range_m is not None:
+            range_factor = max(0.6, min(1.25, self.daily_range_m / 2.0))
+            intensity *= range_factor
+
+        return intensity
 
 
 @dataclass
@@ -172,13 +226,43 @@ class ScoreBreakdown:
         return round(self.golf_score + self.wind_score + self.tide_score + self.swell_dir_bonus, 1)
 
     def is_surfable(self) -> bool:
-        """Controleer of score hoog genoeg is voor surfen."""
-        return self.total_score >= 60
+        """
+        Controleer of score hoog genoeg is voor (shortboard) surfen.
+
+        Twee voorwaarden: total_score boven drempel ÉN golf_score zelf hoog
+        genoeg. Anders kan een uur met perfect wind/tij/richting maar geen
+        echte golven onterecht als surfbaar uitgekomen.
+        """
+        from src.config import SURF_THRESHOLDS
+        return (
+            self.total_score >= SURF_THRESHOLDS['surfable'] and
+            self.golf_score >= SURF_THRESHOLDS['min_golf_surfable']
+        )
+
+    def is_longboard_rideable(self) -> bool:
+        """
+        Controleer of score hoog genoeg is voor longboard-rideable condities.
+
+        Strikt zwakker dan `is_surfable`: een uur dat surfbaar is, is ook
+        longboard-rideable; een longboard-uur is niet noodzakelijk shortboard.
+        Zelfde dubbele voorwaarde — score + minimum-golf.
+        """
+        from src.config import SURF_THRESHOLDS
+        return (
+            self.total_score >= SURF_THRESHOLDS['longboard'] and
+            self.golf_score >= SURF_THRESHOLDS['min_golf_longboard']
+        )
 
 
 @dataclass
 class SurfWindow:
-    """Een aaneengesloten periode van goede surfcondities."""
+    """Een aaneengesloten periode van goede surfcondities.
+
+    `kind` onderscheidt 'surfable' (≥SURF_THRESHOLDS['surfable']) van
+    'longboard' (alleen ≥SURF_THRESHOLDS['longboard']). Alleen 'surfable'
+    windows zijn alert-candidate; 'longboard' windows verschijnen alleen
+    in de digest om Tobias' "longboard prima" momenten te dekken.
+    """
     start: datetime
     end: datetime
     peak_score: int
@@ -188,6 +272,7 @@ class SurfWindow:
     stability: float           # 0.0-1.0, hoe stabiel de score is
     rarity_percentile: float   # 0-100, vs seizoensbaseline
     hourly_scores: List[ScoreBreakdown] = field(default_factory=list)
+    kind: str = 'surfable'     # 'surfable' of 'longboard'
 
     @property
     def duration_hours(self) -> float:
@@ -196,7 +281,15 @@ class SurfWindow:
 
     @property
     def is_alertworthy(self) -> bool:
-        """Controleer of dit window alert-waardig is."""
+        """
+        Controleer of dit window alert-waardig is.
+
+        Longboard-only windows zijn nooit alert-waardig — die zijn voor
+        ervaren surfers met longboards die rideability accepteren onder
+        de shortboard-drempel.
+        """
+        if self.kind != 'surfable':
+            return False
         return (
             self.peak_score >= 75 and
             len(self.triggers) >= 1 and

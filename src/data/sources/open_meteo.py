@@ -269,8 +269,14 @@ class OpenMeteoClient:
         """
         Converteer Open-Meteo marine data naar WaveSpectrum.
 
-        Opmerking: Open-Meteo geeft al gesplitste data (wind_wave vs swell_wave),
-        dus we kunnen dit direct gebruiken.
+        Open-Meteo splitst al in wind_wave_* (lokaal opgewekt) vs swell_wave_*
+        (van elders gepropageerd). Voor wind_wave kiezen we `peak_period` (Tp)
+        boven `period` (Tm02): Tp is wat surfers en pro forecasters gebruiken
+        om swell-vorm te beoordelen — Tm02 is een spectraal gemiddelde dat
+        consistent lager uitvalt en chop/wind-sea als "korter" laat ogen.
+
+        Open-Meteo levert geen swell_wave_peak_period; daar blijft `period` de
+        beste beschikbare proxy.
         """
         timestamp = marine_data['timestamp']
 
@@ -281,7 +287,8 @@ class OpenMeteoClient:
         peaks = []
 
         wind_wave_height = _num('wind_wave_height')
-        wind_wave_period = _num('wind_wave_period')
+        # Voorkeur: peak period (Tp). Fallback: mean period (Tm02) — bij missing data.
+        wind_wave_period = _num('wind_wave_peak_period') or _num('wind_wave_period')
         if wind_wave_height > 0.1 and wind_wave_period > 0:
             peaks.append(SpectralPeak(
                 frequency_mhz=1000 / wind_wave_period,
