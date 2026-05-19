@@ -78,6 +78,38 @@ def _hours_to(when: datetime, target: Optional[datetime]) -> Optional[float]:
     return round(delta, 1) if delta >= 0 else None
 
 
+def peak_block(window) -> Dict:
+    """
+    Vind de aaneengesloten uren binnen `window` waar de totaal-score binnen 10
+    punten van de piek zit. Levert een mini-venster ("14:00-16:00") binnen het
+    hoofdvenster ("14:00-19:00") zodat de LLM kan schrijven "14-19 surfbaar,
+    piek 14-16u".
+
+    Returns: {"start_time", "end_time", "duration_hours"} of {} als window leeg.
+    """
+    scores = window.hourly_scores
+    if not scores:
+        return {}
+
+    peak_total = max(s.total_score for s in scores)
+    threshold = peak_total - 10.0
+
+    peak_idx = max(range(len(scores)), key=lambda i: scores[i].total_score)
+
+    left = peak_idx
+    while left > 0 and scores[left - 1].total_score >= threshold:
+        left -= 1
+    right = peak_idx
+    while right < len(scores) - 1 and scores[right + 1].total_score >= threshold:
+        right += 1
+
+    return {
+        "start_time": scores[left].timestamp.strftime("%H:%M"),
+        "end_time": scores[right].timestamp.strftime("%H:%M"),
+        "duration_hours": right - left + 1,
+    }
+
+
 def _tide_window_quality(tide_norm: float, dominant_period_s: float) -> str:
     """
     Label tij-venster kwaliteit op basis van niveau + dominante periode. Gebruikt
@@ -152,21 +184,33 @@ STIJL & LENGTE:
 - Max ~500 tekens. Liever rond de 350-480 — kort en pittig, niet kaal.
 
 PER DAG IN `days` (vandaag → +3, dus 4 dagen) schrijf je 1-2 lopende zinnen met:
-1. Een tijdsaanduiding:
-   - Surfable (best_window.is_surfable=true): noem het tijdblok "start_time-end_time".
-     ALS best_window.duration_hours > 3 noem je ALTIJD ook best_window.peak_time als
-     het top-moment binnen het venster ("top rond 10u", "piek 14:00").
-   - Anders: gebruik peak_hour.time als anker (bv. "rond 14u") of zeg "flat".
+1. Een tijdsaanduiding — STRIKT:
+   - ALLEEN als best_window.is_surfable=true mag je een tijdblok
+     "start_time-end_time" noemen. Dit is een echt surfvenster van ≥1 uur uit
+     de data ("14:00-19:00 surfbaar"). ALS best_window.duration_hours > 3,
+     noem je ALTIJD ook best_window.peak_block als de top-uren binnen het
+     venster, als RANGE ("piek 14-16u", "top tussen 14:00-16:00"). Voor
+     korte vensters (≤3u) of als peak_block.duration_hours == 1 mag je
+     best_window.peak_time als enkel tijdstip noemen ("piek 15u").
+   - Als best_window.is_surfable=false: NOOIT een tijdblok of "HH:MM-HH:MM"
+     opbouwen. Gebruik dan peak_hour.time als één enkel anker-punt
+     ("rond 14u") of zeg "flat". Combineer peak_hour.time NIET met
+     next_high_time/next_low_time tot een nep-venster — dat zijn losse
+     tij-events, geen venster-grenzen.
    - Vermeld NOOIT uren in het donker — alle peak_hours zijn al gefilterd op
      daglicht, dus blijf binnen wat de data geeft.
 2. Golfhoogte (m) + periode (s) + golfrichting (wave_direction_compass).
 3. Wind: speed (kn) + wind_direction_compass + wind_label (aflandig / zijaflandig /
    aanlandig).
-4. Tij — verweven in de zin, niet als losse label:
-   - Bij opgaand met hours_to_next_high tussen 1-3u: "opkomend tot rond [HW-tijd]"
-     of "push naar hoog water rond [HW-tijd]".
-   - Bij afgaand met hours_to_next_low tussen 1-3u: "afgaand naar laag rond
-     [LW-tijd]" of "tij valt naar laag [LW-tijd]".
+4. Tij — verweven in de zin, NIET als window-grens:
+   - tide_summary.next_high_time / next_low_time zijn TIJ-EVENTS (moment van
+     HW of LW), geen surfvenster-grenzen. Verwoord ze als losse referenties:
+     "hoog rond 14u", "laag rond 17u". NIET "surfen 10:00-14:00" alleen omdat
+     HW om 14u is.
+   - Bij opgaand met hours_to_next_high tussen 1-3u mag je "opkomend richting
+     hoog rond [HW-tijd]" zeggen — geeft de richting van het tij aan.
+   - Bij afgaand met hours_to_next_low tussen 1-3u: "afgaand richting laag rond
+     [LW-tijd]".
    - Anders: noem fase + eerstvolgende keerpunt ("opgaand, hoog rond 14u").
    - tide_window_quality="good" → mag je benoemen ("ideaal tij-venster",
      "lekker mid-tij"). Bij "poor" mag je een kanttekening maken ("te laag tij",
@@ -356,6 +400,7 @@ class SMSGenerator:
                 "end_time": best_window.end.strftime("%H:%M"),
                 "duration_hours": round(best_window.duration_hours, 1),
                 "peak_time": best_window.peak_hour.strftime("%H:%M"),
+                "peak_block": peak_block(best_window),
                 "peak_score_0_100": int(best_window.peak_score),
             }
         else:

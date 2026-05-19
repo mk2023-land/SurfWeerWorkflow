@@ -194,6 +194,62 @@ class TestTimingFitBonus:
         assert too_close == base
 
 
+class TestPeakBlock:
+    """Test peak_block helper: range van top-uren binnen een SurfWindow."""
+
+    def _make_window(self, score_sequence):
+        """Bouw een SurfWindow met de gegeven uurlijkse total-scores."""
+        from src.data.models import SurfWindow, ScoreBreakdown
+        from datetime import timedelta
+        start_ts = datetime(2025, 8, 6, 12, 0, 0)
+        breakdowns = []
+        for i, total in enumerate(score_sequence):
+            # Verdeel score-totaal over componenten zodat total_score == target.
+            # Simplest: zet golf=total (cap 38 → wat hoger schaalt naar 0).
+            ts = start_ts + timedelta(hours=i)
+            breakdowns.append(ScoreBreakdown(
+                timestamp=ts, golf_score=float(total),
+                wind_score=0.0, tide_score=0.0, swell_dir_bonus=0.0,
+            ))
+        peak_idx = max(range(len(breakdowns)), key=lambda i: breakdowns[i].total_score)
+        return SurfWindow(
+            start=breakdowns[0].timestamp,
+            end=breakdowns[-1].timestamp,
+            peak_score=int(max(score_sequence)),
+            median_score=int(score_sequence[len(score_sequence) // 2]),
+            peak_hour=breakdowns[peak_idx].timestamp,
+            triggers=[], stability=0.9, rarity_percentile=80,
+            hourly_scores=breakdowns,
+        )
+
+    def test_peak_block_contracts_to_high_score_range(self):
+        """Window 12-18u met scores [62,75,85,80,65,60] → peak_block 13-15u (binnen 10pt van piek 85)."""
+        from src.llm.generator import peak_block
+        window = self._make_window([62, 75, 85, 80, 65, 60])
+        block = peak_block(window)
+        assert block["start_time"] == "13:00"
+        assert block["end_time"] == "15:00"
+        assert block["duration_hours"] == 3
+
+    def test_peak_block_full_window_when_flat(self):
+        """Bij vlakke scores (alle binnen 10pt) is peak_block het hele window."""
+        from src.llm.generator import peak_block
+        window = self._make_window([78, 80, 82, 79, 81])
+        block = peak_block(window)
+        assert block["start_time"] == "12:00"
+        assert block["end_time"] == "16:00"
+        assert block["duration_hours"] == 5
+
+    def test_peak_block_single_hour_when_sharp_peak(self):
+        """Scherpe piek (één uur ver boven de rest) levert 1-uurs peak_block op."""
+        from src.llm.generator import peak_block
+        window = self._make_window([62, 64, 95, 63, 61])
+        block = peak_block(window)
+        assert block["start_time"] == "14:00"
+        assert block["end_time"] == "14:00"
+        assert block["duration_hours"] == 1
+
+
 class TestDaylightFilter:
     """Test dat night-uren in score_hour een 0-score krijgen (blok 3)."""
 
