@@ -17,6 +17,7 @@ from typing import Dict, List, Optional, Tuple
 import anthropic
 
 from src.config import ANTHROPIC_CONFIG, NOORDWIJK
+from src.util import to_utc
 from src.data.models import (
     AlertCandidate,
     HourState,
@@ -65,6 +66,44 @@ def is_blocked_by_ijmuiden_pier(swell_dir_deg: int) -> bool:
     return d >= blocked_min or d <= blocked_max
 
 
+def _hours_to(when: datetime, target: Optional[datetime]) -> Optional[float]:
+    """
+    Uren tussen `when` en `target` (positief als target in toekomst, anders None).
+    Naive timestamps worden als Europe/Amsterdam local geïnterpreteerd (consistent
+    met Open-Meteo input), aware timestamps converteren naar UTC.
+    """
+    if target is None:
+        return None
+    delta = (to_utc(target) - to_utc(when)).total_seconds() / 3600.0
+    return round(delta, 1) if delta >= 0 else None
+
+
+def _tide_window_quality(tide_norm: float, dominant_period_s: float) -> str:
+    """
+    Label tij-venster kwaliteit op basis van niveau + dominante periode. Gebruikt
+    dezelfde venster-grenzen als score_tide_component zodat tekst en score op
+    elkaar aansluiten.
+
+    - "good": binnen optimaal venster (groundswell ruim, wind-sea smal)
+    - "fair": net buiten venster — surfen kan maar niet ideaal
+    - "poor": ver buiten venster (extreem hoog/laag)
+    """
+    if dominant_period_s >= 9:
+        lo, hi = 0.20, 0.90
+    elif dominant_period_s >= 7:
+        lo, hi = 0.35, 0.85
+    else:
+        lo, hi = 0.50, 0.90
+
+    if lo <= tide_norm <= hi:
+        return "good"
+    # 'Fair' = tot ~30% buiten venster aan dezelfde kant.
+    fair_margin = 0.15
+    if (lo - fair_margin) <= tide_norm <= (hi + fair_margin):
+        return "fair"
+    return "poor"
+
+
 def moon_phase_info(when: datetime) -> Tuple[float, str, bool]:
     """
     Simpele maan-fase berekening (synodische maand 29.53 dagen, referentie nieuwe maan
@@ -102,29 +141,41 @@ def moon_phase_info(when: datetime) -> Tuple[float, str, bool]:
     return age, label, is_spring
 
 
-SYSTEM_PROMPT = """Je schrijft surf-SMS'jes voor Noordwijk in de stijl van referentie-forecaster van
+SYSTEM_PROMPT = """Je schrijft surf-berichten voor Noordwijk in de stijl van referentie-forecaster van
 de referentie-forecaster. Lopende zinnen, surfers-jargon mag, géén overdrijving, géén voorbehouden.
 
 STIJL & LENGTE:
-- Schrijf SPREEKTAAL, geen telegram-stijl. Volle zinnen, mag een grapje, mag een korte
-  duiding ("wind blijft te hard", "swell loopt af", "mss zaterdag wat nieuws").
+- Schrijf SPREEKTAAL met lopende zinnen, geen telegram-stijl. Mag een grapje, mag
+  een korte duiding ("wind blijft te hard", "swell loopt af", "mss zaterdag wat
+  nieuws", "ochtend ziet er aardig uit voor longboarders").
 - Begin met "Nwijk [day_label_today]: " (of "NWIJK ALERT [datum]" bij alerts).
-- Max ~480 tekens (= 3 SMS-segmenten). Liever rond de 300-450, niet te kort.
+- Max ~500 tekens. Liever rond de 350-480 — kort en pittig, niet kaal.
 
-PER DAG IN `days` (vandaag → +3, dus 4 dagen) schrijf je ÉÉN VOLLE ZIN met:
+PER DAG IN `days` (vandaag → +3, dus 4 dagen) schrijf je 1-2 lopende zinnen met:
 1. Een tijdsaanduiding:
    - Surfable (best_window.is_surfable=true): noem het tijdblok "start_time-end_time".
      ALS best_window.duration_hours > 3 noem je ALTIJD ook best_window.peak_time als
-     het top-moment binnen het venster ("top rond 10u", "piek 14:00", o.i.d.).
+     het top-moment binnen het venster ("top rond 10u", "piek 14:00").
    - Anders: gebruik peak_hour.time als anker (bv. "rond 14u") of zeg "flat".
+   - Vermeld NOOIT uren in het donker — alle peak_hours zijn al gefilterd op
+     daglicht, dus blijf binnen wat de data geeft.
 2. Golfhoogte (m) + periode (s) + golfrichting (wave_direction_compass).
 3. Wind: speed (kn) + wind_direction_compass + wind_label (aflandig / zijaflandig /
    aanlandig).
-4. Tij: phase_at_peak (opgaand of afgaand). Mag aangevuld met next_high_time of
-   next_low_time als die op die dag valt.
+4. Tij — verweven in de zin, niet als losse label:
+   - Bij opgaand met hours_to_next_high tussen 1-3u: "opkomend tot rond [HW-tijd]"
+     of "push naar hoog water rond [HW-tijd]".
+   - Bij afgaand met hours_to_next_low tussen 1-3u: "afgaand naar laag rond
+     [LW-tijd]" of "tij valt naar laag [LW-tijd]".
+   - Anders: noem fase + eerstvolgende keerpunt ("opgaand, hoog rond 14u").
+   - tide_window_quality="good" → mag je benoemen ("ideaal tij-venster",
+     "lekker mid-tij"). Bij "poor" mag je een kanttekening maken ("te laag tij",
+     "loopt vol bij hoog water").
 
 EXTRA SIGNALEN (kort vermelden wanneer relevant):
-- tide_context.spring_tide=true → "springtij" (sterker stroming, korter window).
+- tide_context.spring_tide=true of tide_summary.spring_neap_label="springtij" →
+  noem "springtij" (sterker stroming, krapper venster).
+- tide_summary.spring_neap_label="doodtij" → mag je benoemen ("rustig doodtij").
 - peak_hour.swell_refracts_around_ijmuiden=true → noem dat de pier van IJmuiden
   hindert / afschermt (klassieke NNO-refractie).
 - peak_hour.swell_type="groundswell" → benoem groundswell + periode ("8s groundswell").
@@ -132,9 +183,10 @@ EXTRA SIGNALEN (kort vermelden wanneer relevant):
 STRIKTE REGELS:
 1. Gebruik UITSLUITEND getallen die in de JSON-input staan. Niet interpoleren, niet
    afronden. Eenheden zijn EXPLICIET in de veldnaam (m/s/kn/deg). Score-getallen
-   (0-100) vermeld je NIET in de SMS.
+   (0-100) vermeld je NIET.
 2. Eindig met " Cam: surfweer.nl/webcams/noordwijk/"
 3. Geen "denk ik" / "waarschijnlijk" / "misschien" / emoji / disclaimers.
+4. Geen night-uren noemen (alles wat in de data zit is overdag).
 """
 
 
@@ -324,10 +376,18 @@ class SMSGenerator:
             }.get(dominant.type, "onbekend")
 
         wave_dir_deg = dominant.direction_deg if dominant else int(spectrum.mean_direction)
+        dominant_period_s = dominant.period_s if dominant else spectrum.mean_period
+
+        # Tij-detail voor LLM: niveau, fase, en uren tot eerstvolgende HW/LW —
+        # geeft de LLM materiaal om referentie-forecaster-stijl te schrijven ("opkomend tot 14u",
+        # "rond hoog water", "afgaand tot 17u laag").
+        hours_to_high = _hours_to(state.timestamp, state.tide.next_high)
+        hours_to_low = _hours_to(state.timestamp, state.tide.next_low)
+
         return {
             "time": state.timestamp.strftime("%H:%M"),
             "wave_height_m": round(spectrum.significant_height_total, 1),
-            "wave_period_s": round(dominant.period_s if dominant else spectrum.mean_period, 1),
+            "wave_period_s": round(dominant_period_s, 1),
             "wave_direction_deg": int(wave_dir_deg),
             "wave_direction_compass": degrees_to_compass(wave_dir_deg),
             "swell_type": swell_type_label or "onbekend",
@@ -337,6 +397,13 @@ class SMSGenerator:
             "wind_direction_deg": int(state.wind.direction_deg),
             "wind_direction_compass": degrees_to_compass(state.wind.direction_deg),
             "wind_label": wind_label_for_noordwijk(state.wind.direction_deg),
+            "tide_level_m": round(state.tide.level_m, 2),
+            "tide_phase": state.tide.phase,
+            "hours_to_next_high": hours_to_high,
+            "hours_to_next_low": hours_to_low,
+            "tide_window_quality": _tide_window_quality(
+                state.tide.normalized_level, dominant_period_s
+            ),
         }
 
     def _tide_summary_for_day(self, day_states: List[HourState], peak_state: HourState) -> Dict:
@@ -345,11 +412,20 @@ class SMSGenerator:
         # next_high/next_low zijn al berekend per HourState; pak de eerste van deze dag.
         next_high = peak_state.tide.next_high
         next_low = peak_state.tide.next_low
+        # Daily range geeft springtij-context (≥2.0m = springtij, sterke stroming).
+        spring_label = None
+        if tide.daily_range_m is not None:
+            if tide.daily_range_m >= 2.0:
+                spring_label = "springtij"
+            elif tide.daily_range_m < 1.6:
+                spring_label = "doodtij"
         return {
             "phase_at_peak": tide.phase,                       # opgaand/afgaand/onbekend
             "level_m_at_peak": round(tide.level_m, 2),
             "next_high_time": next_high.strftime("%H:%M") if next_high else None,
             "next_low_time": next_low.strftime("%H:%M") if next_low else None,
+            "daily_range_m": round(tide.daily_range_m, 2) if tide.daily_range_m else None,
+            "spring_neap_label": spring_label,
         }
 
     # ---------- fallback templates ----------

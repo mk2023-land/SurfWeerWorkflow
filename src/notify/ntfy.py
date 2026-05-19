@@ -16,6 +16,8 @@ from datetime import datetime
 
 import httpx
 
+from src.notify import format_nl_date
+
 logger = logging.getLogger(__name__)
 
 
@@ -39,7 +41,7 @@ class NtfyNotifier:
 
     def send_digest(self, message: str) -> dict:
         return self._post(
-            title=f"Nwijk surfdigest {datetime.now().strftime('%a %d-%m')}",
+            title=f"Surf-update Noordwijk van {format_nl_date(datetime.now())}",
             body=message,
             priority='3',  # normal
         )

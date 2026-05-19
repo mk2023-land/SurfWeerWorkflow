@@ -3,9 +3,11 @@ Per-uur scoring module.
 Berekent scores voor golf, wind, tij en swell richting.
 """
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional
 import math
+
+from src.util import to_utc
 
 from src.data.models import (
     HourState,
@@ -26,6 +28,7 @@ from src.scoring.deconstruct import (
     has_groundswell_through_windsea,
     is_clean_swell
 )
+from src.scoring.daylight import is_daylight_noordwijk
 
 logger = logging.getLogger(__name__)
 
@@ -227,16 +230,12 @@ def _dominant_period_for_tide(spectrum: WaveSpectrum) -> float:
 def _hours_until(when: datetime, target: Optional[datetime]) -> Optional[float]:
     """
     Aantal uren tussen `when` en `target` (positief als target in toekomst).
-    Tz-naive timestamps worden als UTC geïnterpreteerd zodat we naive (Open-Meteo)
-    en aware (RWS) datetimes veilig kunnen vergelijken.
+    Naive datetimes (Open-Meteo) worden als Europe/Amsterdam local geïnterpreteerd,
+    aware datetimes (RWS) worden naar UTC genormaliseerd — beide consistent.
     """
     if target is None:
         return None
-    if when.tzinfo is None:
-        when = when.replace(tzinfo=timezone.utc)
-    if target.tzinfo is None:
-        target = target.replace(tzinfo=timezone.utc)
-    delta = (target - when).total_seconds() / 3600.0
+    delta = (to_utc(target) - to_utc(when)).total_seconds() / 3600.0
     return delta if delta >= 0 else None
 
 
@@ -250,6 +249,17 @@ def score_hour(state: HourState) -> ScoreBreakdown:
     Returns:
         ScoreBreakdown met component scores en totaal
     """
+    # Daglicht-filter: 's nachts surfen is op Noordwijk niet zinvol. Score = 0
+    # zodat night-uren niet in surf-windows of als piek-uren verschijnen.
+    if not is_daylight_noordwijk(state.timestamp):
+        return ScoreBreakdown(
+            timestamp=state.timestamp,
+            golf_score=0.0,
+            wind_score=0.0,
+            tide_score=0.0,
+            swell_dir_bonus=0.0,
+        )
+
     # Golf component
     golf_score = score_golf_component(state.wave_spectrum)
 

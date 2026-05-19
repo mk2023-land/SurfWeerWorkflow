@@ -9,6 +9,11 @@ import os
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Deterministisch timestamp midden op de dag (zomertijd 11:00 NL = 09:00 UTC).
+# Voorkomt flaky tests bij datetime.now() — score_hour past sinds blok 3 een
+# daglicht-filter toe waardoor night-uren een 0-score krijgen.
+_FIXED_TS = datetime(2025, 8, 6, 9, 0, 0)
+
 from src.data.models import (
     WaveSpectrum,
     WindState,
@@ -30,7 +35,7 @@ class TestGolfScoring:
     def test_low_wave_score(self):
         """Lage golf (<0.5m) geeft 0 punten."""
         spectrum = WaveSpectrum(
-            timestamp=datetime.now(),
+            timestamp=_FIXED_TS,
             significant_height_total=0.3,
             mean_period=5.0,
             mean_direction=270,
@@ -42,7 +47,7 @@ class TestGolfScoring:
     def test_medium_wave_score(self):
         """Medium golf (1.0m) geeft ~20 punten."""
         spectrum = WaveSpectrum(
-            timestamp=datetime.now(),
+            timestamp=_FIXED_TS,
             significant_height_total=1.0,
             mean_period=7.0,
             mean_direction=270,
@@ -62,7 +67,7 @@ class TestGolfScoring:
         )
 
         spectrum = WaveSpectrum(
-            timestamp=datetime.now(),
+            timestamp=_FIXED_TS,
             significant_height_total=1.5,
             mean_period=10.0,
             mean_direction=330,
@@ -189,6 +194,60 @@ class TestTimingFitBonus:
         assert too_close == base
 
 
+class TestDaylightFilter:
+    """Test dat night-uren in score_hour een 0-score krijgen (blok 3)."""
+
+    def _make_state(self, ts: datetime):
+        """Mini-helper: surfbaar weer met willekeurig tijdstip."""
+        peak = SpectralPeak(
+            frequency_mhz=100, period_s=10.0, height_m=1.2,
+            direction_deg=300, type=SwellType.GROUND_SWELL
+        )
+        return HourState(
+            timestamp=ts,
+            location_name="Noordwijk",
+            wave_spectrum=WaveSpectrum(
+                timestamp=ts, significant_height_total=1.2,
+                mean_period=10, mean_direction=300, peaks=[peak]
+            ),
+            wind=WindState(speed_kn=4, direction_deg=90),
+            tide=TideState(
+                level_m=0.5, phase="opgaand",
+                next_low=ts, next_high=ts,
+            ),
+        )
+
+    def test_summer_night_scores_zero(self):
+        """Zomer 23:00 NL (na sunset + buffer) → night → score 0."""
+        state = self._make_state(datetime(2025, 6, 21, 23, 0, 0))
+        score = score_hour(state)
+        assert score.total_score == 0
+
+    def test_winter_early_morning_is_dark(self):
+        """Winter 06:00 NL (zonsopgang pas ~08:50) → night → score 0."""
+        state = self._make_state(datetime(2025, 12, 21, 6, 0, 0))
+        score = score_hour(state)
+        assert score.total_score == 0
+
+    def test_summer_daytime_scores_normally(self):
+        """Zomer 09:00 NL → vol daglicht → hoge score."""
+        state = self._make_state(datetime(2025, 6, 21, 9, 0, 0))
+        score = score_hour(state)
+        assert score.total_score > 60
+
+    def test_summer_dawn_4am_is_daylight(self):
+        """Zomer 04:30 NL → dawn-buffer dekt dit, geldt als daglicht."""
+        state = self._make_state(datetime(2025, 6, 21, 4, 30, 0))
+        score = score_hour(state)
+        assert score.total_score > 0  # daglicht → krijgt normale scoring
+
+    def test_summer_3am_is_night(self):
+        """Zomer 03:00 NL → vóór dawn-buffer → night → score 0."""
+        state = self._make_state(datetime(2025, 6, 21, 3, 0, 0))
+        score = score_hour(state)
+        assert score.total_score == 0
+
+
 class TestSwellDirectionBonus:
     """Test swell richting bonus."""
 
@@ -241,7 +300,7 @@ class TestValidatieCases:
         )
 
         spectrum = WaveSpectrum(
-            timestamp=datetime.now(),
+            timestamp=_FIXED_TS,
             significant_height_total=1.4,
             mean_period=8.0,
             mean_direction=315,
@@ -251,15 +310,15 @@ class TestValidatieCases:
         wind = WindState(speed_kn=4, direction_deg=180)  # Z offshore
 
         hour_state = HourState(
-            timestamp=datetime.now(),
+            timestamp=_FIXED_TS,
             location_name="Noordwijk",
             wave_spectrum=spectrum,
             wind=wind,
             tide=TideState(
                 level_m=0.5,
                 phase="opgaand",
-                next_low=datetime.now(),
-                next_high=datetime.now()
+                next_low=_FIXED_TS,
+                next_high=_FIXED_TS
             )
         )
 
@@ -283,7 +342,7 @@ class TestValidatieCases:
         )
 
         spectrum = WaveSpectrum(
-            timestamp=datetime.now(),
+            timestamp=_FIXED_TS,
             significant_height_total=0.9,
             mean_period=9.0,
             mean_direction=340,
@@ -293,15 +352,15 @@ class TestValidatieCases:
         wind = WindState(speed_kn=2, direction_deg=180)  # Z offshore, heel rustig
 
         hour_state = HourState(
-            timestamp=datetime.now(),
+            timestamp=_FIXED_TS,
             location_name="Noordwijk",
             wave_spectrum=spectrum,
             wind=wind,
             tide=TideState(
                 level_m=0.6,
                 phase="afgaand",
-                next_low=datetime.now(),
-                next_high=datetime.now()
+                next_low=_FIXED_TS,
+                next_high=_FIXED_TS
             )
         )
 
@@ -316,7 +375,7 @@ class TestValidatieCases:
         Verwacht: score <15.
         """
         spectrum = WaveSpectrum(
-            timestamp=datetime.now(),
+            timestamp=_FIXED_TS,
             significant_height_total=0.3,
             mean_period=4.0,
             mean_direction=270,
@@ -326,15 +385,15 @@ class TestValidatieCases:
         wind = WindState(speed_kn=6, direction_deg=90)  # O
 
         hour_state = HourState(
-            timestamp=datetime.now(),
+            timestamp=_FIXED_TS,
             location_name="Noordwijk",
             wave_spectrum=spectrum,
             wind=wind,
             tide=TideState(
                 level_m=0.2,
                 phase="afgaand",
-                next_low=datetime.now(),
-                next_high=datetime.now()
+                next_low=_FIXED_TS,
+                next_high=_FIXED_TS
             )
         )
 
@@ -357,7 +416,7 @@ class TestValidatieCases:
         )
 
         spectrum = WaveSpectrum(
-            timestamp=datetime.now(),
+            timestamp=_FIXED_TS,
             significant_height_total=1.2,
             mean_period=10.0,
             mean_direction=10,
@@ -367,15 +426,15 @@ class TestValidatieCases:
         wind = WindState(speed_kn=4, direction_deg=180)  # Z offshore
 
         hour_state = HourState(
-            timestamp=datetime.now(),
+            timestamp=_FIXED_TS,
             location_name="Noordwijk",
             wave_spectrum=spectrum,
             wind=wind,
             tide=TideState(
                 level_m=0.5,
                 phase="opgaand",
-                next_low=datetime.now(),
-                next_high=datetime.now()
+                next_low=_FIXED_TS,
+                next_high=_FIXED_TS
             )
         )
 

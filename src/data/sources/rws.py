@@ -27,16 +27,7 @@ from zoneinfo import ZoneInfo
 import httpx
 from src.data.models import WaveSpectrum, SpectralPeak, SwellType, TideState
 
-# Open-Meteo retourneert naive timestamps in Europe/Amsterdam,
-# RWS retourneert tz-aware timestamps. We normaliseren beide naar UTC voor vergelijking.
-_AMSTERDAM = ZoneInfo('Europe/Amsterdam')
-
-
-def _to_utc(dt: datetime) -> datetime:
-    """Naive → Europe/Amsterdam → UTC. Aware → UTC."""
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=_AMSTERDAM)
-    return dt.astimezone(timezone.utc)
+from src.util import to_utc as _to_utc
 
 from src.config import (
     API_ENDPOINTS,
