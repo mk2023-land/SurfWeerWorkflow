@@ -105,22 +105,23 @@ def score_wind_component(wind_speed_kn: float, wind_direction_deg: int) -> float
 
 def score_tide_component(tide_level_normalized: float, tide_phase: str) -> float:
     """
-    Bereken tij score (max 15 punten).
+    Bereken tij score (max 20 punten).
 
     Factoren:
     - Hoogte (mid-tijd = beste, extremes = slechter)
-    - Fase (opgaand vs afgaand, kleine bonus voor afgaand)
+    - Fase (opgaand vs afgaand, kleine bonus voor opgaand: "push" van laag naar
+      mid is gunstig op NL-beachbreaks).
     """
     # Basis score op genormaliseerd niveau. Mid-tij (0.3-0.8) is beste,
-    # base 13 zodat afgaand-bonus naar 15 cap brengt, opgaand blijft 13.
+    # base 18 zodat opgaand-bonus naar 20 cap brengt, afgaand blijft 18.
     if 0.3 <= tide_level_normalized <= 0.8:
-        level_score = 13
+        level_score = 18
     elif tide_level_normalized < 0.3:
-        level_score = tide_level_normalized / 0.3 * 12
+        level_score = tide_level_normalized / 0.3 * 17
     else:
-        level_score = (1.0 - tide_level_normalized) / 0.2 * 12
+        level_score = (1.0 - tide_level_normalized) / 0.2 * 17
 
-    phase_bonus = 2.0 if tide_phase == "afgaand" else 0.0
+    phase_bonus = 2.0 if tide_phase == "opgaand" else 0.0
 
     return min(SCORING_WEIGHTS['tide_max'], level_score + phase_bonus)
 

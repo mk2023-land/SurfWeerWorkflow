@@ -331,7 +331,8 @@ class TideGatedWindowDetector:
 
     def detect(
         self,
-        windows: List[SurfWindow]
+        windows: List[SurfWindow],
+        forecast: Optional[List[HourState]] = None,
     ) -> Optional[AlertCandidate]:
         """
         Detecteer tide-gated windows.
@@ -344,40 +345,53 @@ class TideGatedWindowDetector:
 
         Args:
             windows: Lijst van SurfWindow objecten
+            forecast: Forecast HourStates — gebruikt om per uur tij/wind te checken.
+                Zonder forecast kan de T5-conditie niet geverifieerd worden en
+                wordt None geretourneerd.
 
         Returns:
             AlertCandidate of None
         """
+        if not forecast:
+            return None
+
+        # Index forecast op timestamp zodat we per ScoreBreakdown de bijbehorende
+        # HourState (met tij/wind) kunnen vinden.
+        state_by_ts: Dict[datetime, HourState] = {h.timestamp: h for h in forecast}
+
         for window in windows:
-            if window.peak_score >= 75:
-                # Check tide en wind condities tijdens window
-                all_good = True
+            if window.peak_score < 75:
+                continue
 
-                for score in window.hourly_scores:
-                    # Tide conditie (simpele check)
-                    # In echte implementatie zou dit van HourState komen
-                    # Voor nu nemen we aan dat mid-tijd = goed
-                    tide_ok = True  # Placeholder
+            # Check tide en wind condities tijdens window
+            all_good = True
 
-                    # Wind conditie (placeholder)
-                    wind_ok = True  # Placeholder
+            for score in window.hourly_scores:
+                state = state_by_ts.get(score.timestamp)
+                if state is None:
+                    # Zonder onderliggende state kunnen we het niet verifiëren.
+                    all_good = False
+                    break
 
-                    if not (tide_ok and wind_ok):
-                        all_good = False
-                        break
+                tide_ok = 0.3 <= state.tide.normalized_level <= 0.8
+                wind_ok = state.wind.speed_kn < 12
 
-                if all_good:
-                    logger.info(f"Tide-gated window detected: {window.peak_score} peak, "
-                               f"{window.duration_hours:.1f}h duration")
+                if not (tide_ok and wind_ok):
+                    all_good = False
+                    break
 
-                    return AlertCandidate(
-                        alert_type=self.alert_type,
-                        window=window,
-                        detection_time=datetime.now(),
-                        explanation=f"Tide-gated window: {window.peak_score} peak score, "
-                                  f"{window.duration_hours:.1f}h duration with favorable tide",
-                        confidence=0.75
-                    )
+            if all_good:
+                logger.info(f"Tide-gated window detected: {window.peak_score} peak, "
+                           f"{window.duration_hours:.1f}h duration")
+
+                return AlertCandidate(
+                    alert_type=self.alert_type,
+                    window=window,
+                    detection_time=datetime.now(),
+                    explanation=f"Tide-gated window: {window.peak_score} peak score, "
+                              f"{window.duration_hours:.1f}h duration with favorable tide",
+                    confidence=0.75
+                )
 
         return None
 
@@ -439,9 +453,10 @@ class AlertDetectorEngine:
             if candidate:
                 triggered_alerts.add(AlertType.SUSTAINED_GROUNDSWELL)
 
-        # Type 5: Tide gated window (windows)
+        # Type 5: Tide gated window (windows) — heeft forecast nodig om per uur
+        # de tij/wind condities te verifiëren.
         if windows:
-            candidate = self.detectors[AlertType.TIDE_GATED].detect(windows)
+            candidate = self.detectors[AlertType.TIDE_GATED].detect(windows, forecast)
             if candidate:
                 triggered_alerts.add(AlertType.TIDE_GATED)
 

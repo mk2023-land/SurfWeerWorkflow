@@ -101,11 +101,13 @@ ALERT_CONFIG = {
     'max_anthropic_cost_per_month_eur': 3.0,  # ~3000 Claude Haiku calls
 }
 
-# Scoring gewichten
+# Scoring gewichten. Tij is in v4 verhoogd van 15→20 omdat surf-meteorologie het
+# als top-3 factor classificeert voor beachbreaks (vergelijkbaar met wind). Golf en
+# wind iets verlaagd zodat totaal 100 blijft.
 SCORING_WEIGHTS = {
-    'golf_max': 40,
-    'wind_max': 35,
-    'tide_max': 15,
+    'golf_max': 38,
+    'wind_max': 32,
+    'tide_max': 20,
     'swell_dir_max': 10
 }
 
