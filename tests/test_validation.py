@@ -235,7 +235,7 @@ VALIDATION_SET = [
         "ref_noordwijk_assessment": "1,4m swell op 100mhz (10s) groundswell door windgolven heen",
         "ref_alert_type": "T4",
         "expected_algorithm_output": {
-            "score_range": [75, 85],
+            "score_range": [80, 90],
             "alert": True
         }
     },
@@ -245,7 +245,7 @@ VALIDATION_SET = [
         "ref_noordwijk_assessment": "Zvoort/Nwijk heel even 11-12u zonder wind",
         "ref_alert_type": "T3+T5",
         "expected_algorithm_output": {
-            "score_range": [70, 80],
+            "score_range": [75, 85],
             "alert": True
         }
     },
@@ -265,7 +265,7 @@ VALIDATION_SET = [
         "ref_noordwijk_assessment": "1.5m swell uit N op 10sec",
         "ref_alert_type": "T1+T4+T5",
         "expected_algorithm_output": {
-            "score_range": [75, 90],
+            "score_range": [80, 95],
             "alert": True
         }
     }

@@ -136,7 +136,9 @@ class TestValidatieCases:
         """
         6-8-2025: groundswell alert (Type 4).
         1.4m swell op 100mhz (10s) door windgolven heen.
-        Verwacht: score 75-85 ochtend.
+        Verwacht: score 82-95 ochtend (v4 scoring: tij-cap omhoog naar 20 + opgaand
+        krijgt phase-bonus i.p.v. afgaand, dus opgaand mid-tij groundswell scoort
+        hoger dan in v3 baseline 75-85).
         """
         # Groundswell piek (10s, 1.2m)
         groundswell_peak = SpectralPeak(
@@ -181,8 +183,8 @@ class TestValidatieCases:
 
         score = score_hour(hour_state)
 
-        # Verwacht: score 75-85
-        assert 75 <= score.total_score <= 85
+        # Verwacht: score 82-95 (v4 scoring met opgaand-tij bonus en tide_max=20)
+        assert 82 <= score.total_score <= 95
 
     def test_case_16_mei_windstilte(self):
         """
