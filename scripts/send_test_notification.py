@@ -23,7 +23,7 @@ from src.config import NOORDWIJK
 from src.data.sources.open_meteo import fetch_all_openmeteo_data, OpenMeteoClient
 from src.data.sources.rws import fetch_all_rws_data, tide_state_at
 from src.data.models import HourState, WindState
-from src.scoring.hourly import score_hour
+from src.scoring.hourly import score_hour_series
 from src.scoring.windows import analyze_windows
 from src.llm.generator import SMSGenerator
 from src.llm.validator import SMSValidator
@@ -67,7 +67,7 @@ async def main() -> int:
             confidence=1.0,
         ))
 
-    scores = [score_hour(s) for s in states]
+    scores = score_hour_series(states)
     windows = analyze_windows(scores)
     peak_today = max((s.total_score for s in scores[:24]), default=0)
     peak_tomorrow = max((s.total_score for s in scores[24:48]), default=0)
