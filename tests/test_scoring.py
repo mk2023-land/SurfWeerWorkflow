@@ -116,15 +116,16 @@ class TestPeriodDependentTideWindow:
     """Test dat het optimale tij-venster afhangt van swell-periode (blok 2)."""
 
     def test_short_period_needs_higher_water(self):
-        """Wind-sea (T<7s) bij laag tij scoort beduidend lager dan groundswell."""
+        """Wind-sea (T<7s) bij laag tij scoort lager dan groundswell."""
         from src.scoring.hourly import score_tide_component
         short = score_tide_component(0.25, "opgaand", dominant_period_s=5.0)
         long = score_tide_component(0.25, "opgaand", dominant_period_s=10.0)
-        # Bij norm=0.25: wind-sea venster begint pas bij 0.50, groundswell bij 0.20
-        # → korte periode flink lager dan lange periode.
+        # Bij norm=0.25: wind-sea venster begint pas bij 0.35 (versoepeld na
+        # referentie-forecaster-benchmark waarin LW-kentering ook surfbaar bleek), groundswell
+        # bij 0.20. Korte periode nog steeds lager dan lange periode.
         assert short < long
         assert long >= 18  # Groundswell zit binnen venster
-        assert short <= 12  # Wind-sea zit ver buiten venster
+        assert short <= 16  # Wind-sea net buiten venster (was 12 bij oude lo=0.50)
 
     def test_long_period_wider_window(self):
         """Groundswell krijgt vol level-score op niveaus waar wind-sea al daalt."""
@@ -165,12 +166,12 @@ class TestTimingFitBonus:
     """Test timing-fit bonus (opgaand én 1-2.5u vóór HW) — blok 2."""
 
     def test_timing_bonus_at_edge_level(self):
-        """Timing-fit voegt +1 toe wanneer level net buiten optimaal venster zit."""
+        """Timing-fit voegt +1 toe wanneer level binnen window zit en niet capt."""
         from src.scoring.hourly import score_tide_component
-        # Norm 0.30 met T=8s zit net buiten venster [0.35, 0.85] →
-        # level=14.57 + phase=2 = 16.57. Met timing-fit +1 = 17.57.
-        no_timing = score_tide_component(0.30, "opgaand", dominant_period_s=8.0)
-        with_timing = score_tide_component(0.30, "opgaand", dominant_period_s=8.0,
+        # Norm 0.25 met T=8s zit net buiten venster [0.30, 0.85] →
+        # level wordt < 18, dus timing-bonus +1 levert echt iets op (cap = 20).
+        no_timing = score_tide_component(0.25, "opgaand", dominant_period_s=8.0)
+        with_timing = score_tide_component(0.25, "opgaand", dominant_period_s=8.0,
                                             hours_to_next_high=1.5)
         assert with_timing == no_timing + 1.0
 

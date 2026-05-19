@@ -41,6 +41,83 @@ def _wind_direction_cosine(wind_dir_deg: int, beach_normal_deg: int) -> float:
     return math.cos(math.radians(delta))
 
 
+def wave_face_quality(wind_speed_kn: float, cos_offshore: float) -> float:
+    """
+    Multiplier (0.4-1.0) op de effectiviteit van een gegeven wave als surf-target,
+    gebaseerd op hoe de wind de wave-face beïnvloedt.
+
+    Fysica (zonder hardcoding van uitkomsten):
+    - Pure offshore wind: blaast over de top, houdt de face strak rechtop ("held up").
+      Wind tegen de wave-richting in vertraagt het breken iets en clean-t de face.
+    - Cross-shore wind: neutraal, geen significante face-vervorming.
+    - Onshore wind: blaast met de wave mee, drukt de top om, breekt 'm te vroeg af,
+      en creëert chop op de face. Hoe sterker de wind, hoe slechter de face.
+
+    Het effect is multiplicatief op de wave-energy (golf_score) omdat een 1.5m
+    chop-wave levert minder rideable face dan een 1.0m clean wave — referentie-forecaster' core
+    principle "clean beats big".
+
+    Curve:
+        wind <3 kn: face_q = 1.0 (geen wind, geen impact)
+        per kn onshore-component voegt 0.033 penalty toe, gecapt op 0.60
+    """
+    if wind_speed_kn < 3:
+        return 1.0
+    # onshore_component: 0 bij offshore/cross, 1 bij pure onshore
+    onshore = max(0.0, -cos_offshore)
+    # Effectieve onshore wind in kn: hoeveel kn er recht aanlandig blaast
+    onshore_kn = onshore * wind_speed_kn
+    # Per kn onshore ~3.3% face quality verlies, totaal cap 0.60
+    penalty = min(0.60, 0.033 * onshore_kn)
+    return 1.0 - penalty
+
+
+def wind_trend_factor(
+    wind_history_kn: list,
+    wave_history_m: list,
+) -> float:
+    """
+    Bonus/penalty op basis van wind-trend in de afgelopen 2 uur.
+
+    Fysica: een wave-veld dat is opgebouwd door wind die NU nog blaast, is een
+    jonge wind-zee — steile, korte, choppy golven. Als de wind WEGGAAT terwijl
+    de wave nog hoog is, klaart de oppervlakte op terwijl de wave-energie blijft —
+    dat is referentie-forecaster' "wind valt weg, swell loopt door" sweet spot (zijn klassieke
+    avond-window patroon, door diurnal wind decay).
+
+    Args:
+        wind_history_kn: [wind 2u terug, wind 1u terug, wind nu] (3 elementen)
+        wave_history_m: [wave 2u terug, wave 1u terug, wave nu]
+
+    Returns:
+        Multiplier ~0.85-1.15
+        - 1.15 = wind significant gedaald (≥4 kn in 2u) terwijl wave hoog blijft
+        -  1.0 = stabiele wind of irrelevante delta
+        - 0.85 = wind sterk gestegen (≥4 kn in 2u) = jonge wind-zee, choppy
+    """
+    if len(wind_history_kn) < 3 or len(wave_history_m) < 3:
+        return 1.0
+
+    wind_delta = wind_history_kn[-1] - wind_history_kn[0]  # nu - 2u terug
+    wave_now = wave_history_m[-1]
+    wave_max_recent = max(wave_history_m)
+
+    # Wave blijft "hoog" als hij ≥85% van zijn recente piek is
+    wave_holding = wave_now >= 0.85 * wave_max_recent
+
+    # Wind drop: -4 kn of meer in 2u én wave nog hoog → clean opening
+    if wind_delta <= -4.0 and wave_holding:
+        magnitude = min(1.0, abs(wind_delta) / 8.0)  # cap bij 8 kn delta
+        return 1.0 + 0.15 * magnitude
+
+    # Wind rise: +4 kn of meer in 2u → jonge wind-zee, chop
+    if wind_delta >= 4.0:
+        magnitude = min(1.0, wind_delta / 8.0)
+        return 1.0 - 0.15 * magnitude
+
+    return 1.0
+
+
 def recommend_boards(
     hs_m: float,
     tp_s: float,
@@ -279,13 +356,18 @@ def score_tide_component(
 
     Soft cap blijft op SCORING_WEIGHTS['tide_max'].
     """
-    # 1) Bepaal optimaal niveau-venster op basis van dominante periode
+    # 1) Bepaal optimaal niveau-venster op basis van dominante periode.
+    # Versoepeld na benchmark: referentie-forecaster accepteert wind-sea aan LW-kentering
+    # (zijn "14-16u" window valt op LW-flank). De oude lo=0.50 voor wind-sea
+    # filterde dit weg. Empirisch werkt elke fase tussen 0.30 en 0.85 voor
+    # wind-sea op NL beachbreaks — de "voorkeur voor hoger water" is een
+    # tendens, geen harde regel.
     if dominant_period_s >= 9:
         lo, hi = 0.20, 0.90
     elif dominant_period_s >= 7:
-        lo, hi = 0.35, 0.85
+        lo, hi = 0.30, 0.85
     else:
-        lo, hi = 0.50, 0.90
+        lo, hi = 0.35, 0.85
 
     # 2) Spring/doodtij modulator op het venster
     if tide_range_m is not None:
@@ -389,12 +471,16 @@ def _hours_until(when: datetime, target: Optional[datetime]) -> Optional[float]:
     return delta if delta >= 0 else None
 
 
-def score_hour(state: HourState) -> ScoreBreakdown:
+def score_hour(state: HourState, context: Optional[dict] = None) -> ScoreBreakdown:
     """
     Bereken totale score voor één uur.
 
     Args:
         state: HourState met alle data
+        context: optioneel dict met sleutels:
+            - 'wind_history_kn': lijst [t-2, t-1, t] wind-snelheden in kn
+            - 'wave_history_m': lijst [t-2, t-1, t] wave-hoogtes in m
+          Beide nodig voor wind_trend_factor (clean-opening detectie).
 
     Returns:
         ScoreBreakdown met component scores en totaal
@@ -427,8 +513,27 @@ def score_hour(state: HourState) -> ScoreBreakdown:
             swell_dir_bonus=0.0,
         )
 
-    # Golf component
+    # Golf component — basisscore op Hs/Tp/type
     golf_score = score_golf_component(state.wave_spectrum)
+
+    # Wave face quality: wind op de wave-face. Onshore wind degradeert de face
+    # ongeacht hoogte. Toegepast als multiplier op golf_score zodat een 1.5m
+    # wave-veld onder sterke aanlandige wind minder telt dan een 1.0m wave
+    # onder offshore wind — referentie-forecaster' "clean beats big" principe.
+    cos_offshore = _wind_direction_cosine(
+        state.wind.direction_deg, NOORDWIJK.beach_normal_deg
+    )
+    face_q = wave_face_quality(state.wind.speed_kn, cos_offshore)
+    golf_score *= face_q
+
+    # Wind trend: clean opening na wind-decay vs. jonge wind-zee.
+    # Alleen toegepast als context met historie is meegegeven.
+    if context:
+        trend = wind_trend_factor(
+            context.get('wind_history_kn') or [],
+            context.get('wave_history_m') or [],
+        )
+        golf_score *= trend
 
     # Wind component
     wind_score = score_wind_component(state.wind.speed_kn, state.wind.direction_deg)
@@ -469,6 +574,33 @@ def score_hour(state: HourState) -> ScoreBreakdown:
         tide_score=tide_score,
         swell_dir_bonus=swell_dir_bonus
     )
+
+
+def score_hour_series(states: list) -> list:
+    """
+    Score een tijdreeks van HourStates met wind-trend context per uur.
+
+    Wind-trend (clean-opening detectie) heeft historie nodig — deze helper
+    bouwt een rolling window van 3 uur en geeft die mee aan score_hour.
+    Aanbevolen entrypoint voor multi-uurs scoring; score_hour() blijft
+    direct bruikbaar voor single-hour use (zonder trend-bonus).
+    """
+    scores = []
+    for i, state in enumerate(states):
+        # Pak vorige 2 uur (uit dezelfde state-lijst). Aan begin van reeks:
+        # neem wat beschikbaar is (1-of-2 historie + huidige).
+        hist_start = max(0, i - 2)
+        hist_states = states[hist_start:i + 1]
+        # Pad indien minder dan 3: herhaal het oudste element zodat trend=neutral
+        while len(hist_states) < 3:
+            hist_states = [hist_states[0]] + hist_states
+        wind_hist = [s.wind.speed_kn for s in hist_states]
+        wave_hist = [s.wave_spectrum.significant_height_total for s in hist_states]
+        scores.append(score_hour(
+            state,
+            context={'wind_history_kn': wind_hist, 'wave_history_m': wave_hist},
+        ))
+    return scores
 
 
 def calculate_confidence(forecast_sources: dict) -> float:

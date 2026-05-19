@@ -280,6 +280,17 @@ Casus C — GEEN best_window (dag is niet surfbaar):
 - Combineer peak_height_hour.time NIET met next_high_time/next_low_time
   tot een nep-venster.
 
+MEERDERE WINDOWS — referentie-forecaster' "14-16u of na 19:30u" patroon:
+- Naast `best_window` kun je `other_windows[]` krijgen — dit zijn andere
+  surfbare blokken op dezelfde dag (bv. middag en avond apart).
+- Als er meerdere windows zijn EN ze verschillen ≥2u in starttijd: noem
+  ze allebei in referentie-forecaster-stijl met "OF" tussen:
+    "Best 06-09u, OF nog later na 18u".
+  Of: "voor het middaguurtje 12-14u, OF schoner 18-21u".
+- Beoordeel of het zinvol is om alle te noemen: drie verschillende windows
+  in één dag noem je alleen als ze duidelijk verschillen in karakter
+  (bv. ochtend nog windswell, middag tij-kentering, avond clean opening).
+
 Daarna in alle gevallen:
 - Wind: gebruik exact `wind_speed_kn` + `wind_direction_compass` + `wind_label`.
 - Tij — verweven in de zin, NIET als window-grens:
@@ -495,6 +506,11 @@ class SMSGenerator:
         elif longboard_windows:
             chosen_window = max(longboard_windows, key=lambda w: w.peak_score)
 
+        # Alle "andere" windows van de dag (niet de chosen) — referentie-forecaster noemt vaak
+        # meerdere vensters op een dag ("14-16u of na 19:30u"). Door deze ook
+        # mee te geven kan de LLM dat patroon repliceren.
+        other_windows = [w for w in day_windows if w is not chosen_window]
+
         peak_height_conditions = self._hour_state_to_conditions(peak_height_state)
 
         result: Dict = {
@@ -506,28 +522,36 @@ class SMSGenerator:
             "tide_summary": self._tide_summary_for_day(day_states, peak_height_state),
         }
 
-        if chosen_window:
+        def _window_payload(w):
             peak_state = next(
-                (s for s in day_states if s.timestamp == chosen_window.peak_hour),
+                (s for s in day_states if s.timestamp == w.peak_hour),
                 day_states[0],
             )
-            window_peak_conditions = self._hour_state_to_conditions(peak_state)
-            result["best_window"] = {
-                "is_surfable": chosen_window.kind == 'surfable',
-                "kind": chosen_window.kind,
-                "start_time": chosen_window.start.strftime("%H:%M"),
-                "end_time": chosen_window.end.strftime("%H:%M"),
-                "duration_hours": round(chosen_window.duration_hours, 1),
-                "peak_time": chosen_window.peak_hour.strftime("%H:%M"),
-                "peak_block": peak_block(chosen_window),
-                "peak_conditions": window_peak_conditions,
+            return {
+                "is_surfable": w.kind == 'surfable',
+                "kind": w.kind,
+                "start_time": w.start.strftime("%H:%M"),
+                "end_time": w.end.strftime("%H:%M"),
+                "duration_hours": round(w.duration_hours, 1),
+                "peak_time": w.peak_hour.strftime("%H:%M"),
+                "peak_block": peak_block(w),
+                "peak_conditions": self._hour_state_to_conditions(peak_state),
             }
+
+        if chosen_window:
+            result["best_window"] = _window_payload(chosen_window)
         else:
             result["best_window"] = {"is_surfable": False, "kind": None}
 
+        # Andere windows van de dag (referentie-forecaster' "14-16u of na 19:30u" patroon)
+        result["other_windows"] = [_window_payload(w) for w in other_windows]
+
         # Anti-hallucinatie vangnet — exact wat de LLM mag citeren
         result["_allowed_citations"] = self._build_allowed_citations(
-            peak_height_conditions, result.get("best_window"), result["tide_summary"]
+            peak_height_conditions,
+            result.get("best_window"),
+            result["tide_summary"],
+            other_windows=result["other_windows"],
         )
 
         return result
@@ -537,6 +561,7 @@ class SMSGenerator:
         peak_height_conditions: Dict,
         best_window: Optional[Dict],
         tide_summary: Dict,
+        other_windows: Optional[list] = None,
     ) -> Dict:
         """
         Bouw een whitelist van getallen, tijden en richtingen die de LLM voor
@@ -552,18 +577,25 @@ class SMSGenerator:
 
         # Best_window kan 'surfable' of 'longboard' zijn — beide soorten leveren
         # citeerbare condities (wind/golf/tijd) op voor de LLM en validator.
+        # Verzamel uit best_window én elk other_window
+        all_windows_to_cite = []
         if best_window and best_window.get("kind") is not None:
-            pc = best_window.get("peak_conditions") or {}
+            all_windows_to_cite.append(best_window)
+        if other_windows:
+            all_windows_to_cite.extend(other_windows)
+
+        for win in all_windows_to_cite:
+            pc = win.get("peak_conditions") or {}
             if pc:
                 heights_m.add(pc.get("wave_height_m"))
                 periods_s.add(pc.get("wave_period_s"))
                 wind_speeds_kn.add(pc.get("wind_speed_kn"))
                 wind_dirs.add(pc.get("wind_direction_compass"))
                 wave_dirs.add(pc.get("wave_direction_compass"))
-            times_hhmm.add(best_window.get("start_time"))
-            times_hhmm.add(best_window.get("end_time"))
-            times_hhmm.add(best_window.get("peak_time"))
-            pb = best_window.get("peak_block") or {}
+            times_hhmm.add(win.get("start_time"))
+            times_hhmm.add(win.get("end_time"))
+            times_hhmm.add(win.get("peak_time"))
+            pb = win.get("peak_block") or {}
             times_hhmm.add(pb.get("start_time"))
             times_hhmm.add(pb.get("end_time"))
 

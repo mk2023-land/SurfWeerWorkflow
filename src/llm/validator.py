@@ -154,36 +154,44 @@ class SMSValidator:
                 issues.append(f"Hallucination indicator: '{phrase}'")
 
         # 6b. Board-claims moeten matchen met boards_suitable per dag.
-        # Verzamel alle boards die de LLM noemt en alle die ergens in input
-        # als suitable zijn gemarkeerd. Als LLM 'shortboard' noemt op een dag
-        # waar shortboard NIET suitable is, is dat een hallucinatie.
-        board_terms = {
-            'longboard': ['longboard', 'long ', ' long.', ' long,', ' long;'],
-            'midlength': ['midlength', 'midlenght', 'mid-length'],
-            'fish': ['fish'],
-            'shortboard': ['shortboard', 'short '],
+        # Een bord-mention is een POSITIEVE claim als er geen negatie vlakbij
+        # staat — "longboard prima" = claim, "shortboard niet" = correcte
+        # afwijzing en mag dus altijd. referentie-forecaster gebruikt zelf vaak negatieve
+        # mentions ("geen shortboard", "shortboard moet wachten").
+        board_patterns = {
+            'longboard': r'\blong(?:board)?\b',
+            'midlength': r'\bmid(?:length|lenght|-length)?\b',
+            'fish': r'\bfish\b',
+            'shortboard': r'\bshort(?:board)?\b',
         }
-        sms_lower = sms_text.lower()
-        sms_boards = set()
-        for board, terms in board_terms.items():
-            if any(t in sms_lower for t in terms):
-                sms_boards.add(board)
-
+        negation_cues = [
+            'geen', 'niet', 'nee', 'hoeft niet', 'moet wachten', 'kan niet',
+            'lastig', 'onmogelijk', 'no go', 'sla over', 'hoeft', 'zonder',
+        ]
         allowed_boards = set()
         for day in structured_input.get('days') or []:
-            for field in ('peak_height_hour', ):
-                bc = (day or {}).get(field, {})
-                allowed_boards.update(bc.get('boards_suitable') or [])
+            ph = (day or {}).get('peak_height_hour', {}) or {}
+            allowed_boards.update(ph.get('boards_suitable') or [])
             bw = (day or {}).get('best_window', {}) or {}
             pc = bw.get('peak_conditions') or {}
             allowed_boards.update(pc.get('boards_suitable') or [])
 
-        for board in sms_boards:
-            if board not in allowed_boards:
+        sms_lower = sms_text.lower()
+        for board, pattern in board_patterns.items():
+            if board in allowed_boards:
+                continue  # geen probleem, mag genoemd worden
+            # Zoek alle positie-matches van dit bord-woord
+            for m in re.finditer(pattern, sms_lower):
+                start = m.start()
+                # Kijk 30 karakters terug voor een negatie-cue
+                preceding = sms_lower[max(0, start - 30):start]
+                if any(cue in preceding for cue in negation_cues):
+                    continue  # negatief, mag
                 issues.append(
-                    f"Board '{board}' genoemd maar nergens in boards_suitable "
-                    f"(toegestaan: {sorted(allowed_boards) or 'NIETS'})"
+                    f"Board '{board}' positief geclaimd maar niet in "
+                    f"boards_suitable (toegestaan: {sorted(allowed_boards) or 'NIETS'})"
                 )
+                break  # één issue per bord-type is genoeg
 
         # 7. "Springtij" alleen als input dat zegt
         if 'springtij' in sms_text.lower():
