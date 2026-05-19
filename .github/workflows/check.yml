@@ -46,10 +46,14 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
-          # Notifier-keuze (default email).
-          NOTIFIER: ${{ vars.NOTIFIER || 'email' }}
+          # Notifier-keuze (default ntfy push).
+          NOTIFIER: ${{ vars.NOTIFIER || 'ntfy' }}
 
-          # Email (gratis, default)
+          # ntfy.sh push (default, gratis)
+          NTFY_TOPIC:  ${{ secrets.NTFY_TOPIC }}
+          NTFY_SERVER: ${{ vars.NTFY_SERVER || 'https://ntfy.sh' }}
+
+          # Email (alleen gebruikt als NOTIFIER=email)
           SMTP_HOST:       ${{ vars.SMTP_HOST || 'smtp.gmail.com' }}
           SMTP_PORT:       ${{ vars.SMTP_PORT || '587' }}
           SMTP_USER:       ${{ secrets.SMTP_USER }}
