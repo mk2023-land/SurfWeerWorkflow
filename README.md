@@ -1,6 +1,6 @@
 # Noordwijk Surf Alert Systeem
 
-Geautomatiseerd surfweer alert systeem voor Noordwijk dat elke 6 uur surfcondities analyseert en SMS alerts verstuurt bij gunstige golven.
+Geautomatiseerd surfweer alert systeem voor Noordwijk dat elke 6 uur surfcondities analyseert en notificaties verstuurt (push via ntfy.sh, mail via SMTP, of SMS via Twilio) bij gunstige golven.
 
 ## 📋 Overzicht
 
@@ -9,7 +9,7 @@ Dit systeem analyseert surfcondities voor Noordwijk door:
 1. **Data verzameling** uit meerdere bronnen (Open-Meteo, Rijkswaterstaat)
 2. **Scoring** van surfcondities (0-100 punten) op basis van golf, wind, tij en swell richting
 3. **5 alert types** detecteren (swell arrival, wind shift, wind dip, sustained groundswell, tide-gated windows)
-4. **SMS alerts** versturen via MessageBird met Claude Haiku voor natuurlijke berichten
+4. **Notificaties** versturen via ntfy.sh (default, gratis push), SMTP-mail of Twilio-SMS, met Claude Haiku voor natuurlijke berichten
 5. **Automatische runs** op GitHub Actions (4x per dag)
 
 ### Hoe het werkt
@@ -47,14 +47,20 @@ python main.py --dry-run
 ### GitHub Actions setup
 
 1. **Repository aanmaken** (private aanbevolen)
-2. **GitHub Secrets configureren** (Settings → Secrets and variables → Actions → New repository secret):
-   - `ANTHROPIC_API_KEY`: Anthropic API key (voor Claude Haiku)
-   - `TWILIO_ACCOUNT_SID`: Twilio Account SID (begint met `AC...`)
-   - `TWILIO_AUTH_TOKEN`: Twilio Auth Token
-   - `TWILIO_PHONE_NUMBER`: Twilio afzender-nummer (`+1...`)
-   - `RECIPIENT_PHONE_NUMBER`: Jouw telefoonnummer (`+31612345678`)
+2. **GitHub Secrets** configureren (Settings → Secrets and variables → Actions → New repository secret):
+   - `ANTHROPIC_API_KEY` — voor Claude Haiku tekst-generatie
+
+   Daarna één set afhankelijk van je gekozen notifier (default: `ntfy`):
+
+   - **ntfy.sh push (gratis, aanbevolen):**
+     - `NTFY_TOPIC` — geheime topic-naam (zelfverzonnen, onraadbaar)
+   - **SMTP-mail (gratis):**
+     - `SMTP_USER`, `SMTP_PASSWORD`, `RECIPIENT_EMAIL`
+   - **Twilio SMS (betaald, ~€0.08/sms):**
+     - `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER`, `RECIPIENT_PHONE_NUMBER`
 
    **Variables** (Settings → Variables) — optioneel, hebben sensible defaults:
+   - `NOTIFIER`: `ntfy` (default), `email`, of `twilio`
    - `ALERTS_ENABLED`: `true` (default) of `false` voor alleen daily digest
    - `COOLDOWN_HOURS`: `4` (default) — minimaal aantal uren tussen alerts
    - `MAX_ALERTS_PER_WEEK`: `8` (default)
@@ -83,10 +89,12 @@ src/
 │   ├── detectors.py       # 5 alert detectors
 │   └── engine.py          # Alert besluit logica
 ├── llm/
-│   ├── generator.py       # SMS generator (Claude Haiku)
+│   ├── generator.py       # Bericht-tekst generator (Claude Haiku)
 │   └── validator.py       # Output validatie
-├── sms/
-│   └── messagebird.py     # SMS verzending
+├── notify/
+│   ├── ntfy.py            # ntfy.sh push (default)
+│   ├── mail.py            # SMTP-mail
+│   └── twilio.py          # Twilio-SMS (optionele fallback)
 └── baseline/
     └── seasonal.py        # Seizoensbaseline builder
 
@@ -109,22 +117,15 @@ tests/
 3. Genereer API key
 4. Sla op als GitHub Secret: `ANTHROPIC_API_KEY`
 
-### Twilio SMS
+### Notifier setup
 
-1. Maak een Twilio account aan op https://www.twilio.com/try-twilio
-2. Activeer een phone number (Twilio console → Phone Numbers → Manage → Buy a number)
-3. Noteer Account SID, Auth Token (console homepage) en het Twilio phone number
-4. Sla op als GitHub Secrets:
-   - `TWILIO_ACCOUNT_SID`
-   - `TWILIO_AUTH_TOKEN`
-   - `TWILIO_PHONE_NUMBER`
+Default is **ntfy.sh push** (gratis, geen account):
 
-Lokaal staan dezelfde waardes in `.env` (zie `.env.example` als template).
+1. Installeer de ntfy-app op je telefoon (iOS / Android)
+2. Subscribe op een zelfverzonnen, onraadbare topic (bijv. `nwijksurf-<jouwinitialen>-<random>`)
+3. Zet dezelfde naam in `.env` (`NTFY_TOPIC=...`) en in GitHub Secrets
 
-### Telefoonnummer
-
-Format: `+31612345678` (NL formaat met landcode)
-Sla op als GitHub Secret: `RECIPIENT_PHONE_NUMBER`
+Andere kanalen (SMTP-mail of Twilio-SMS) staan beschreven in `.env.example`.
 
 ## 🧪 Testing
 
@@ -218,17 +219,20 @@ SCORING_WEIGHTS = {
 }
 ```
 
-## 📱 SMS Voorbeelden
+## 📱 Bericht-voorbeelden
 
-### Alert
+### Alert (push of mail)
 ```
-NWIJK ALERT 06-08: 06:00-08:00u: 82/100, groundswell 10s door windgolven.
+NWIJK ALERT 06-08 06:00-08:00u: groundswell 10s door windgolven heen,
+0,9m WNW, wind 6kn O aflandig, opgaand tij. Cam: surfweer.nl/webcams/noordwijk/
+```
+
+### Digest (4-daagse outlook, push of mail)
+```
+Nwijk di: Vandaag rond 09:00 iets meer actie met 1,2m en 4,5s WZW, wind
+loopt op naar 15,6kn ZW zijaflandig. Morgen flat (0,4m). Donderdag rond
+20:00 minimal (0,3m). Vrijdag rond 05:00 nog steeds klein (0,2m).
 Cam: surfweer.nl/webcams/noordwijk/
-```
-
-### Digest
-```
-Nwijk wo 09-10: vandaag 82, morgen 28. Cam: surfweer.nl/webcams/noordwijk/
 ```
 
 ## 🛡️ Safety Features
@@ -238,16 +242,17 @@ Nwijk wo 09-10: vandaag 82, morgen 28. Cam: surfweer.nl/webcams/noordwijk/
 - **Cooldown**: Minimaal 4u tussen alerts
 - **Weekly cap**: Max 8 alerts per week
 - **Rarity threshold**: Alleen alerts bij ≥70e percentile
-- **Dry run mode**: Lokale testing zonder SMS verzending
+- **Dry run mode**: Lokale testing zonder dat er een notificatie verstuurd wordt
 
 ## 🔧 Troubleshooting
 
-### Geen SMS ontvangen
+### Geen notificatie ontvangen
 
 1. Check workflow logs op GitHub Actions
-2. Verifieer GitHub Secrets zijn correct ingesteld
-3. Check MessageBird saldo
-4. Controleer telefoonnummer formaat (+31...)
+2. Verifieer GitHub Secrets (`NTFY_TOPIC` voor push, of SMTP-/Twilio-variant)
+3. **ntfy**: in de app de juiste topic-naam ingetypt? Notificaties voor die app aan?
+4. **mail**: kijk in spam-folder; SMTP-auth zichtbaar in logs?
+5. **twilio**: saldo / nummer-formaat (+31...) / trial-restricties?
 
 ### Te veel/few alerts
 
@@ -263,13 +268,17 @@ Nwijk wo 09-10: vandaag 82, morgen 28. Cam: surfweer.nl/webcams/noordwijk/
 
 ## 📊 Kosten
 
+In de huidige default-setup (`NOTIFIER=ntfy`) is **alles gratis**:
+
 | Service | Kosten |
 |---------|--------|
-| Twilio SMS | ~€0.07-0.09/SMS NL (~€0.50-0.65/week bij 7-8 SMS) |
-| Anthropic Haiku | ~€0.001/SMS (verwaarloosbaar) |
+| ntfy.sh push | Gratis |
+| Anthropic Haiku | ~€0.001 per bericht (verwaarloosbaar — pak <€0,10/maand) |
 | Open-Meteo | Gratis |
 | Rijkswaterstaat WaterWebservices | Gratis |
 | GitHub Actions | Gratis (publiek repo, 2000 min/maand privé) |
+
+Als je naar Twilio SMS terugschakelt (`NOTIFIER=twilio`), komt daar ~€0.08/SMS bij — ~€0.50-0.65/week bij 7-8 berichten.
 
 ## 🤝 Bijdragen
 
@@ -291,7 +300,7 @@ MIT License - zie LICENSE bestand voor details.
 ## 🙏 Credits
 
 Gebaseerd op meteorologische analyse van Tobias van surfweer.nl.
-Gebruikt Open-Meteo, Rijkswaterstaat, Anthropic Claude Haiku, en MessageBird.
+Gebruikt Open-Meteo, Rijkswaterstaat DDAPI20 WaterWebservices, Anthropic Claude Haiku, en ntfy.sh.
 
 ## 📞 Support
 
