@@ -73,9 +73,9 @@ class SMSValidator:
             if indicator.lower() in sms_text.lower():
                 issues.append(f"Hallucination indicator found: '{indicator}'")
 
-        # Check lengte (max 320 tekens)
-        if len(sms_text) > 320:
-            issues.append(f"SMS too long: {len(sms_text)} characters (max 320)")
+        # Check lengte (max 480 tekens = 3 SMS-segmenten via Twilio concat)
+        if len(sms_text) > 480:
+            issues.append(f"SMS too long: {len(sms_text)} characters (max 480)")
 
         # Controleer of webcam URL aanwezig is
         if "surfweer.nl/webcams/noordwijk/" not in sms_text:
