@@ -4,14 +4,19 @@ SMS generator module met Claude Haiku.
 Bouwt structured-input voor Claude in fysische eenheden (meters, knopen, graden) —
 NOOIT scores als golfhoogte/wind doorgeven, dat heeft eerder hallucinaties veroorzaakt
 (score 51 werd "51m golfhoogte"). Stijl-template: referentie-forecaster van de referentie-forecaster.
+
+Digest is multi-day (vandaag + 3 dagen vooruit) en bevat per dag de beste window,
+piek-condities, tij-richting (opkomend/afgaand) en eerstvolgende hoog/laag, plus
+een lokale spring/dood-tij notitie op basis van maan-fase.
 """
 import json
 import logging
-from datetime import datetime
-from typing import Dict, List, Optional
+import math
+from datetime import datetime, timedelta, timezone
+from typing import Dict, List, Optional, Tuple
 import anthropic
 
-from src.config import ANTHROPIC_CONFIG
+from src.config import ANTHROPIC_CONFIG, NOORDWIJK
 from src.data.models import (
     AlertCandidate,
     HourState,
@@ -26,7 +31,7 @@ logger = logging.getLogger(__name__)
 _COMPASS_16 = ['N', 'NNO', 'NO', 'ONO', 'O', 'OZO', 'ZO', 'ZZO',
                'Z', 'ZZW', 'ZW', 'WZW', 'W', 'WNW', 'NW', 'NNW']
 
-_DAY_NL = ['ma', 'di', 'wo', 'do', 'vr', 'za', 'zo']
+_DAY_NL_SHORT = ['ma', 'di', 'wo', 'do', 'vr', 'za', 'zo']
 
 
 def degrees_to_compass(deg: float) -> str:
@@ -36,7 +41,7 @@ def degrees_to_compass(deg: float) -> str:
 
 
 def wind_label_for_noordwijk(wind_dir_deg: int) -> str:
-    """Wind-categorie voor Noordwijk: offshore / side-offshore / onshore / side-onshore."""
+    """Wind-categorie voor Noordwijk: aflandig / zijaflandig / aanlandig / zij-aanlandig."""
     from src.config import WIND_DIRECTIONS
     d = wind_dir_deg % 360
     if WIND_DIRECTIONS['offshore'][0] <= d <= WIND_DIRECTIONS['offshore'][1]:
@@ -46,6 +51,55 @@ def wind_label_for_noordwijk(wind_dir_deg: int) -> str:
     if WIND_DIRECTIONS['onshore'][0] <= d <= WIND_DIRECTIONS['onshore'][1]:
         return 'aanlandig'
     return 'zij-aanlandig'
+
+
+def is_blocked_by_ijmuiden_pier(swell_dir_deg: int) -> bool:
+    """True als swell-richting binnen de NNO-sector valt die door IJmuiden-pier wordt afgeschermd."""
+    blocked_min = NOORDWIJK.blocked_swell_dir_min
+    blocked_max = NOORDWIJK.blocked_swell_dir_max
+    if blocked_min == 0 and blocked_max == 0:
+        return False
+    d = swell_dir_deg % 360
+    if blocked_min <= blocked_max:
+        return blocked_min <= d <= blocked_max
+    return d >= blocked_min or d <= blocked_max
+
+
+def moon_phase_info(when: datetime) -> Tuple[float, str, bool]:
+    """
+    Simpele maan-fase berekening (synodische maand 29.53 dagen, referentie nieuwe maan
+    2000-01-06 18:14 UTC). Goed genoeg voor "springtij of niet".
+
+    Returns:
+        (phase_age_days, label_nl, is_spring_tide).
+        is_spring_tide = binnen 2 dagen van nieuwe of volle maan.
+    """
+    ref = datetime(2000, 1, 6, 18, 14, tzinfo=timezone.utc)
+    when_utc = when.astimezone(timezone.utc) if when.tzinfo else when.replace(tzinfo=timezone.utc)
+    days = (when_utc - ref).total_seconds() / 86400.0
+    age = days % 29.530588
+    # Labels per ~3.7-dagen kwart.
+    if age < 1.85 or age >= 27.68:
+        label = 'nieuwe maan'
+    elif age < 5.54:
+        label = 'wassende sikkel'
+    elif age < 9.23:
+        label = 'eerste kwartier'
+    elif age < 12.92:
+        label = 'wassende maan'
+    elif age < 16.61:
+        label = 'volle maan'
+    elif age < 20.30:
+        label = 'afnemende maan'
+    elif age < 23.99:
+        label = 'laatste kwartier'
+    else:
+        label = 'afnemende sikkel'
+    # Springtij-venster: <2 dagen rond nieuwe maan (0/29.53) of volle maan (14.77).
+    distance_new = min(age, 29.530588 - age)
+    distance_full = abs(age - 14.765)
+    is_spring = distance_new < 2.0 or distance_full < 2.0
+    return age, label, is_spring
 
 
 SYSTEM_PROMPT = """Je schrijft korte surf-SMS'jes voor Noordwijk in de stijl van referentie-forecaster
@@ -59,13 +113,16 @@ STRIKTE REGELS:
      wind_speed_kn   → knopen
      *_deg           → graden (kompas-label staat al voorgekookt in *_compass)
    Verzin NOOIT andere eenheden. Score-getallen (0-100) vermeld je niet in de SMS.
-3. Bij type "digest" begin met "Nwijk [dag]:". Bij "alert" met "NWIJK ALERT [datum]".
-4. Vermeld voor vandaag (en kort morgen): golfhoogte (m), periode (s), wind (kn + kompas).
-5. Als best_window.is_surfable=false zeg dan "geen venster" of "flat" — geen tijdblok verzinnen.
-6. Als is_surfable=true, gebruik EXACT start_time en end_time uit de input voor het tijdblok.
-7. Houd onder 320 tekens (= 2 SMS).
+3. Bij type "digest" begin met "Nwijk [day_label_today]:" en behandel ELKE dag in `days`
+   in volgorde, gescheiden door "." of ";". Vermeld voor elke dag minimaal: golfhoogte,
+   periode, wind+kompas, tij-richting (opkomend/afgaand) en — als is_surfable=true —
+   het tijdblok (start_time-end_time).
+4. Als best_window.is_surfable=false zeg dan "flat" of "geen venster" voor die dag.
+5. Vermeld tide_context.spring_tide_label als true ("springtij") — dat is relevant voor stroming.
+6. Als peak_hour.swell_refracts_around_ijmuiden=true noem dat kort ("NNO afgeschermd").
+7. Houd onder 320 tekens (= 2 SMS). Prefer compacte vorm zoals "0,8m 8s WNW, wind ZO 6kn aflandig".
 8. Eindig met "Cam: surfweer.nl/webcams/noordwijk/"
-9. Geen "denk ik", geen "waarschijnlijk", geen emoji.
+9. Geen "denk ik", geen "waarschijnlijk", geen emoji, geen TL;DR-uitleg.
 """
 
 
@@ -98,15 +155,6 @@ class SMSGenerator:
         windows: List[SurfWindow],
         forecast_summary: Optional[Dict] = None,
     ) -> str:
-        """
-        Genereer digest-SMS op basis van uurstaten + scores + windows.
-
-        Args:
-            hour_states: Alle HourStates in chronologische volgorde (rij[0]=nu).
-            scores:      Score-breakdowns, één-op-één met hour_states.
-            windows:     Door analyze_windows() gedetecteerde surf-windows.
-            forecast_summary: Optionele metadata (total/surfable hours).
-        """
         if not self.client:
             return self._fallback_digest_template(hour_states, scores, windows)
         try:
@@ -130,7 +178,7 @@ class SMSGenerator:
             }],
         )
         sms_text = message.content[0].text.strip()
-        logger.info(f"Generated SMS via Claude Haiku: {sms_text[:60]}...")
+        logger.info(f"Generated SMS via Claude Haiku: {sms_text[:80]}...")
         return sms_text
 
     # ---------- input shaping ----------
@@ -145,10 +193,12 @@ class SMSGenerator:
             "webcam_url": "https://surfweer.nl/webcams/noordwijk/",
         }
         if alert.window:
+            peak_hour_score = max(alert.window.hourly_scores, key=lambda s: s.total_score)
             input_data["window"] = {
                 "start": alert.window.start.strftime("%H:%M"),
                 "end": alert.window.end.strftime("%H:%M"),
                 "duration_hours": round(alert.window.duration_hours, 1),
+                "peak_time": peak_hour_score.timestamp.strftime("%H:%M"),
             }
         return input_data
 
@@ -160,51 +210,80 @@ class SMSGenerator:
         forecast_summary: Dict,
     ) -> Dict:
         """
-        Bouw structured input voor digest. Pakt voor vandaag (h0-h24) en morgen (h24-h48)
-        respectievelijk de beste-window (indien surfable, score≥60) plus de piek-uur condities.
+        Multi-day digest: vandaag + 3 dagen vooruit. Per dag: peak_hour-condities,
+        beste window (indien surfable), tij-richting + eerstvolgende hoog/laag,
+        en springtij-context.
         """
-        today = self._summarize_day(hour_states[:24], scores[:24], windows, day_offset=0)
-        tomorrow = self._summarize_day(hour_states[24:48], scores[24:48], windows, day_offset=1)
+        days = self._group_by_day(hour_states, scores)
+        day_blocks: List[Dict] = []
+        labels = ["vandaag", "morgen", "overmorgen", "+3"]
+
+        for i, (date_obj, day_states, day_scores) in enumerate(days[:4]):
+            if not day_states or not day_scores:
+                continue
+            label = labels[i] if i < len(labels) else date_obj.strftime("%a %d/%m")
+            day_blocks.append(self._summarize_day(
+                day_states, day_scores, windows,
+                date_obj=date_obj, label_nl=label
+            ))
 
         now = datetime.now()
+        _, moon_label, is_spring = moon_phase_info(now)
+
         return {
             "type": "digest",
-            "date": now.strftime("%Y-%m-%d"),
-            "day_label_nl": _DAY_NL[now.weekday()],
-            "today": today,
-            "tomorrow": tomorrow,
+            "date_today": now.strftime("%Y-%m-%d"),
+            "day_label_today": _DAY_NL_SHORT[now.weekday()],
+            "days": day_blocks,
+            "tide_context": {
+                "moon_phase_nl": moon_label,
+                "spring_tide": is_spring,
+                "spring_tide_label": "springtij" if is_spring else None,
+            },
             "forecast_summary": forecast_summary,
             "webcam_url": "https://surfweer.nl/webcams/noordwijk/",
         }
+
+    def _group_by_day(
+        self,
+        hour_states: List[HourState],
+        scores: List[ScoreBreakdown],
+    ) -> List[Tuple]:
+        """Groepeer (state, score) op kalenderdag in chronologische volgorde."""
+        groups: Dict = {}
+        for s, sc in zip(hour_states, scores):
+            d = s.timestamp.date()
+            groups.setdefault(d, ([], []))
+            groups[d][0].append(s)
+            groups[d][1].append(sc)
+        return [(d, *groups[d]) for d in sorted(groups.keys())]
 
     def _summarize_day(
         self,
         day_states: List[HourState],
         day_scores: List[ScoreBreakdown],
         all_windows: List[SurfWindow],
-        day_offset: int,
-    ) -> Optional[Dict]:
-        if not day_states or not day_scores:
-            return None
-
-        # Piek-uur op basis van score.
+        date_obj,
+        label_nl: str,
+    ) -> Dict:
         peak_idx = max(range(len(day_scores)), key=lambda i: day_scores[i].total_score)
         peak_state = day_states[peak_idx]
         peak_score = day_scores[peak_idx]
 
-        # Beste window in deze dag (binnen [day_start, day_end)).
-        day_start = day_states[0].timestamp
-        day_end = day_states[-1].timestamp
-        day_windows = [
-            w for w in all_windows
-            if day_start <= w.peak_hour <= day_end
-        ]
+        day_windows = [w for w in all_windows
+                       if day_states[0].timestamp <= w.peak_hour <= day_states[-1].timestamp]
         best_window = max(day_windows, key=lambda w: w.peak_score) if day_windows else None
 
+        peak_conditions = self._hour_state_to_conditions(peak_state)
+
         result: Dict = {
-            "peak_score_0_100": round(peak_score.total_score, 1),
+            "label_nl": label_nl,
+            "date": date_obj.strftime("%Y-%m-%d"),
+            "day_short": _DAY_NL_SHORT[date_obj.weekday()],
             "is_surfable": peak_score.total_score >= 60,
-            "peak_hour": self._hour_state_to_conditions(peak_state),
+            "peak_score_0_100": round(peak_score.total_score, 1),
+            "peak_hour": peak_conditions,
+            "tide_summary": self._tide_summary_for_day(day_states, peak_state),
         }
         if best_window:
             result["best_window"] = {
@@ -212,6 +291,7 @@ class SMSGenerator:
                 "start_time": best_window.start.strftime("%H:%M"),
                 "end_time": best_window.end.strftime("%H:%M"),
                 "duration_hours": round(best_window.duration_hours, 1),
+                "peak_time": best_window.peak_hour.strftime("%H:%M"),
                 "peak_score_0_100": int(best_window.peak_score),
             }
         else:
@@ -231,7 +311,7 @@ class SMSGenerator:
                 SwellType.WIND_SEA:     "wind-sea",
             }.get(dominant.type, "onbekend")
 
-        wave_dir_deg = dominant.direction_deg if dominant else spectrum.mean_direction
+        wave_dir_deg = dominant.direction_deg if dominant else int(spectrum.mean_direction)
         return {
             "time": state.timestamp.strftime("%H:%M"),
             "wave_height_m": round(spectrum.significant_height_total, 1),
@@ -239,15 +319,28 @@ class SMSGenerator:
             "wave_direction_deg": int(wave_dir_deg),
             "wave_direction_compass": degrees_to_compass(wave_dir_deg),
             "swell_type": swell_type_label or "onbekend",
+            "swell_refracts_around_ijmuiden": is_blocked_by_ijmuiden_pier(int(wave_dir_deg)),
             "wind_speed_kn": round(state.wind.speed_kn, 1),
+            "wind_gust_kn": round(state.wind.gusts_kn, 1) if state.wind.gusts_kn else None,
             "wind_direction_deg": int(state.wind.direction_deg),
             "wind_direction_compass": degrees_to_compass(state.wind.direction_deg),
             "wind_label": wind_label_for_noordwijk(state.wind.direction_deg),
-            "tide_phase": state.tide.phase,
-            "tide_level_m": round(state.tide.level_m, 2),
         }
 
-    # ---------- fallback templates (gebruikt bij API-fout of validatie-falen) ----------
+    def _tide_summary_for_day(self, day_states: List[HourState], peak_state: HourState) -> Dict:
+        """Eerstvolgende hoog- en laagtij + huidige tij-richting op piek-moment."""
+        tide = peak_state.tide
+        # next_high/next_low zijn al berekend per HourState; pak de eerste van deze dag.
+        next_high = peak_state.tide.next_high
+        next_low = peak_state.tide.next_low
+        return {
+            "phase_at_peak": tide.phase,                       # opgaand/afgaand/onbekend
+            "level_m_at_peak": round(tide.level_m, 2),
+            "next_high_time": next_high.strftime("%H:%M") if next_high else None,
+            "next_low_time": next_low.strftime("%H:%M") if next_low else None,
+        }
+
+    # ---------- fallback templates ----------
 
     def _fallback_alert_template(self, alert: AlertCandidate) -> str:
         if not alert.window:
@@ -264,37 +357,45 @@ class SMSGenerator:
         scores: List[ScoreBreakdown],
         windows: List[SurfWindow],
     ) -> str:
-        """Deterministische fallback in surfweer-stijl met echte fysische waardes."""
+        """Deterministische 4-daagse digest in surfweer-stijl."""
         if not hour_states or not scores:
-            return ("Nwijk: geen data beschikbaar. "
-                    "Cam: surfweer.nl/webcams/noordwijk/")
+            return "Nwijk: geen data beschikbaar. Cam: surfweer.nl/webcams/noordwijk/"
 
+        days = self._group_by_day(hour_states, scores)
         now = datetime.now()
-        day_label = _DAY_NL[now.weekday()]
+        day_label = _DAY_NL_SHORT[now.weekday()]
+        _, _, is_spring = moon_phase_info(now)
 
-        def fmt_day(states: List[HourState], day_scores: List[ScoreBreakdown], label: str) -> str:
-            if not states or not day_scores:
-                return f"{label} geen data"
+        labels = ["vandaag", "morgen", "overmorgen", None]
+        parts: List[str] = []
+        for i, (date_obj, day_states, day_scores) in enumerate(days[:4]):
+            if not day_states:
+                continue
+            label = labels[i] or date_obj.strftime("%a %d/%m")
             peak_idx = max(range(len(day_scores)), key=lambda i: day_scores[i].total_score)
-            ps = states[peak_idx]
+            ps = day_states[peak_idx]
             spectrum = ps.wave_spectrum
             dom = max(spectrum.peaks, key=lambda p: p.height_m) if spectrum.peaks else None
             h = round(spectrum.significant_height_total, 1)
             p = round(dom.period_s if dom else spectrum.mean_period, 1)
+            wave_dir = degrees_to_compass(dom.direction_deg if dom else spectrum.mean_direction)
             wind_dir = degrees_to_compass(ps.wind.direction_deg)
             wind_kn = round(ps.wind.speed_kn)
+            tide_dir = ps.tide.phase if ps.tide.phase in ('opgaand', 'afgaand') else '–'
 
             day_windows = [w for w in windows
-                           if states[0].timestamp <= w.peak_hour <= states[-1].timestamp]
+                           if day_states[0].timestamp <= w.peak_hour <= day_states[-1].timestamp]
             if day_windows:
                 w = max(day_windows, key=lambda w: w.peak_score)
-                window_str = f"{w.start.strftime('%H:%M')}-{w.end.strftime('%H:%M')}"
+                window_str = f" {w.start.strftime('%H:%M')}-{w.end.strftime('%H:%M')}"
             else:
-                window_str = "geen venster"
-            return f"{label} {h}m {p}s {wind_dir}{wind_kn}kn, {window_str}"
+                window_str = " (geen venster)"
 
-        today = fmt_day(hour_states[:24], scores[:24], "vandaag")
-        tomorrow = fmt_day(hour_states[24:48], scores[24:48], "morgen")
+            parts.append(
+                f"{label}: {h}m {p}s {wave_dir}, {wind_dir}{wind_kn}kn, "
+                f"tij {tide_dir}{window_str}"
+            )
 
-        return (f"Nwijk {day_label}: {today}. {tomorrow}. "
-                f"Cam: surfweer.nl/webcams/noordwijk/")
+        body = "; ".join(parts)
+        spring_note = " Springtij." if is_spring else ""
+        return f"Nwijk {day_label}: {body}.{spring_note} Cam: surfweer.nl/webcams/noordwijk/"
