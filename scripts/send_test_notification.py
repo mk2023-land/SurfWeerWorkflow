@@ -116,7 +116,11 @@ async def main() -> int:
         states, scores, windows, summary,
         wind_spread_series=wind_spread_full,
     )
-    text = gen._call_claude(structured_input) if gen.client else None
+    try:
+        text = gen._call_claude(structured_input) if gen.client else None
+    except Exception as e:
+        print(f"⚠ Claude API exception: {e}")
+        text = None
     if text:
         print(f"→ LLM-output ({len(text)} tekens):")
         print("  " + text.replace("\n", "\n  "))
