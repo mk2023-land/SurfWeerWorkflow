@@ -14,9 +14,116 @@ from src.config import (
     NOORDWIJK,
     TIMEZONE,
     OPEN_METEO_MODELS,
+    OPEN_METEO_USER_AGENT,
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Shared httpx.AsyncClient voor Open-Meteo: keep-alive + User-Agent.
+# Voorkomt herhaalde TCP-handshakes bij parallelle marine/forecast calls.
+# ---------------------------------------------------------------------------
+_open_meteo_client: Optional[httpx.AsyncClient] = None
+_open_meteo_client_lock = asyncio.Lock()
+
+
+async def _get_shared_open_meteo_client(timeout: float = 30.0) -> httpx.AsyncClient:
+    global _open_meteo_client
+    if _open_meteo_client is None or _open_meteo_client.is_closed:
+        async with _open_meteo_client_lock:
+            if _open_meteo_client is None or _open_meteo_client.is_closed:
+                _open_meteo_client = httpx.AsyncClient(
+                    timeout=timeout,
+                    limits=httpx.Limits(
+                        max_keepalive_connections=4,
+                        max_connections=8,
+                    ),
+                    headers={'User-Agent': OPEN_METEO_USER_AGENT},
+                )
+    return _open_meteo_client
+
+
+# ---------------------------------------------------------------------------
+# Sanity-bovengrenzen (per veld). Buiten range → None + WARNING.
+# Voorkomt dat een API-glitch (negatieve Hs, 200kn wind, etc.) downstream
+# scoring corrupteert.
+# ---------------------------------------------------------------------------
+_OM_WAVE_HEIGHT_MAX_M = 15.0
+_OM_WAVE_PERIOD_MAX_S = 30.0
+_OM_WIND_SPEED_MAX_KN = 100.0
+_OM_GUST_MAX_KN = 150.0
+_OM_TEMP_MIN_C = -30.0
+_OM_TEMP_MAX_C = 50.0
+_OM_PRESSURE_MIN_HPA = 900.0
+_OM_PRESSURE_MAX_HPA = 1080.0
+
+
+def _check_range(
+    value: Optional[float],
+    lo: float,
+    hi: float,
+    field: str,
+) -> Optional[float]:
+    """
+    Sanity-check op een numeriek veld. None-pass-through (we onderscheiden
+    None = missing van waarde-uit-range). Out-of-range → None + WARNING.
+    """
+    if value is None:
+        return None
+    try:
+        fv = float(value)
+    except (TypeError, ValueError):
+        return None
+    if fv < lo or fv > hi:
+        logger.warning(
+            f"Open-Meteo {field} buiten range ({fv} not in [{lo}, {hi}]); → None"
+        )
+        return None
+    return fv
+
+
+def _sanity_check_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Pas range-checks toe op alle numerieke velden in een parsed row.
+    Werkt in-place én retourneert row. Onbekende/None-keys raken niet
+    aangetast (None blijft None — geen valse 0.0).
+    """
+    # Marine wave velden
+    for key in ('wave_height', 'wind_wave_height', 'swell_wave_height'):
+        if key in row:
+            row[key] = _check_range(row.get(key), -0.01, _OM_WAVE_HEIGHT_MAX_M, key)
+            if row.get(key) is not None and row[key] < 0:
+                logger.warning(
+                    f"Open-Meteo {key} negatief; → None"
+                )
+                row[key] = None
+    for key in (
+        'wave_period', 'wind_wave_period', 'wind_wave_peak_period',
+        'swell_wave_period',
+    ):
+        if key in row:
+            row[key] = _check_range(row.get(key), 0.0, _OM_WAVE_PERIOD_MAX_S, key)
+    # Forecast meteo
+    if 'wind_speed' in row:
+        row['wind_speed'] = _check_range(row.get('wind_speed'), 0.0, _OM_WIND_SPEED_MAX_KN, 'wind_speed')
+    if 'wind_gusts' in row:
+        row['wind_gusts'] = _check_range(row.get('wind_gusts'), 0.0, _OM_GUST_MAX_KN, 'wind_gusts')
+    if 'temperature' in row:
+        row['temperature'] = _check_range(row.get('temperature'), _OM_TEMP_MIN_C, _OM_TEMP_MAX_C, 'temperature')
+    if 'apparent_temperature' in row:
+        row['apparent_temperature'] = _check_range(
+            row.get('apparent_temperature'), _OM_TEMP_MIN_C, _OM_TEMP_MAX_C, 'apparent_temperature'
+        )
+    if 'dew_point' in row:
+        row['dew_point'] = _check_range(row.get('dew_point'), _OM_TEMP_MIN_C, _OM_TEMP_MAX_C, 'dew_point')
+    if 'pressure' in row:
+        row['pressure'] = _check_range(row.get('pressure'), _OM_PRESSURE_MIN_HPA, _OM_PRESSURE_MAX_HPA, 'pressure')
+    if 'sea_surface_temperature' in row:
+        row['sea_surface_temperature'] = _check_range(
+            row.get('sea_surface_temperature'), -5.0, 40.0, 'sea_surface_temperature'
+        )
+    return row
 
 
 class OpenMeteoClient:
@@ -35,24 +142,28 @@ class OpenMeteoClient:
         params: Dict[str, Any],
         method: str = "GET"
     ) -> Dict[str, Any]:
-        """HTTP request met retry logica."""
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            for attempt in range(self.max_retries):
-                try:
-                    response = await client.request(method, url, params=params)
-                    response.raise_for_status()
-                    return response.json()
+        """
+        HTTP request met retry logica. Gebruikt shared AsyncClient zodat
+        TCP-connecties hergebruikt worden voor parallelle marine+forecast
+        calls (geen connection-overload).
+        """
+        client = await _get_shared_open_meteo_client(timeout=self.timeout)
+        for attempt in range(self.max_retries):
+            try:
+                response = await client.request(method, url, params=params)
+                response.raise_for_status()
+                return response.json()
 
-                except httpx.HTTPError as e:
-                    logger.warning(f"Open-Meteo request failed (attempt {attempt + 1}/{self.max_retries}): {e}")
+            except httpx.HTTPError as e:
+                logger.warning(f"Open-Meteo request failed (attempt {attempt + 1}/{self.max_retries}): {e}")
 
-                    if attempt == self.max_retries - 1:
-                        raise
+                if attempt == self.max_retries - 1:
+                    raise
 
-                    # Exponential backoff
-                    await asyncio.sleep(2 ** attempt)
+                # Exponential backoff
+                await asyncio.sleep(2 ** attempt)
 
-            raise Exception("Max retries exceeded")
+        raise Exception("Max retries exceeded")
 
     # Marine velden basis (primary ECMWAM-model)
     _MARINE_BASE_FIELDS = (
@@ -174,6 +285,9 @@ class OpenMeteoClient:
                         if suffixed in hourly:
                             row[suffixed] = _get(suffixed, i)
 
+            # Sanity-check op alle gerelateerde velden (None bij out-of-range,
+            # geen 0.0-mapping zodat None vs legitimate-zero onderscheiden blijft).
+            _sanity_check_row(row)
             result.append(row)
 
         logger.info(
@@ -368,7 +482,7 @@ class OpenMeteoClient:
                         return None
                     col = hourly.get(key, [])
                     return col[i] if i < len(col) else None
-                model_result.append({
+                row = {
                     'timestamp': datetime.fromisoformat(time_str.replace('Z', '+00:00')),
                     'wind_speed': _get(ws_key),
                     'wind_direction': _get(wd_key),
@@ -391,7 +505,9 @@ class OpenMeteoClient:
                     'lifted_index': _get(li_key),
                     'convective_inhibition': _get(cin_key),
                     'boundary_layer_height': _get(pbl_key),
-                })
+                }
+                _sanity_check_row(row)
+                model_result.append(row)
             result[model] = model_result
 
         # Zorg dat 'knmi_seamless' altijd aanwezig is (fallback voor callers
@@ -491,31 +607,44 @@ class OpenMeteoClient:
         # Parse responses
         result = {'weather': [], 'marine': []}
 
+        # Helper: length-safe index access. Voorkomt IndexError als één kolom
+        # korter is dan time[] (Open-Meteo doet dat soms voor velden die nog
+        # niet beschikbaar zijn op het einde van het archive-window).
+        def _get_at(hourly: Dict[str, Any], field: str, i: int):
+            col = hourly.get(field)
+            if not col or i >= len(col):
+                return None
+            return col[i]
+
         # Weather data
         weather_hourly = weather_data.get('hourly', {})
         weather_times = weather_hourly.get('time', [])
 
         for i, time_str in enumerate(weather_times):
-            result['weather'].append({
+            row = {
                 'timestamp': datetime.fromisoformat(time_str.replace('Z', '+00:00')),
-                'wind_speed': weather_hourly.get('wind_speed_10m', [])[i],
-                'wind_direction': weather_hourly.get('wind_direction_10m', [])[i],
-                'temperature': weather_hourly.get('temperature_2m', [])[i]
-            })
+                'wind_speed': _get_at(weather_hourly, 'wind_speed_10m', i),
+                'wind_direction': _get_at(weather_hourly, 'wind_direction_10m', i),
+                'temperature': _get_at(weather_hourly, 'temperature_2m', i),
+            }
+            _sanity_check_row(row)
+            result['weather'].append(row)
 
         # Marine data
         marine_hourly = marine_data.get('hourly', {})
         marine_times = marine_hourly.get('time', [])
 
         for i, time_str in enumerate(marine_times):
-            result['marine'].append({
+            row = {
                 'timestamp': datetime.fromisoformat(time_str.replace('Z', '+00:00')),
-                'wave_height': marine_hourly.get('wave_height', [])[i],
-                'wave_direction': marine_hourly.get('wave_direction', [])[i],
-                'wave_period': marine_hourly.get('wave_period', [])[i],
-                'swell_wave_height': marine_hourly.get('swell_wave_height', [])[i],
-                'swell_wave_period': marine_hourly.get('swell_wave_period', [])[i]
-            })
+                'wave_height': _get_at(marine_hourly, 'wave_height', i),
+                'wave_direction': _get_at(marine_hourly, 'wave_direction', i),
+                'wave_period': _get_at(marine_hourly, 'wave_period', i),
+                'swell_wave_height': _get_at(marine_hourly, 'swell_wave_height', i),
+                'swell_wave_period': _get_at(marine_hourly, 'swell_wave_period', i),
+            }
+            _sanity_check_row(row)
+            result['marine'].append(row)
 
         logger.info(f"Retrieved {len(result['weather'])} hours of weather and {len(result['marine'])} hours of marine archive data")
         return result
@@ -532,30 +661,65 @@ class OpenMeteoClient:
 
         Open-Meteo levert geen swell_wave_peak_period; daar blijft `period` de
         beste beschikbare proxy.
+
+        None vs zero: voor heights geldt dat 0 een legitieme "flat" waarde is —
+        we mappen None → 0.0 (legacy gedrag). Voor periodes/richtingen
+        betekent None "geen meting" en blijft None door — een peak met
+        onbekende periode is namelijk zinloos.
         """
         timestamp = marine_data['timestamp']
 
-        def _num(key: str) -> float:
-            """Coerce None / missing → 0.0 (Open-Meteo returns null voor lege uren)."""
-            return marine_data.get(key) or 0.0
+        def _num_safe(key: str) -> float:
+            """Coerce None / missing → 0.0 (legitiem voor heights & flat-water uren)."""
+            v = marine_data.get(key)
+            if v is None:
+                return 0.0
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                return 0.0
+
+        def _num_optional(key: str) -> Optional[float]:
+            """Retourneer None bij missing/None — voor periode/richting waar None != 0."""
+            v = marine_data.get(key)
+            if v is None:
+                return None
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                return None
 
         peaks = []
 
-        wind_wave_height = _num('wind_wave_height')
+        wind_wave_height = _num_safe('wind_wave_height')
         # Voorkeur: peak period (Tp). Fallback: mean period (Tm02) — bij missing data.
-        wind_wave_period = _num('wind_wave_peak_period') or _num('wind_wave_period')
-        if wind_wave_height > 0.1 and wind_wave_period > 0:
+        # Optional-helpers: als beide None zijn, blijft de peak gewoon achterwege
+        # (geen valse 0.0 die later als geldig wordt geïnterpreteerd).
+        wwpp = _num_optional('wind_wave_peak_period')
+        wwp = _num_optional('wind_wave_period')
+        wind_wave_period = wwpp if (wwpp is not None and wwpp > 0) else wwp
+        wind_wave_dir = _num_optional('wind_wave_direction')
+        if (
+            wind_wave_height > 0.1
+            and wind_wave_period is not None
+            and wind_wave_period > 0
+        ):
             peaks.append(SpectralPeak(
                 frequency_mhz=1000 / wind_wave_period,
                 period_s=wind_wave_period,
                 height_m=wind_wave_height,
-                direction_deg=int(_num('wind_wave_direction')),
+                direction_deg=int(wind_wave_dir) if wind_wave_dir is not None else 0,
                 type=SwellType.WIND_SEA
             ))
 
-        swell_height = _num('swell_wave_height')
-        swell_period = _num('swell_wave_period')
-        if swell_height > 0.1 and swell_period > 0:
+        swell_height = _num_safe('swell_wave_height')
+        swell_period = _num_optional('swell_wave_period')
+        swell_dir = _num_optional('swell_wave_direction')
+        if (
+            swell_height > 0.1
+            and swell_period is not None
+            and swell_period > 0
+        ):
             if swell_period >= 9:
                 swell_type = SwellType.GROUND_SWELL
             elif swell_period >= 7:
@@ -567,26 +731,32 @@ class OpenMeteoClient:
                 frequency_mhz=1000 / swell_period,
                 period_s=swell_period,
                 height_m=swell_height,
-                direction_deg=int(_num('swell_wave_direction')),
+                direction_deg=int(swell_dir) if swell_dir is not None else 0,
                 type=swell_type
             ))
 
-        wave_height = _num('wave_height')
-        wave_period = _num('wave_period')
-        if not peaks and wave_height > 0 and wave_period > 0:
+        wave_height = _num_safe('wave_height')
+        wave_period_opt = _num_optional('wave_period')
+        wave_dir_opt = _num_optional('wave_direction')
+        if (
+            not peaks
+            and wave_height > 0
+            and wave_period_opt is not None
+            and wave_period_opt > 0
+        ):
             peaks.append(SpectralPeak(
-                frequency_mhz=1000 / wave_period,
-                period_s=wave_period,
+                frequency_mhz=1000 / wave_period_opt,
+                period_s=wave_period_opt,
                 height_m=wave_height,
-                direction_deg=int(_num('wave_direction')),
+                direction_deg=int(wave_dir_opt) if wave_dir_opt is not None else 0,
                 type=SwellType.WIND_SEA
             ))
 
         return WaveSpectrum(
             timestamp=timestamp,
             significant_height_total=wave_height,
-            mean_period=wave_period,
-            mean_direction=int(_num('wave_direction')),
+            mean_period=wave_period_opt if wave_period_opt is not None else 0.0,
+            mean_direction=int(wave_dir_opt) if wave_dir_opt is not None else 0,
             peaks=peaks
         )
 

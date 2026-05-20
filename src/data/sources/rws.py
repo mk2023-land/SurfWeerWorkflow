@@ -20,6 +20,7 @@ Response-shape sinds DDAPI20:
     }
 """
 import asyncio
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any
@@ -33,9 +34,56 @@ from src.config import (
     API_ENDPOINTS,
     RWS_STATIONS,
     TIMEZONE,
+    RWS_CONCURRENCY_LIMIT,
+    RWS_EMPTY_BODY_RETRIES,
+    RWS_EMPTY_BODY_RETRY_DELAY_S,
+    RWS_HTTP_TIMEOUT_S,
+    RWS_MAX_KEEPALIVE_CONNECTIONS,
+    RWS_MAX_CONNECTIONS,
+    RWS_USER_AGENT,
 )
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Module-level shared resources voor connection-pooling + throttling.
+#
+# DDAPI20 retourneert lege bodies (parse-error "Expecting value: line 1
+# column 1 (char 0)") onder load. Twee mitigaties:
+#   1. Semaphore beperkt aantal in-flight requests tot N (default 3).
+#   2. Shared AsyncClient hergebruikt TCP-connecties (keep-alive).
+# ---------------------------------------------------------------------------
+_rws_semaphore = asyncio.Semaphore(RWS_CONCURRENCY_LIMIT)
+_rws_client: Optional[httpx.AsyncClient] = None
+_rws_client_lock = asyncio.Lock()
+
+
+async def _get_shared_client() -> httpx.AsyncClient:
+    """Lazy-init een shared httpx.AsyncClient voor RWS calls."""
+    global _rws_client
+    if _rws_client is None or _rws_client.is_closed:
+        async with _rws_client_lock:
+            if _rws_client is None or _rws_client.is_closed:
+                _rws_client = httpx.AsyncClient(
+                    timeout=RWS_HTTP_TIMEOUT_S,
+                    limits=httpx.Limits(
+                        max_keepalive_connections=RWS_MAX_KEEPALIVE_CONNECTIONS,
+                        max_connections=RWS_MAX_CONNECTIONS,
+                    ),
+                    headers={'User-Agent': RWS_USER_AGENT},
+                )
+    return _rws_client
+
+
+# Sanity-check bovengrenzen voor RWS-boei waarden. Buiten deze ranges
+# corrupteert een sensor-glitch / unit-bug downstream scoring.
+_RWS_HM0_MAX_M = 15.0
+_RWS_PERIOD_MAX_S = 30.0
+_RWS_HMAX_MAX_M = 30.0  # Hmax kan ~1.8× Hm0
+_RWS_PRESSURE_MIN_HPA = 900.0
+_RWS_PRESSURE_MAX_HPA = 1080.0
+_RWS_AIR_TEMP_MIN_C = -30.0
+_RWS_AIR_TEMP_MAX_C = 50.0
 
 # Aquo-codes voor de quantities die we opvragen.
 GROOTHEID_HM0 = 'Hm0'      # Significante golfhoogte in spectrale domein (cm)
@@ -62,30 +110,84 @@ def _parse_rws_timestamp(s: str) -> datetime:
     return datetime.fromisoformat(s)
 
 
+def _height_factor_to_m(rows: List[Dict[str, Any]], grootheid: str) -> float:
+    """
+    Bepaal conversie-factor om RWS-hoogte naar meter te zetten op basis
+    van `unit` field in de response. RWS publiceert Hm0/Hmax meestal in
+    cm; bij toekomstige unit-switch (naar 'm') voorkomt deze functie een
+    100× foutieve waarde.
+
+    Returns:
+        0.01 voor 'cm', 1.0 voor 'm', 0.01 als default met WARNING bij
+        onbekende units (current behavior preserveren).
+    """
+    if not rows:
+        return 0.01  # default cm-aanname
+    unit = rows[0].get('unit')
+    if unit == 'cm':
+        return 0.01
+    if unit == 'm':
+        return 1.0
+    if unit is None:
+        return 0.01
+    logger.warning(
+        f"RWS grootheid {grootheid}: onbekende unit '{unit}', "
+        f"assume cm (factor 0.01)"
+    )
+    return 0.01
+
+
+def _sane_hm0_m(height_m: float, station_code: str) -> bool:
+    """True als Hm0 binnen plausibele range; anders WARNING + False (drop)."""
+    if height_m < 0:
+        logger.warning(
+            f"RWS Hm0 negatief ({height_m:.2f}m) @{station_code}; drop"
+        )
+        return False
+    if height_m > _RWS_HM0_MAX_M:
+        logger.warning(
+            f"RWS Hm0 {height_m:.2f}m > {_RWS_HM0_MAX_M}m @{station_code}; drop"
+        )
+        return False
+    return True
+
+
 class RWSClient:
     """Async client voor RWS DDAPI20 WaterWebservices."""
 
     def __init__(self):
-        self.timeout = 30.0
+        self.timeout = RWS_HTTP_TIMEOUT_S
         self.max_retries = 3
         self.latest_url = API_ENDPOINTS['rws_latest']
         self.period_url = API_ENDPOINTS['rws_period']
 
     async def _post(self, url: str, body: Dict[str, Any]) -> Dict[str, Any]:
-        """POST met retry en exponential backoff."""
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            last_err: Optional[Exception] = None
-            for attempt in range(self.max_retries):
-                try:
-                    response = await client.post(url, json=body)
-                    response.raise_for_status()
-                    return response.json()
-                except httpx.HTTPError as e:
-                    last_err = e
-                    logger.warning(f"RWS request failed (attempt {attempt + 1}/{self.max_retries}): {e}")
-                    if attempt < self.max_retries - 1:
-                        await asyncio.sleep(2 ** attempt)
-            raise last_err or RuntimeError("RWS request failed")
+        """
+        POST met retry en exponential backoff. Gebruikt een shared
+        httpx.AsyncClient (keep-alive, User-Agent) i.p.v. per-call
+        open/close — DDAPI20 hapert minder bij connection-reuse.
+
+        Empty-body responses worden onderscheiden van HTTP-errors: json.loads
+        op een lege body raised json.JSONDecodeError, dat bubbelt naar
+        `_fetch_series_safe` waar 2x retry plaatsvindt.
+        """
+        client = await _get_shared_client()
+        last_err: Optional[Exception] = None
+        for attempt in range(self.max_retries):
+            try:
+                response = await client.post(url, json=body)
+                response.raise_for_status()
+                # response.json() raised json.JSONDecodeError bij empty body —
+                # dat is exact de DDAPI20-load-symptoom die we willen vangen.
+                return response.json()
+            except httpx.HTTPError as e:
+                last_err = e
+                logger.warning(
+                    f"RWS request failed (attempt {attempt + 1}/{self.max_retries}): {e}"
+                )
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+        raise last_err or RuntimeError("RWS request failed")
 
     async def _fetch_series(
         self,
@@ -156,19 +258,56 @@ class RWSClient:
         Wrapper rond `_fetch_series` die fouten en lege responses opvangt
         en gestructureerde per-grootheid logging emit (B5-fix-stijl).
 
+        Concurrency-throttle: alle calls gaan via `_rws_semaphore` zodat
+        nooit meer dan RWS_CONCURRENCY_LIMIT in-flight zijn — DDAPI20
+        retourneert lege bodies bij teveel parallelle calls.
+
+        Empty-body retry: bij json.JSONDecodeError / ValueError (DDAPI20
+        retourneerde een lege body) proberen we tot RWS_EMPTY_BODY_RETRIES
+        keer opnieuw met een korte delay. Vaak werkt de 2e/3e poging wel.
+
         Retourneert altijd een lijst — leeg bij error, zodat een individuele
         503/404 niet de hele boei kapotmaakt in `asyncio.gather(..., return_exceptions=True)`.
         """
-        try:
-            rows = await self._fetch_series(
-                location_code, grootheid, start, end,
-                proces_type=proces_type, hoedanigheid=hoedanigheid,
+        max_attempts = max(1, RWS_EMPTY_BODY_RETRIES + 1)
+        async with _rws_semaphore:
+            logger.debug(
+                f"RWS semaphore acquired voor {grootheid}@{location_code}"
             )
-        except Exception as e:
-            logger.warning(
-                f"RWS grootheid {grootheid}@{location_code} mislukt: {e}"
-            )
-            return []
+            last_err: Optional[Exception] = None
+            for attempt in range(max_attempts):
+                try:
+                    rows = await self._fetch_series(
+                        location_code, grootheid, start, end,
+                        proces_type=proces_type, hoedanigheid=hoedanigheid,
+                    )
+                    break
+                except (json.JSONDecodeError, ValueError) as e:
+                    last_err = e
+                    if attempt < max_attempts - 1:
+                        logger.info(
+                            f"RWS empty-body retry {attempt + 1}/{max_attempts - 1} "
+                            f"voor grootheid {grootheid}@{location_code}: {e}"
+                        )
+                        await asyncio.sleep(RWS_EMPTY_BODY_RETRY_DELAY_S)
+                        continue
+                    logger.warning(
+                        f"RWS grootheid {grootheid}@{location_code} empty-body "
+                        f"na {max_attempts} pogingen: {e}"
+                    )
+                    return []
+                except Exception as e:
+                    logger.warning(
+                        f"RWS grootheid {grootheid}@{location_code} mislukt: {e}"
+                    )
+                    return []
+            else:
+                # Loop exhausted without break — alle retries faalden.
+                logger.warning(
+                    f"RWS grootheid {grootheid}@{location_code} faalde na retries: {last_err}"
+                )
+                return []
+        # Buiten semaphore: logging + return.
         if not rows:
             logger.warning(
                 f"RWS grootheid {grootheid}@{location_code} leverde 0 punten"
@@ -274,17 +413,35 @@ class RWSClient:
         airtemp_by_ts = {r['timestamp']: r['value']
                          for r in extras_by_code.get(GROOTHEID_LUCHTTPR, [])}
 
+        # Unit-aware height conversie: RWS publiceert Hm0/Hmax meestal in cm
+        # maar mogelijk in m. Lees `unit` uit de eerste record en kies de factor.
+        hm0_factor = _height_factor_to_m(hm0, GROOTHEID_HM0)
+        hmax_factor = _height_factor_to_m(
+            extras_by_code.get(GROOTHEID_HMAX, []), GROOTHEID_HMAX
+        )
+
+        # Sanity-bepaling Hm0: bouw eerst een filtered list zodat een
+        # negatieve / absurd hoge waarde de hele timestamp dropt (Tm02/Th0
+        # zouden anders aan een glitch-Hm0 hangen).
         merged: List[Dict[str, Any]] = []
         for row in hm0:
             ts = row['timestamp']
+            height_m = row['value'] * hm0_factor
+            if not _sane_hm0_m(height_m, station_code):
+                continue
             period_s = tm02_by_ts.get(ts)
             if period_s is None or period_s <= 0:
                 continue  # zonder periode is een spectrale piek zinloos
+            if period_s > _RWS_PERIOD_MAX_S:
+                logger.warning(
+                    f"RWS Tm02 {period_s}s buiten range @{station_code}; sla over"
+                )
+                continue
             direction = th0_by_ts.get(ts, 0.0)
             point: Dict[str, Any] = {
                 'timestamp': ts,
                 'station': station_code,
-                'height_m': row['value'] / 100.0,  # cm → m
+                'height_m': height_m,
                 'period_s': period_s,
                 'direction_deg': direction,
             }
@@ -292,19 +449,40 @@ class RWSClient:
             # downstream-consumers `dict.get(..., default)` kunnen gebruiken.
             tp_val = tp_by_ts.get(ts)
             if tp_val is not None and tp_val > 0:
-                point['tp_s'] = float(tp_val)
+                if tp_val <= _RWS_PERIOD_MAX_S:
+                    point['tp_s'] = float(tp_val)
+                else:
+                    logger.warning(
+                        f"RWS Tp {tp_val}s buiten range @{station_code}; drop"
+                    )
             sobh_val = sobh_by_ts.get(ts)
-            if sobh_val is not None:
+            if sobh_val is not None and 0 <= sobh_val <= 180:
                 point['sobh_deg'] = float(sobh_val)
             hmax_val = hmax_by_ts.get(ts)
             if hmax_val is not None:
-                point['hmax_m'] = float(hmax_val) / 100.0  # cm → m
+                hmax_m = float(hmax_val) * hmax_factor
+                if 0 <= hmax_m <= _RWS_HMAX_MAX_M:
+                    point['hmax_m'] = hmax_m
+                else:
+                    logger.warning(
+                        f"RWS Hmax {hmax_m:.2f}m buiten range @{station_code}; drop"
+                    )
             pressure_val = pressure_by_ts.get(ts)
             if pressure_val is not None:
-                point['pressure_hpa'] = float(pressure_val)
+                if _RWS_PRESSURE_MIN_HPA <= pressure_val <= _RWS_PRESSURE_MAX_HPA:
+                    point['pressure_hpa'] = float(pressure_val)
+                else:
+                    logger.warning(
+                        f"RWS LUCHTDK {pressure_val}hPa buiten range @{station_code}; drop"
+                    )
             air_temp_val = airtemp_by_ts.get(ts)
             if air_temp_val is not None:
-                point['air_temp_c'] = float(air_temp_val)
+                if _RWS_AIR_TEMP_MIN_C <= air_temp_val <= _RWS_AIR_TEMP_MAX_C:
+                    point['air_temp_c'] = float(air_temp_val)
+                else:
+                    logger.warning(
+                        f"RWS LUCHTTPR {air_temp_val}°C buiten range @{station_code}; drop"
+                    )
             merged.append(point)
 
         logger.info(f"Retrieved {len(merged)} merged observations for {station_code}")
@@ -350,10 +528,12 @@ class RWSClient:
                 'surge_residual_cm': [], 'latest_surge_cm': None,
             }
 
+        # Unit-aware: RWS WATHTE in cm of m, lees `unit` uit eerste record.
+        tide_factor = _height_factor_to_m(series, GROOTHEID_WATHTE)
         events = [
             {
                 'timestamp': row['timestamp'],
-                'level_m': row['value'] / 100.0,  # cm → m
+                'level_m': row['value'] * tide_factor,
                 'phase': 'onbekend',
             }
             for row in series
@@ -624,6 +804,21 @@ async def fetch_all_rws_data() -> Dict[str, Any]:
     dan scheveningen voor de Noordwijk-cyclus. Als ijmuiden geen data
     levert, fallback naar scheveningen (impliciet in fetch_tide_predictions,
     die een lege placeholder returnt).
+
+    Primary-buoy failover: als IJG1 leeg blijkt (boei offline, of alle
+    grootheden faalden), gebruiken we A12 als fallback voor `primary_buoy`.
+    Zonder een functionerende primaire boei kunnen T1/T4 alert-detectors
+    niet draaien. De originele early-warning slot van A12 blijft staan
+    in `early_warning_buoys` zodat downstream beide kunnen zien.
+
+    Returns:
+        Dict met keys:
+          - 'primary_buoy': dict zoals fetch_primary_buoy_data, maar het
+            kan IJG1 OF A12 zijn afhankelijk van fallback
+          - 'primary_buoy_fallback': str | None — naam van het station dat
+            als fallback is ingezet (alleen aanwezig als fallback was nodig)
+          - 'early_warning_buoys': onveranderd
+          - 'tide': onveranderd
     """
     from src.config import NOORDWIJK
     client = RWSClient()
@@ -633,14 +828,38 @@ async def fetch_all_rws_data() -> Dict[str, Any]:
         fetch_early_warning_buoys(),
         client.fetch_tide_predictions(primary_station, days_ahead=7),
     )
+    # IJG1 → A12 failover. Als IJG1 raw_data leeg is, gebruik A12 als
+    # primaire (A12 is een gerede vervanger qua coverage voor T1/T4).
+    primary_buoy_fallback: Optional[str] = None
+    if not (primary_buoy or {}).get('raw_data'):
+        a12_block = (early_warning or {}).get('A12') or {}
+        if a12_block.get('raw_data'):
+            logger.warning(
+                "IJG1 raw_data leeg; fallback naar A12 als primary_buoy"
+            )
+            primary_buoy_fallback = 'A12'
+            primary_buoy = {
+                'station': 'A12',
+                'station_name': a12_block.get('station_name', 'A12'),
+                'spectra': a12_block.get('spectra', []),
+                'raw_data': a12_block.get('raw_data', []),
+            }
+        else:
+            logger.warning(
+                "IJG1 leeg én A12 leeg; geen primary_buoy beschikbaar"
+            )
+
     # Fallback: als primaire station leeg blijft, probeer scheveningen
     if (not tide.get('tide_events')) and primary_station != 'scheveningen':
         logger.warning(
             f"Tide station '{primary_station}' leverde geen data; fallback naar scheveningen"
         )
         tide = await client.fetch_tide_predictions('scheveningen', days_ahead=7)
-    return {
+    result: Dict[str, Any] = {
         'primary_buoy': primary_buoy,
         'early_warning_buoys': early_warning,
         'tide': tide,
     }
+    if primary_buoy_fallback is not None:
+        result['primary_buoy_fallback'] = primary_buoy_fallback
+    return result

@@ -18,10 +18,7 @@ triggert het fallback-template, wat altijd correcte data heeft.
 """
 import logging
 import re
-from typing import Dict, List, Set, Tuple, Optional
-import json
-
-from src.config import VALIDATION_CONFIG
+from typing import Dict, List, Set, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -89,44 +86,143 @@ class SMSValidator:
 
         allowed = self._collect_allowed_citations(structured_input)
 
-        # 1. Wave heights "X,Ym" of "X.Ym"
+        # 1. Wave heights "X,Ym" of "X.Ym".
+        # Eerst range-uitdrukkingen ("0.8-1.2m") afhandelen — beide getallen
+        # moeten in allowed staan, anders glipt het lagere getal door de
+        # enkelvoudige regex heen. Tracking van consumed spans voorkomt
+        # double-counting.
+        consumed_spans: List[tuple] = []
+
+        def _claim(s: int, e: int) -> bool:
+            for cs, ce in consumed_spans:
+                if not (e <= cs or s >= ce):
+                    return False
+            consumed_spans.append((s, e))
+            return True
+
+        for match in re.finditer(
+            r'(\d+[\.,]?\d*)\s*[-–—]\s*(\d+[\.,]?\d*)\s*m(?![/a-zA-Z])',
+            sms_text,
+        ):
+            if not _claim(match.start(), match.end()):
+                continue
+            for grp in (match.group(1), match.group(2)):
+                val = _parse_nl_decimal(grp)
+                if not _within(val, allowed['wave_heights_m'], tol=0.15):
+                    issues.append(
+                        f"Wave height {val}m not in allowed heights {allowed['wave_heights_m']}"
+                    )
+
         for match in re.finditer(r'(\d+[\.,]\d+|\d+)\s*m(?![/a-zA-Z])', sms_text):
+            if any(not (match.end() <= cs or match.start() >= ce)
+                   for cs, ce in consumed_spans):
+                continue
             val = _parse_nl_decimal(match.group(1))
             if not _within(val, allowed['wave_heights_m'], tol=0.15):
                 issues.append(
                     f"Wave height {val}m not in allowed heights {allowed['wave_heights_m']}"
                 )
 
-        # 2. Wave periods "Xs" (alleen los getal + s, niet "uitsluitend", "is", etc.)
+        # 2. Wave periods "Xs" — ranges eerst ("6-8s"), dan losse waarden.
+        period_spans: List[tuple] = []
+        for match in re.finditer(
+            r'(\d+[\.,]?\d*)\s*[-–—]\s*(\d+[\.,]?\d*)\s*s(?=[\s\.,;:!?]|$)',
+            sms_text,
+        ):
+            period_spans.append((match.start(), match.end()))
+            for grp in (match.group(1), match.group(2)):
+                val = _parse_nl_decimal(grp)
+                if not _within(val, allowed['wave_periods_s'], tol=0.5):
+                    issues.append(
+                        f"Wave period {val}s not in allowed periods {allowed['wave_periods_s']}"
+                    )
+
         for match in re.finditer(r'(\d+[\.,]\d+|\d+)\s*s(?=[\s\.,;:!?]|$)', sms_text):
+            if any(not (match.end() <= cs or match.start() >= ce)
+                   for cs, ce in period_spans):
+                continue
             val = _parse_nl_decimal(match.group(1))
             if not _within(val, allowed['wave_periods_s'], tol=0.5):
                 issues.append(
                     f"Wave period {val}s not in allowed periods {allowed['wave_periods_s']}"
                 )
 
-        # 3. Wind speeds "Xkn" / "X kn" / "Xknopen"
+        # 3. Wind speeds "Xkn" / "X kn" / "Xknopen" — ranges eerst ("15-20kn").
+        # Beide getallen moeten in wind_speeds_kn OF wind_gusts_kn zitten
+        # (gusts kunnen als bovenste range-grens worden gebruikt).
+        allowed_wind = set(allowed['wind_speeds_kn']) | set(
+            allowed.get('wind_gusts_kn', [])
+        )
+        allowed_wind_list = sorted(allowed_wind)
+
+        wind_spans: List[tuple] = []
+        for match in re.finditer(
+            r'(\d+[\.,]?\d*)\s*[-–—]\s*(\d+[\.,]?\d*)\s*kn(?:open)?\b',
+            sms_text,
+        ):
+            wind_spans.append((match.start(), match.end()))
+            for grp in (match.group(1), match.group(2)):
+                val = _parse_nl_decimal(grp)
+                if not _within(val, allowed_wind_list, tol=1.0):
+                    issues.append(
+                        f"Wind speed {val}kn not in allowed speeds {allowed_wind_list}"
+                    )
+
         for match in re.finditer(r'(\d+[\.,]\d+|\d+)\s*kn(?:open)?\b', sms_text):
+            if any(not (match.end() <= cs or match.start() >= ce)
+                   for cs, ce in wind_spans):
+                continue
             val = _parse_nl_decimal(match.group(1))
-            if not _within(val, allowed['wind_speeds_kn'], tol=1.0):
+            if not _within(val, allowed_wind_list, tol=1.0):
                 issues.append(
-                    f"Wind speed {val}kn not in allowed speeds {allowed['wind_speeds_kn']}"
+                    f"Wind speed {val}kn not in allowed speeds {allowed_wind_list}"
                 )
 
-        # 4. Tijden "HH:MM" of "HHu" of "HH-HH" — moeten matchen met allowed times
+        # 3b. Verboden eenheden — referentie-forecaster gebruikt nooit bft of km/u in onze
+        # pipeline (input is altijd knopen). Elke voorkomen is per definitie
+        # een hallucinatie, ongeacht allowed_citations.
+        for match in re.finditer(r'\b(\d+[\.,]?\d*)\s*bft\b', sms_text, re.IGNORECASE):
+            issues.append(
+                f"Verboden eenheid 'bft' ({match.group(0)}) — gebruik knopen"
+            )
+        for match in re.finditer(r'\b(\d+[\.,]?\d*)\s*km/u?\b', sms_text, re.IGNORECASE):
+            issues.append(
+                f"Verboden eenheid 'km/u' ({match.group(0)}) — gebruik knopen"
+            )
+
+        # 4. Tijden "HH:MM" of "HHu" — moeten matchen met allowed times.
         # Bereik-uitdrukkingen "14-16u" zijn samengesteld uit twee aparte tijden;
         # check elk separaat.
+        #
+        # Tolerantie-logica:
+        #   - Default: 15 min (referentie-forecaster is precies, "HW 14:00" mag geen 14:30 zijn).
+        #   - Verhoogd naar 30 min ALS de tijd direct voorafgegaan wordt door
+        #     "rond"/"omstreeks"/"tegen"/"ongeveer" (zachte indicatie).
         time_matches = list(re.finditer(r'(\d{1,2}):(\d{2})', sms_text))
         time_matches += list(re.finditer(r'\b(\d{1,2})u\b', sms_text))
         allowed_minutes = {_time_to_minutes(t) for t in allowed['times_hhmm']}
         allowed_minutes.discard(None)
+
+        # Pre-compute "soft" tijd-spans: positions waar een rond/omstreeks
+        # vlak voor staat (max 5 chars whitespace tussen woord en cijfer).
+        soft_spans: List[tuple] = []
+        for sm in re.finditer(
+            r'(?:rond|omstreeks|tegen|ongeveer)\s+(\d{1,2}):?(\d{2})?u?',
+            sms_text,
+            re.IGNORECASE,
+        ):
+            soft_spans.append((sm.start(1), sm.end()))
+
+        def _is_soft(start: int) -> bool:
+            return any(ss <= start <= se for ss, se in soft_spans)
+
         for m in time_matches:
             if ':' in m.group(0):
                 mins = int(m.group(1)) * 60 + int(m.group(2))
             else:
                 mins = int(m.group(1)) * 60
-            # Tolerantie 60 min — "rond 14u" mag matchen met allowed 13:30 of 14:30.
-            if allowed_minutes and not any(abs(mins - am) <= 60 for am in allowed_minutes):
+            tol = 30 if _is_soft(m.start()) else 15
+            if allowed_minutes and not any(abs(mins - am) <= tol for am in allowed_minutes):
                 issues.append(
                     f"Tijd {m.group(0)} niet in allowed times {sorted(allowed['times_hhmm'])}"
                 )

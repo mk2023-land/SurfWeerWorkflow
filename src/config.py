@@ -168,6 +168,28 @@ API_ENDPOINTS = {
     'rws_period': 'https://ddapi20-waterwebservices.rijkswaterstaat.nl/ONLINEWAARNEMINGENSERVICES/OphalenWaarnemingen'
 }
 
+# RWS DDAPI20 concurrency throttle. DDAPI20 retourneert lege bodies onder
+# load (waargenomen bij 24 parallelle calls = 8 grootheden × 3 boeien).
+# We limiten via een module-level asyncio.Semaphore. Configureerbaar via
+# env RWS_CONCURRENCY voor productie-tuning zonder code-deploy.
+RWS_CONCURRENCY_LIMIT = int(os.getenv('RWS_CONCURRENCY', '3'))
+# Retry op empty-body / JSON-decode errors (rate-limiting symptoom).
+RWS_EMPTY_BODY_RETRIES = int(os.getenv('RWS_EMPTY_BODY_RETRIES', '2'))
+RWS_EMPTY_BODY_RETRY_DELAY_S = float(os.getenv('RWS_EMPTY_BODY_RETRY_DELAY_S', '1.0'))
+# HTTP connection-pooling. Eén shared AsyncClient i.p.v. per-call open/close
+# voorkomt connection-overload op DDAPI20.
+RWS_HTTP_TIMEOUT_S = float(os.getenv('RWS_HTTP_TIMEOUT_S', '30.0'))
+RWS_MAX_KEEPALIVE_CONNECTIONS = int(os.getenv('RWS_MAX_KEEPALIVE_CONNECTIONS', '4'))
+RWS_MAX_CONNECTIONS = int(os.getenv('RWS_MAX_CONNECTIONS', '8'))
+RWS_USER_AGENT = os.getenv(
+    'RWS_USER_AGENT',
+    'noordwijk-surf-alert/1.0 (github.com/kiliantargaryen/SurfWeerWorkflow)'
+)
+OPEN_METEO_USER_AGENT = os.getenv(
+    'OPEN_METEO_USER_AGENT',
+    'noordwijk-surf-alert/1.0 (github.com/kiliantargaryen/SurfWeerWorkflow)'
+)
+
 # Anthropic configuratie. claude-3-5-haiku-20241022 is uitgefaseerd;
 # claude-haiku-4-5 is de huidige Haiku-generatie (snel, ~$1/$5 per M tokens).
 ANTHROPIC_CONFIG = {
@@ -182,9 +204,14 @@ ANTHROPIC_CONFIG = {
     # nog steeds capable maar minder rijk). In praktijk pakt Sonnet 95%+ van
     # de calls; Haiku alleen bij echte Anthropic-side Sonnet-outage.
     'fallback_model': 'claude-haiku-4-5',
-    'max_tokens': 800,   # referentie-forecaster-stijl 4-daagse digest komt makkelijk boven 320
-                         # tokens uit; afgekapte berichten leveren een ongeldige
-                         # format op die in fallback eindigt.
+    'max_tokens': 800,   # Legacy default — behouden voor backward compat met
+                         # code-paden die geen expliciete max_tokens passeren.
+                         # Nieuwe code gebruikt max_tokens_alert / max_tokens_digest.
+    # Per-call-type token-budgets. Alerts zijn ~200 chars (50-80 tokens) — 300
+    # is ruim. Digest 4 dagen kan tot ~1000 tokens met few-shot prompt + lange
+    # uitleg; 1200 geeft buffer zonder budget op te eten.
+    'max_tokens_alert': 300,
+    'max_tokens_digest': 1200,
     'temperature': 0.4   # Lager dan default 0.7: minder vrije associaties,
                          # belangrijk voor anti-hallucinatie.
 }
