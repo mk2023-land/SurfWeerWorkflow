@@ -252,14 +252,21 @@ class AlertEngine:
 
     def is_morning_first_run(self) -> bool:
         """
-        True als dit de eerste run van vandaag is in het ochtend-venster (05-10 NL tijd).
+        True als dit de eerste run van vandaag is in het ochtend-venster (05-13 NL tijd).
 
         Gebruikt Europe/Amsterdam expliciet — GitHub Actions runners zijn UTC, dus
         een naive `datetime.now().hour` geeft daar UTC-uren en mist het venster.
-        Het brede 5-10 venster vangt zowel CET-cron (06:15) als CEST-cron (07:15) op.
+
+        Het venster is bewust ruim: GitHub Actions cron heeft géén SLA en kan
+        regelmatig 30+ minuten, soms enkele uren delay hebben. De morning cron
+        is geconfigureerd voor 05:15 UTC = 07:15 NL CEST, maar in praktijk kan
+        die pas om 10:39 NL of later vuren. Het 5-13 venster vangt vrijwel alle
+        ochtend-jitter op. De `last_digest_time`-check garandeert dat we maar
+        één keer per dag een ochtend-digest sturen, ongeacht hoeveel runs er
+        in dit venster vallen.
         """
         now_nl = datetime.now(_NL)
-        if not (5 <= now_nl.hour <= 10):
+        if not (5 <= now_nl.hour <= 13):
             return False
 
         if self.state.last_digest_time:

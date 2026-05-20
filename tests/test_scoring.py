@@ -319,16 +319,21 @@ class TestSwellDirectionBonus:
     """Test swell richting bonus."""
 
     def test_preferred_direction_bonus(self):
-        """Voorkeursrichting (W-NNW) geeft maximale bonus."""
+        """Voorkeursrichting (W-NNW) geeft (vrijwel) maximale bonus."""
         from src.scoring.hourly import score_swell_direction_bonus
         score = score_swell_direction_bonus(300)  # WNW
-        assert score == 10
+        # Sprint 2 #9: continue refractie geeft 99.9...% transmissie ver
+        # weg van shadow center, niet exact 10. Tolerantie 0.1pt.
+        assert 9.8 <= score <= 10.01
 
     def test_blocked_direction_penalty(self):
-        """Geblokkeerde richting (NNO) geeft 0 punten."""
+        """Geblokkeerde richting (NNO) geeft sterk gereduceerde bonus."""
         from src.scoring.hourly import score_swell_direction_bonus
+        # Sprint 2 #9: pier-shadow center op 10°, met sigmoid-curve. Bij
+        # exact 10° NNO komt slechts ~10% transmissie door → raw richting-
+        # bonus 5pt × 0.10 ≈ 0.5pt. Geen harde 0 meer.
         score = score_swell_direction_bonus(10)  # NNO
-        assert score == 0
+        assert 0.0 <= score <= 1.5
 
     def test_ok_direction_partial_bonus(self):
         """OK richting (ZW) geeft gedeeltelijke bonus."""
@@ -391,10 +396,14 @@ class TestValidatieCases:
 
         score = score_hour(hour_state)
 
-        # Verwacht: score 90-100 (Sprint 1 T4-bonus opwaardering: groundswell-
-        # door-windsea-heen geeft nu +8pt ipv +1pt zoals voorheen).
-        # Dit is hét paradigma-voorbeeld dat ALERT-waardig moet zijn.
-        assert 90 <= score.total_score <= 100
+        # Sprint 2 #13: multiplicatieve aggregation cap. Met golf_score ~38
+        # (cap) en env_score ~57 → multiplicative ~38 × 1.92 ≈ 73-78,
+        # additive ~96. Min van beide is ~73-78. Dit blijft ruim boven
+        # de surfable-threshold van 60 en is duidelijk ALERT-waardig.
+        # Verschuiving t.o.v. Sprint 1 is bewust: industry-consensus eist
+        # dat de score niet te ver boven golf_max + reasonable environment
+        # bonus uitkomt.
+        assert 70 <= score.total_score <= 100
 
     def test_case_16_mei_windstilte(self):
         """
@@ -435,8 +444,14 @@ class TestValidatieCases:
 
         score = score_hour(hour_state)
 
-        # Verwacht: score 70-80
-        assert 70 <= score.total_score <= 80
+        # Sprint 2 #13: hard size-cap reduceert deze score t.o.v. Sprint 1
+        # baseline (was 70-80). 0.9m golf op 9s = matige groundswell met
+        # perfect environment → multiplicatief plafond ~60-70. Dit is nog
+        # steeds boven longboard-threshold (42), maar onder shortboard-
+        # surfable (60). Past bij Tobias' "smal-alert" karakter: het is
+        # NIET een dichte-bank "alles werkt" dag, het is een 1-2u
+        # rustige-conditie longboard-window.
+        assert 55 <= score.total_score <= 75
 
     def test_case_flat_conditions(self):
         """
@@ -509,8 +524,258 @@ class TestValidatieCases:
 
         score = score_hour(hour_state)
 
-        # Verwacht: lagere score door richting penalty (zou rond 65-75 moeten zijn zonder richting penalty)
-        assert score.swell_dir_bonus == 0  # Geen bonus voor NNO
+        # Sprint 2 #9: continue refractie ipv binaire blocked sector. Bij
+        # 10° NNO (shadow center) blijft <15% transmissie over, dus bonus
+        # is sterk gereduceerd maar niet exact 0. Met Tp=10s long-period
+        # bonus zit het iets hoger maar nog steeds onder 1.5pt.
+        assert score.swell_dir_bonus < 1.5  # Sterk gereduceerde bonus voor NNO
+
+
+class TestSprint2PartitionAwareScoring:
+    """Sprint 2 #10 — partition-aware scoring (swell + wind-sea apart wegen)."""
+
+    def _state(self, peaks, hs_total, wind_speed=4, wind_dir=180, tide_phase="opgaand", tide_level=0.5):
+        spectrum = WaveSpectrum(
+            timestamp=_FIXED_TS,
+            significant_height_total=hs_total,
+            mean_period=peaks[0].period_s if peaks else 5.0,
+            mean_direction=peaks[0].direction_deg if peaks else 270,
+            peaks=peaks,
+        )
+        return HourState(
+            timestamp=_FIXED_TS,
+            location_name="Noordwijk",
+            wave_spectrum=spectrum,
+            wind=WindState(speed_kn=wind_speed, direction_deg=wind_dir),
+            tide=TideState(level_m=tide_level, phase=tide_phase,
+                           next_low=_FIXED_TS, next_high=_FIXED_TS),
+        )
+
+    def test_secondary_swell_lifts_score_over_pure_wind_sea(self):
+        """1.0m wind-chop ALLEEN scoort lager dan 1.0m wind-chop + 0.5m NW swell."""
+        from src.scoring.hourly import score_golf_component
+
+        wind_only = WaveSpectrum(
+            timestamp=_FIXED_TS, significant_height_total=1.0,
+            mean_period=4.5, mean_direction=270,
+            peaks=[SpectralPeak(frequency_mhz=222, period_s=4.5, height_m=1.0,
+                                direction_deg=270, type=SwellType.WIND_SEA)],
+        )
+        with_swell = WaveSpectrum(
+            timestamp=_FIXED_TS, significant_height_total=1.118,  # sqrt(1+0.25)
+            mean_period=5.5, mean_direction=290,
+            peaks=[
+                SpectralPeak(frequency_mhz=222, period_s=4.5, height_m=1.0,
+                             direction_deg=270, type=SwellType.WIND_SEA),
+                SpectralPeak(frequency_mhz=125, period_s=8.0, height_m=0.5,
+                             direction_deg=300, type=SwellType.WIND_SWELL),
+            ],
+        )
+        s1 = score_golf_component(wind_only)
+        s2 = score_golf_component(with_swell)
+        assert s2 > s1, f"Secondary swell should lift score: {s1} → {s2}"
+
+    def test_pure_swell_outscores_equal_height_wind_chop(self):
+        """0.8m clean groundswell (10s) scoort hoger dan 0.8m wind-chop (4s)."""
+        from src.scoring.hourly import score_golf_component
+
+        chop = WaveSpectrum(
+            timestamp=_FIXED_TS, significant_height_total=0.8,
+            mean_period=4.0, mean_direction=270,
+            peaks=[SpectralPeak(frequency_mhz=250, period_s=4.0, height_m=0.8,
+                                direction_deg=270, type=SwellType.WIND_SEA)],
+        )
+        gs = WaveSpectrum(
+            timestamp=_FIXED_TS, significant_height_total=0.8,
+            mean_period=10.0, mean_direction=300,
+            peaks=[SpectralPeak(frequency_mhz=100, period_s=10.0, height_m=0.8,
+                                direction_deg=300, type=SwellType.GROUND_SWELL)],
+        )
+        assert score_golf_component(gs) > score_golf_component(chop)
+
+
+class TestSprint2ContinuousRefraction:
+    """Sprint 2 #9 — continue pier-refractie ipv binaire knip."""
+
+    def test_long_period_refracts_better_than_short(self):
+        """N-swell (0°) op 10s krijgt hogere bonus dan zelfde richting op 5s."""
+        from src.scoring.hourly import score_swell_direction_bonus
+        short = score_swell_direction_bonus(0, period_s=5.0)
+        long = score_swell_direction_bonus(0, period_s=10.0)
+        assert long > short, f"Long-period refractie-bonus moet groter: {short} vs {long}"
+
+    def test_shadow_center_strongly_reduced(self):
+        """Bij exact 10° NNO (shadow center) komt slechts ~10% transmissie door."""
+        from src.scoring.hourly import pier_transmission_factor
+        t = pier_transmission_factor(10, period_s=6.0)
+        assert 0.05 <= t <= 0.20, f"Shadow center transmission moet ~10%: {t}"
+
+    def test_far_from_shadow_full_transmission(self):
+        """45° NO is buiten shadow → ~100% transmissie."""
+        from src.scoring.hourly import pier_transmission_factor
+        t = pier_transmission_factor(45, period_s=6.0)
+        assert t > 0.95
+
+    def test_continuous_transition(self):
+        """Transmissie stijgt monotoon bij wegbewegen van shadow center."""
+        from src.scoring.hourly import pier_transmission_factor
+        prev = pier_transmission_factor(10, period_s=7.0)
+        for offset in [15, 20, 25, 30, 40, 50]:
+            curr = pier_transmission_factor(10 + offset, period_s=7.0)
+            assert curr > prev, f"Niet monotoon bij offset {offset}: {prev} → {curr}"
+            prev = curr
+
+
+class TestSprint2WindSpreadConfidence:
+    """Sprint 2 #8 — multi-model wind-spread confidence-penalty."""
+
+    def test_low_spread_no_penalty(self):
+        from src.scoring.hourly import wind_spread_confidence
+        assert wind_spread_confidence(2.0, 10.0) == 1.0
+
+    def test_high_speed_spread_triggers_penalty(self):
+        from src.scoring.hourly import wind_spread_confidence
+        f = wind_spread_confidence(12.0, 0.0)
+        assert 0.84 <= f <= 0.86, f"Max penalty bij 12kn spread → ~0.85: {f}"
+
+    def test_intermediate_spread_partial_penalty(self):
+        from src.scoring.hourly import wind_spread_confidence
+        f = wind_spread_confidence(8.0, 0.0)
+        assert 0.90 <= f <= 0.95
+
+    def test_direction_spread_alone_can_trigger(self):
+        from src.scoring.hourly import wind_spread_confidence
+        f_low = wind_spread_confidence(0.0, 10.0)
+        f_high = wind_spread_confidence(0.0, 60.0)
+        assert f_low == 1.0
+        assert f_high < 0.90
+
+    def test_angular_spread_360_wrap(self):
+        from src.scoring.hourly import angular_spread_deg
+        # Twee modellen rond N: 5° en 355° zijn maar 10° uit elkaar
+        spread = angular_spread_deg([5, 355])
+        assert spread < 15, f"Wrap-around spread moet klein zijn: {spread}"
+
+
+class TestSprint2DiurnalWindDecay:
+    """Sprint 2 #12 — diurnal wind-decay rond zonsondergang."""
+
+    def test_clear_sky_evening_reduces_wind(self):
+        """Lage bewolking 1u vóór sunset → wind-reductie."""
+        from src.scoring.hourly import diurnal_wind_decay_kn
+        # Sunset NL juni rond 21:00 lokaal = 19:00 UTC. 1u voor = 18:00 UTC = 20:00 lokaal.
+        evening = datetime(2025, 6, 21, 20, 0, 0)
+        effective = diurnal_wind_decay_kn(evening, 10.0, cloud_cover_pct=20.0)
+        assert effective < 10.0, f"Wind moet zakken bij lage bewolking: {effective}"
+
+    def test_cloudy_no_decay(self):
+        """Hoge bewolking → geen diurnal effect."""
+        from src.scoring.hourly import diurnal_wind_decay_kn
+        evening = datetime(2025, 6, 21, 20, 0, 0)
+        effective = diurnal_wind_decay_kn(evening, 10.0, cloud_cover_pct=80.0)
+        assert effective == 10.0
+
+    def test_outside_window_no_decay(self):
+        """Middag (ver vóór sunset) → geen effect."""
+        from src.scoring.hourly import diurnal_wind_decay_kn
+        midday = datetime(2025, 6, 21, 14, 0, 0)
+        effective = diurnal_wind_decay_kn(midday, 10.0, cloud_cover_pct=20.0)
+        assert effective == 10.0
+
+
+class TestSprint2TideFlankBonus:
+    """Sprint 2 #11 — mid-tide flank bonus."""
+
+    def test_mid_rising_gets_full_bonus(self):
+        from src.scoring.hourly import tide_flank_bonus
+        assert tide_flank_bonus(0.5, is_rising=True) == 2.0
+
+    def test_mid_falling_gets_half_bonus(self):
+        from src.scoring.hourly import tide_flank_bonus
+        assert tide_flank_bonus(0.5, is_rising=False) == 1.0
+
+    def test_outside_mid_no_bonus(self):
+        from src.scoring.hourly import tide_flank_bonus
+        assert tide_flank_bonus(0.1, is_rising=True) == 0.0
+        assert tide_flank_bonus(0.9, is_rising=True) == 0.0
+
+
+class TestSprint2SizeCap:
+    """Sprint 2 #13 — hard size-cap via multiplicatieve aggregation."""
+
+    def test_marginal_wave_cannot_reach_surfable_via_environment(self):
+        """0.4m golf (~3-5pt) + perfect environment mag GEEN 60+ score halen."""
+        from src.data.models import ScoreBreakdown
+        from datetime import datetime
+        sb = ScoreBreakdown(
+            timestamp=datetime(2025, 8, 6, 12, 0),
+            golf_score=5.0,
+            wind_score=32.0,  # max
+            tide_score=20.0,  # max
+            swell_dir_bonus=10.0,  # max
+        )
+        # Additief: 67. Multiplicatief: 5 × (1 + 2.5 × 1.0) = 17.5.
+        # Min = 17.5. Onder surfable=60 ✓
+        assert sb.total_score < 60.0
+        assert sb.total_score < 20.0
+
+    def test_big_wave_with_modest_environment_uses_additive(self):
+        """30pt golf + matige environment → additieve uitkomst, niet multiplicatief gecapt."""
+        from src.data.models import ScoreBreakdown
+        sb = ScoreBreakdown(
+            timestamp=_FIXED_TS,
+            golf_score=30.0,
+            wind_score=10.0,
+            tide_score=10.0,
+            swell_dir_bonus=5.0,
+        )
+        # Additief: 55. Multiplicatief: 30 × (1 + 2.5 × 25/62) = 30 × 2.008 = 60.2.
+        # Min = 55 (additief). De multiplicative cap is NIET de bottleneck hier.
+        assert sb.total_score == 55.0
+
+
+class TestSprint2WindSpreadInScoring:
+    """Sprint 2 #8 — wind-spread doorgegeven via context werkt in score_hour."""
+
+    def _make_state(self):
+        peak = SpectralPeak(
+            frequency_mhz=100, period_s=10.0, height_m=1.2,
+            direction_deg=300, type=SwellType.GROUND_SWELL
+        )
+        return HourState(
+            timestamp=_FIXED_TS,
+            location_name="Noordwijk",
+            wave_spectrum=WaveSpectrum(
+                timestamp=_FIXED_TS, significant_height_total=1.2,
+                mean_period=10, mean_direction=300, peaks=[peak]
+            ),
+            wind=WindState(speed_kn=8, direction_deg=180),
+            tide=TideState(level_m=0.5, phase="opgaand",
+                           next_low=_FIXED_TS, next_high=_FIXED_TS),
+        )
+
+    def test_high_spread_reduces_score(self):
+        """Hoge spread (12kn std) → golf_score multiplier ~0.85."""
+        from src.scoring.hourly import score_hour
+        baseline = score_hour(self._make_state())
+        with_spread = score_hour(
+            self._make_state(),
+            context={'wind_spread': {'speed_std_kn': 12.0, 'direction_spread_deg': 0}}
+        )
+        assert with_spread.golf_score < baseline.golf_score
+        # Multiplier minimum 0.85; bij golf_score ~38: aftrek ~5.7pt
+        ratio = with_spread.golf_score / baseline.golf_score
+        assert 0.83 <= ratio <= 0.87
+
+    def test_zero_spread_no_effect(self):
+        """Lage spread → geen effect op golf_score."""
+        from src.scoring.hourly import score_hour
+        baseline = score_hour(self._make_state())
+        with_spread = score_hour(
+            self._make_state(),
+            context={'wind_spread': {'speed_std_kn': 1.0, 'direction_spread_deg': 5.0}}
+        )
+        assert with_spread.golf_score == baseline.golf_score
 
 
 if __name__ == "__main__":

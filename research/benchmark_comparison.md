@@ -3,8 +3,8 @@
 **Datum benchmark:** 19 mei 2026 (test-bericht voor woensdag 20 mei 2026)
 **Doel:** vaststellen waar het systeem afwijkt van pro-forecaster Tobias en van de internationale wave-physics literatuur, om gerichte verbeteringen te kunnen prioriteren.
 **Bronnen:**
-- `research_wave_physics_benchmark.md` — internationale wave-fysica & forecasting best practices (Surfline, Stormsurf, NDBC, ECMWF, etc.)
-- `research_tobias_methodology.md` — reverse-engineering van Tobias' beslissingsmodel + SMS-decompositie
+- `wave_physics_benchmark.md` — internationale wave-fysica & forecasting best practices (Surfline, Stormsurf, NDBC, ECMWF, etc.)
+- `tobias_methodology.md` — reverse-engineering van Tobias' beslissingsmodel + SMS-decompositie
 - Eigen run van `scripts/send_test_notification.py` en handmatige per-uur scoring-uitdraai
 
 ---
@@ -91,7 +91,7 @@ Voor de twee windows die Tobias expliciet noemt voor Noordwijk:
 
 ## 5. Score per benchmark-criterium uit het internationale rapport
 
-Uit `research_wave_physics_benchmark.md` §9 (BENCHMARK-CRITERIA):
+Uit `wave_physics_benchmark.md` §9 (BENCHMARK-CRITERIA):
 
 | Criterium | Mijn systeem | Status | Toelichting |
 |---|---|---|---|

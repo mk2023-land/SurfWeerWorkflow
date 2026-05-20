@@ -13,6 +13,7 @@ from src.config import (
     API_ENDPOINTS,
     NOORDWIJK,
     TIMEZONE,
+    OPEN_METEO_MODELS,
 )
 
 logger = logging.getLogger(__name__)
@@ -125,13 +126,21 @@ class OpenMeteoClient:
         """
         Haal forecast data op (wind, temperatuur, neerslag) van Open-Meteo.
 
+        Sprint 2 #8: vraagt MULTIPLE models op in één API-call. Open-Meteo
+        accepteert `models=knmi_seamless,ecmwf_ifs025,gfs_seamless` en
+        retourneert dan per uur per model een aparte serie. Geen extra
+        API-quota — één request, drie wind-streams.
+
         Returns:
-            Dictionary met 'knmi_seamless' als key en lijst van uurlijkse data als value.
+            Dictionary met per-model key (bv. 'knmi_seamless', 'ecmwf_ifs025',
+            'gfs_seamless') → lijst van uurlijkse data dicts.
         """
         if lat is None:
             lat = NOORDWIJK.lat
         if lon is None:
             lon = NOORDWIJK.lon
+        if models is None:
+            models = OPEN_METEO_MODELS
 
         params = {
             'latitude': lat,
@@ -147,30 +156,69 @@ class OpenMeteoClient:
             ]),
             'wind_speed_unit': 'kn',
             'timezone': TIMEZONE,
-            'forecast_days': min(16, hours // 24 + 1)
+            'forecast_days': min(16, hours // 24 + 1),
+            'models': ','.join(models),
         }
 
-        logger.info(f"Fetching forecast data from Open-Meteo for {lat}, {lon}")
+        logger.info(
+            f"Fetching forecast data from Open-Meteo for {lat}, {lon} "
+            f"with models={models}"
+        )
         data = await self._request_with_retry(self.base_url, params)
 
         hourly = data.get('hourly', {})
         times = hourly.get('time', [])
 
-        model_result = []
-        for i, time_str in enumerate(times):
-            model_result.append({
-                'timestamp': datetime.fromisoformat(time_str.replace('Z', '+00:00')),
-                'wind_speed': hourly.get('wind_speed_10m', [])[i],
-                'wind_direction': hourly.get('wind_direction_10m', [])[i],
-                'wind_gusts': hourly.get('wind_gusts_10m', [])[i],
-                'temperature': hourly.get('temperature_2m', [])[i],
-                'precipitation': hourly.get('precipitation', [])[i],
-                'pressure': hourly.get('pressure_msl', [])[i],
-                'cloud_cover': hourly.get('cloud_cover', [])[i]
-            })
+        # Bij meerdere modellen retourneert Open-Meteo per veld varianten met
+        # `_modelname` suffix. Bij single-model is er geen suffix.
+        # Voorbeeld bij multi-model:
+        #   'wind_speed_10m_knmi_seamless': [...],
+        #   'wind_speed_10m_ecmwf_ifs025': [...],
+        #   'wind_speed_10m_gfs_seamless': [...]
+        # Bij single-model:
+        #   'wind_speed_10m': [...]
 
-        logger.info(f"Retrieved {len(model_result)} hours of forecast data")
-        return {'knmi_seamless': model_result}
+        def _key(field: str, model: str) -> str:
+            """Vind kolomnaam voor (field, model). Probeer suffix-vorm eerst."""
+            suffixed = f"{field}_{model}"
+            if suffixed in hourly:
+                return suffixed
+            return field
+
+        result: Dict[str, List[Dict[str, Any]]] = {}
+        for model in models:
+            model_result: List[Dict[str, Any]] = []
+            ws_key = _key('wind_speed_10m', model)
+            wd_key = _key('wind_direction_10m', model)
+            wg_key = _key('wind_gusts_10m', model)
+            t_key = _key('temperature_2m', model)
+            pr_key = _key('precipitation', model)
+            p_key = _key('pressure_msl', model)
+            cc_key = _key('cloud_cover', model)
+
+            for i, time_str in enumerate(times):
+                model_result.append({
+                    'timestamp': datetime.fromisoformat(time_str.replace('Z', '+00:00')),
+                    'wind_speed': hourly.get(ws_key, [])[i] if i < len(hourly.get(ws_key, [])) else None,
+                    'wind_direction': hourly.get(wd_key, [])[i] if i < len(hourly.get(wd_key, [])) else None,
+                    'wind_gusts': hourly.get(wg_key, [])[i] if i < len(hourly.get(wg_key, [])) else None,
+                    'temperature': hourly.get(t_key, [])[i] if i < len(hourly.get(t_key, [])) else None,
+                    'precipitation': hourly.get(pr_key, [])[i] if i < len(hourly.get(pr_key, [])) else None,
+                    'pressure': hourly.get(p_key, [])[i] if i < len(hourly.get(p_key, [])) else None,
+                    'cloud_cover': hourly.get(cc_key, [])[i] if i < len(hourly.get(cc_key, [])) else None,
+                })
+            result[model] = model_result
+
+        # Zorg dat 'knmi_seamless' altijd aanwezig is (fallback voor callers
+        # die de oude single-model interface verwachten).
+        if 'knmi_seamless' not in result and result:
+            result['knmi_seamless'] = next(iter(result.values()))
+
+        logger.info(
+            f"Retrieved {len(times)} hours of forecast data for "
+            f"{len(result)} model(s): {list(result.keys())}"
+        )
+        return result
 
     async def fetch_archive_data(
         self,

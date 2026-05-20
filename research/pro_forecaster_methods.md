@@ -3,7 +3,7 @@
 **Datum:** 19 mei 2026
 **Doel:** in kaart brengen wat menselijke pro-forecasters doen *bovenop* numerieke modellen, met als concreet einddoel om gerichte verbeteringen voor het SurfWeerWorkflow-systeem voor Noordwijk te identificeren.
 **Methode:** literatuur- en interviewonderzoek over WSL/big-wave forecasters, NOAA/NWS surfdiensten, Surfline/Stormsurf/Magicseaweed-methodologie, fundamentele golffysica, NL-specifieke kustdynamica, en de werkwijze van Tobias van Tellingen (surfweer.nl).
-**Aanvulling op:** `research_tobias_methodology.md`, `research_wave_physics_benchmark.md`, `research_benchmark_comparison.md`.
+**Aanvulling op:** `tobias_methodology.md`, `wave_physics_benchmark.md`, `benchmark_comparison.md`.
 
 ---
 
@@ -55,7 +55,7 @@ Stormsurf nummert elke storm die "significant swell" zal genereren (Storm 5 → 
 
 ### 3.3 Zelf in het water — verificatie-cultuur
 
-Wat Sponsler scheidt van pure modelaars: hij paddle't out om zijn eigen voorspelling te checken. Grant Washburn (filmmaker) zei over hem: *"He is the only forecaster I've seen paddle out to see if his prediction of 50-foot faces is accurate."* Dit komt **identiek** terug bij Tobias (`research_tobias_methodology.md` §1: "bijna dagelijks zelf in het water").
+Wat Sponsler scheidt van pure modelaars: hij paddle't out om zijn eigen voorspelling te checken. Grant Washburn (filmmaker) zei over hem: *"He is the only forecaster I've seen paddle out to see if his prediction of 50-foot faces is accurate."* Dit komt **identiek** terug bij Tobias (`tobias_methodology.md` §1: "bijna dagelijks zelf in het water").
 
 ### 3.4 De Stormsurf Calculator
 
@@ -155,13 +155,13 @@ Bronnen: [MSW – Quick Forecast Tutorial](https://magicseaweed.com/docs/forecas
 
 ## 7. Tobias van Tellingen — Nederlandse spot-orakel
 
-Uitgebreid behandeld in `research_tobias_methodology.md`. Hier de essentie:
+Uitgebreid behandeld in `tobias_methodology.md`. Hier de essentie:
 
 - **17+ jaar gekalibreerde patroonherkenning op de Noordzee**, autodidact, woont dichtbij KNMI De Bilt.
 - Methode: 3-4 fijnmazige modellen (Harmonie, ICON, AROME) naast elkaar leggen — zelf benoemt hij dit in zijn KNRM-interview: *"In geval van een complexe weersituatie zeker de moeite waard"* ([KNRM – Kitesurfweer](https://www.knrm.nl/blog/tips/kitesurfweer)).
 - Gebruikt expliciet **KNMI guidance modelbeoordeling** — dat is *menselijke synthese als input*, iets dat wij niet 1-op-1 kunnen repliceren.
 - Verifieert **dagelijks zelf** door in het water te staan.
-- Spectrum-uitleg: zie zijn 2017-post (helaas inmiddels 404), maar `research_tobias_methodology.md` §3 documenteert: shoaling-factor ~2× bij T=10s, ~1× bij T=5s; groepssnelheid `1.56 × T` m/s; optimum 6.5–7s voor Noordzee.
+- Spectrum-uitleg: zie zijn 2017-post (helaas inmiddels 404), maar `tobias_methodology.md` §3 documenteert: shoaling-factor ~2× bij T=10s, ~1× bij T=5s; groepssnelheid `1.56 × T` m/s; optimum 6.5–7s voor Noordzee.
 - Niet-genoemd in eerdere research, maar gevonden in [surfweer.nl/surf/surfweer-laatste-week-van-juni-2023/](https://surfweer.nl/surf/surfweer-laatste-week-van-juni-2023/): zijn drempel voor surfability: *"de wave periode moet minimaal 5 seconden zijn, ongeacht hoogte. Er zijn windagen waarbij de wave hoogte oploopt tot bijna 1,5m, maar de wave periode blijft steken op 4 tot 4,5 seconden."*
 - Geen formele KNMI-relatie maar wordt door de surf-community én KNRM als autoriteit erkend.
 
@@ -293,7 +293,7 @@ De Vlaamse Banken (1099 km², zuidwest van België, tot 45 km in zee) zijn een s
 - **Wave height attenuation**: ~20-40% over de banken (afhankelijk van Hs, T, water level)
 - **Spectrum filtering**: korte-periode-componenten (T<6s) passeren makkelijker dan lange-periode (de banken dempen relatief meer bij T>10s door grotere bottom-interactie)
 
-Dat is precies wat Tobias zelf zegt (21-8 SMS, geciteerd in `research_tobias_methodology.md`): *"kortere interval komt makkelijker over de Vlaamse banken"*. Voor Noordwijk: Z-swells worden bij aankomst NIET zoals een open-zee swell behandeld — de **periode is filterd** en pas wat doorkomt is meestal T=5-7s windswell.
+Dat is precies wat Tobias zelf zegt (21-8 SMS, geciteerd in `tobias_methodology.md`): *"kortere interval komt makkelijker over de Vlaamse banken"*. Voor Noordwijk: Z-swells worden bij aankomst NIET zoals een open-zee swell behandeld — de **periode is filterd** en pas wat doorkomt is meestal T=5-7s windswell.
 
 Bron: [Health.belgium.be – Habitats Directive Areas Belgian North Sea](https://www.health.belgium.be/en/habitats-directive-areas-belgian-part-north-sea), [BODC – Monitoring Network Flemish Banks](https://www.bodc.ac.uk/resources/inventories/edmed/report/5619/).
 
@@ -446,7 +446,7 @@ Pier IJmuiden blokkeert N-swell maar amplificeert NW-wrap-around voor Noordwijk.
 Outer bank werkt op laag, inner bank werkt op hoog. Pro's hebben mentale tabellen per spot. Dit is **niet** in publieke data beschikbaar; vereist eigen jaar-of-meer-data verzameling.
 
 ### K. Mechanism 11: Bias-correctie per windrichting
-Onze observatie (`research_benchmark_comparison.md`): model Tp consistent 1-2s laag versus Tobias. Pro's kennen die bias en corrigeren mentaal. Sponsler doet dit expliciet via calibration coefficients.
+Onze observatie (`benchmark_comparison.md`): model Tp consistent 1-2s laag versus Tobias. Pro's kennen die bias en corrigeren mentaal. Sponsler doet dit expliciet via calibration coefficients.
 
 ### L. Mechanism 12: Vertelvorm / verhaal in plaats van getallen
 Tobias' SMS is **prozaisch** met expliciete windows ("Nwijk 14-16u of na 19:30u") en **kwalitatieve woorden** ("genoeg hoogte", "leuke lijntjes"). Geen score, geen alert-threshold. De surfer leest dit als coherent verhaal, niet als data-dump.

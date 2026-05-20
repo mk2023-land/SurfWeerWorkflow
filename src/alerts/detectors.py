@@ -437,6 +437,12 @@ class AlertDetectorEngine:
             if candidate:
                 triggered_alerts.add(AlertType.SWELL_ARRIVAL)
 
+        # Type 1 (Sprint 3 #15): tweede route via persisted boei-spectrum history
+        # (A12/K13 6u-trend). Volledig stil bij ontbrekende history-file.
+        from src.scoring.trigger_T1 import load_history, detect_swell_arrival
+        if detect_swell_arrival(load_history()):
+            triggered_alerts.add(AlertType.SWELL_ARRIVAL)
+
         # Type 2: Wind shift (forecast)
         candidate = self.detectors[AlertType.WIND_SHIFT].detect(forecast, history)
         if candidate:

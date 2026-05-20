@@ -71,6 +71,9 @@ jobs:
           COOLDOWN_HOURS:      ${{ vars.COOLDOWN_HOURS || '4' }}
           MAX_ALERTS_PER_WEEK: ${{ vars.MAX_ALERTS_PER_WEEK || '8' }}
           DEBUG: 'false'
+          # workflow_dispatch = manual test → verstuur wel maar pollueer
+          # last_digest_time NIET (anders blokkeert die de scheduled cron-run).
+          MANUAL_RUN: ${{ github.event_name == 'workflow_dispatch' && 'true' || 'false' }}
         run: |
           mkdir -p data
           python src/main.py
