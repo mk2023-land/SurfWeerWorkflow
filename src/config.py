@@ -172,17 +172,21 @@ API_ENDPOINTS = {
 # claude-haiku-4-5 is de huidige Haiku-generatie (snel, ~$1/$5 per M tokens).
 ANTHROPIC_CONFIG = {
     'api_key': os.getenv('ANTHROPIC_API_KEY'),
-    'model': 'claude-haiku-4-5',
-    # Fallback wanneer haiku-4-5 specifiek 529 (overloaded) geeft — Haiku is
-    # populair-goedkoop dus krijgt vaakst peak-load. Sonnet kost ~3× meer per
-    # token (digest ~1k tokens = $0.003 ipv $0.001) maar pipeline altijd up.
-    # In praktijk pakt Haiku 90%+ van de calls; sonnet alleen bij echte outage.
-    'fallback_model': 'claude-sonnet-4-5',
-    'max_tokens': 800,   # bumped van 320: referentie-forecaster-stijl 4-daagse digest komt makkelijk
-                         # boven 320 tokens uit; afgekapte berichten leveren een
-                         # ongeldige format op die in fallback eindigt
-    'temperature': 0.4   # van 0.7: lagere temperatuur = minder vrije associaties,
-                         # belangrijk voor anti-hallucinatie
+    # Sonnet als primair model: rijkere Nederlandse taal, meer nuance, beter
+    # in referentie-forecaster-stijl prose. ~3× duurder dan Haiku maar absoluut nog steeds
+    # verwaarloosbaar: ~€0,50-€1/maand bij 30-60 calls. Gemeten output is
+    # significant beter (wind-wave interactie expliciet benoemd, uncertainty
+    # gerendered, kortperiode windswell-uitleg).
+    'model': 'claude-sonnet-4-5',
+    # Haiku als fallback: bij Sonnet-overload schakelen we naar Haiku (goedkoper,
+    # nog steeds capable maar minder rijk). In praktijk pakt Sonnet 95%+ van
+    # de calls; Haiku alleen bij echte Anthropic-side Sonnet-outage.
+    'fallback_model': 'claude-haiku-4-5',
+    'max_tokens': 800,   # referentie-forecaster-stijl 4-daagse digest komt makkelijk boven 320
+                         # tokens uit; afgekapte berichten leveren een ongeldige
+                         # format op die in fallback eindigt.
+    'temperature': 0.4   # Lager dan default 0.7: minder vrije associaties,
+                         # belangrijk voor anti-hallucinatie.
 }
 
 # Twilio configuratie
