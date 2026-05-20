@@ -31,11 +31,15 @@ jobs:
       # buoy_spectra_history.jsonl), digest-state (state.json) en forecasts-log.
       # GitHub Actions cache: 10 GB max per repo, entries expireren na 7d
       # zonder hit; daily runs houden alles vers.
+      # Split restore/save: deterministische key `surf-data-v1` zodat elke run
+      # dezelfde cache leest en schrijft (anders clobberen parallelle runs
+      # elkaars cooldowns/weekly counters). restore-keys behoudt fallback voor
+      # eerste run met v1-key.
       - name: Restore persistent data cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: data/
-          key: surf-data-${{ github.run_id }}
+          key: surf-data-v1
           restore-keys: |
             surf-data-
 
@@ -90,3 +94,16 @@ jobs:
           name: surf-alert-log-${{ github.run_id }}
           path: data/surf_alert.log
           retention-days: 30
+
+      # Save cache aan het einde, ook als eerdere steps faalden (if: always()),
+      # maar NIET op manual workflow_dispatch runs — die zijn voor testing en
+      # mogen de productie-cache (cooldowns, weekly counters, bias_log) niet
+      # vervuilen. MANUAL_RUN wordt gezet door de run-step hierboven; we
+      # checken hier opnieuw via github.event_name zodat de conditie niet
+      # afhangt van env-vars uit een eerdere step.
+      - name: Save persistent data cache
+        if: always() && github.event_name != 'workflow_dispatch'
+        uses: actions/cache/save@v4
+        with:
+          path: data/
+          key: surf-data-v1

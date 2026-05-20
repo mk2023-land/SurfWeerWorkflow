@@ -531,6 +531,71 @@ class TestValidatieCases:
         assert score.swell_dir_bonus < 1.5  # Sterk gereduceerde bonus voor NNO
 
 
+class TestB6PeriodConsistency:
+    """
+    B6 regressie: tide-window en golf-factoren moeten dezelfde dominante
+    periode gebruiken (partition-based / energy-weighted), niet de hoogste
+    piek-by-height.
+
+    Scenario: groundswell 0.9m@12s (E ∝ 0.81×12=9.72) + wind_sea 1.0m@4s
+    (E ∝ 1×4=4.0). Hoogste piek qua HOOGTE = wind_sea (1.0m), maar qua
+    ENERGY = groundswell. De oude `_dominant_period_for_tide` pakte 4s →
+    wind-sea tide-venster + lage we_factor; de fix pakt 12s → groundswell
+    venster + hogere we_factor.
+    """
+
+    def _make_state(self) -> HourState:
+        gs = SpectralPeak(
+            frequency_mhz=1000/12, period_s=12.0, height_m=0.9,
+            direction_deg=300, type=SwellType.GROUND_SWELL,
+        )
+        wsea = SpectralPeak(
+            frequency_mhz=1000/4, period_s=4.0, height_m=1.0,
+            direction_deg=260, type=SwellType.WIND_SEA,
+        )
+        # significant_height_total = sqrt(0.9² + 1.0²) ≈ 1.345
+        spectrum = WaveSpectrum(
+            timestamp=_FIXED_TS,
+            significant_height_total=1.345,
+            mean_period=7.0,
+            mean_direction=290,
+            peaks=[wsea, gs],  # wsea eerst om bias te checken
+        )
+        return HourState(
+            timestamp=_FIXED_TS,
+            location_name=NOORDWIJK.name,
+            wave_spectrum=spectrum,
+            wind=WindState(speed_kn=8.0, direction_deg=100, gusts_kn=10.0),
+            tide=TideState(
+                level_m=0.0,
+                phase="opgaand",
+                next_high=datetime(2025, 8, 6, 12, 0, 0),
+                next_low=datetime(2025, 8, 6, 18, 0, 0),
+                daily_range_m=2.0,
+            ),
+            forecast_source="test",
+            confidence=1.0,
+        )
+
+    def test_dominant_period_picks_groundswell_not_highest_peak(self):
+        from src.scoring.hourly import _dominant_period_partition_based
+        st = self._make_state()
+        Tp = _dominant_period_partition_based(st.wave_spectrum)
+        # Energy-based: groundswell wint (0.81×12=9.72 vs 1×4=4.0)
+        assert Tp == pytest.approx(12.0, abs=0.5), \
+            f"Expected ~12s (groundswell), got {Tp}s — height-based bug regressed"
+
+    def test_score_hour_uses_consistent_period(self):
+        st = self._make_state()
+        score = score_hour(st)
+        # Met 12s periode en goede richting (300=NNW) moet golf_score
+        # significant zijn (energy-flux factor + iribarren factor + period
+        # factor allemaal in groundswell-range).
+        # Met de OUDE 4s buggy keuze zou we_factor / age_factor heel laag uitvallen.
+        assert score.golf_score > 5, \
+            f"Met partition-based Tp moet golf_score een echte waarde hebben, kreeg {score.golf_score}"
+
+
 class TestSprint2PartitionAwareScoring:
     """Sprint 2 #10 — partition-aware scoring (swell + wind-sea apart wegen)."""
 

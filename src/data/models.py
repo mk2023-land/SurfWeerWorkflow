@@ -407,12 +407,28 @@ class SystemState:
     last_digest_time: Optional[datetime] = None
     cooldown_until: Optional[datetime] = None
 
+    def _now_utc(self) -> datetime:
+        """B5: tz-aware UTC overal in SystemState voorkomt naive/aware mix bugs."""
+        from datetime import timezone
+        return datetime.now(timezone.utc)
+
+    def _ensure_utc(self, dt: Optional[datetime]) -> Optional[datetime]:
+        """Coerce een veld-datetime naar tz-aware UTC. Naive = UTC aanname
+        (state.json wordt door dit proces zelf geschreven met isoformat)."""
+        if dt is None:
+            return None
+        from datetime import timezone
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+
     def should_send_alert(self, cooldown_hours: int, max_per_week: int) -> bool:
         """Controleer of een alert mag worden verstuurd."""
-        now = datetime.now()
+        now = self._now_utc()
+        cooldown = self._ensure_utc(self.cooldown_until)
 
         # Check cooldown
-        if self.cooldown_until and now < self.cooldown_until:
+        if cooldown and now < cooldown:
             return False
 
         # Check weekly cap
@@ -425,7 +441,7 @@ class SystemState:
 
     def record_alert(self, cooldown_hours: int):
         """Registreer dat een alert is verstuurd."""
-        now = datetime.now()
+        now = self._now_utc()
         self.last_alert_time = now
         self.alerts_sent_this_week += 1
         self.cooldown_until = now + timedelta(hours=cooldown_hours)

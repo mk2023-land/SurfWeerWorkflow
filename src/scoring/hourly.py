@@ -1008,16 +1008,21 @@ def score_swell_direction_bonus(swell_direction_deg: int, period_s: float = 7.0)
     return raw * transmission
 
 
-def _dominant_period_for_tide(spectrum: WaveSpectrum) -> float:
+def _dominant_period_partition_based(spectrum: WaveSpectrum) -> float:
     """
-    Bepaal de dominante swell-periode voor tij-scoring.
+    Bepaal de dominante periode op basis van wave-energy per partitie.
 
-    Voorkeur: hoogste spectrale piek; fallback: spectrum.mean_period; bij geen
-    info default 8.0 (mid-band — neutraal venster).
+    Was: hoogste piek (height-based). Probleem: een 1.1m@4s windsea-piek
+    versloeg een 0.9m@12s groundswell in periode-selectie, terwijl de
+    groundswell qua energy en surfability dominant is (E ∝ H²·T).
+
+    Nu: hergebruikt `partition_energy_components` zodat het tij-venster
+    en de golf-component-Tp consistent zijn (één periode per uur).
+    Fallback: spectrum.mean_period; bij geen info default 8.0.
     """
-    if spectrum.peaks:
-        dominant = max(spectrum.peaks, key=lambda p: p.height_m)
-        return dominant.period_s
+    parts = partition_energy_components(spectrum)
+    if parts['dominant_period_s'] and parts['dominant_period_s'] > 0:
+        return parts['dominant_period_s']
     if spectrum.mean_period and spectrum.mean_period > 0:
         return spectrum.mean_period
     return 8.0
@@ -1067,7 +1072,7 @@ def score_hour(state: HourState, context: Optional[dict] = None) -> ScoreBreakdo
     # onmogelijk — referentie-forecaster noemt zo'n dag "windhoogte 20cm, rimpelsurf, niets aan".
     # De gate zet ALLES op 0 zodat het uur niet in windows of als piek verschijnt.
     Hs = state.wave_spectrum.significant_height_total
-    Tp = _dominant_period_for_tide(state.wave_spectrum)
+    Tp = _dominant_period_partition_based(state.wave_spectrum)
     if Hs < SURF_MINIMUMS['min_hs_m'] or Tp < SURF_MINIMUMS['min_period_s']:
         return ScoreBreakdown(
             timestamp=state.timestamp,
@@ -1169,8 +1174,10 @@ def score_hour(state: HourState, context: Optional[dict] = None) -> ScoreBreakdo
         wind_score *= pres_factor
 
     # Tij component — periode-afhankelijk venster + spring/doodtij + timing-fit
-    # + tidal-current penalty (referentie-forecaster' "vloedstroom" effect)
-    dominant_period_s = _dominant_period_for_tide(state.wave_spectrum)
+    # + tidal-current penalty (referentie-forecaster' "vloedstroom" effect). Hergebruik Tp
+    # (zelfde partition-based definitie als de min-period gate + golf-factoren)
+    # zodat één hour één period heeft (B6 fix).
+    dominant_period_s = Tp
     hours_to_high = _hours_until(state.timestamp, state.tide.next_high)
     tidal_current = state.tide.tidal_current_intensity(state.timestamp)
     tide_score = score_tide_component(

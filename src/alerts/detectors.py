@@ -57,11 +57,32 @@ class SwellArrivalDetector:
         if len(a12_data) < 2:
             return None
 
-        # Vergelijk A12 spectrum van 6 uur geleden met nu
-        # Zoek naar verspringend ruggetje (piek verschuiving)
-
+        # B2 fix: voorheen `previous = a12_data[0]` — bij hours_back=48 met
+        # 10-min raster betekent dat 48u terug, niet 12u, → chronische
+        # false-positives bij voor-/najaarstransities. Nu: zoek de spectrum
+        # die het dichtst bij `current - 12h` ligt, binnen ±2u tolerantie.
         current_spectrum = a12_data[-1]
-        previous_spectrum = a12_data[0]  # ~12 uur geleden
+        target_ts = current_spectrum.timestamp - timedelta(hours=12)
+
+        def _strip_tz(d):
+            return d.replace(tzinfo=None) if getattr(d, 'tzinfo', None) else d
+
+        target_n = _strip_tz(target_ts)
+        previous_spectrum = None
+        best_delta = timedelta(hours=2)
+        for spec in a12_data[:-1]:
+            spec_n = _strip_tz(spec.timestamp)
+            delta = abs(spec_n - target_n)
+            if delta <= best_delta:
+                best_delta = delta
+                previous_spectrum = spec
+
+        if previous_spectrum is None:
+            logger.debug(
+                "T1: geen A12 spectrum binnen 12h±2u tolerantie (have %d entries)",
+                len(a12_data),
+            )
+            return None
 
         # Extraheer pieken
         current_peaks = current_spectrum.peaks

@@ -178,16 +178,29 @@ class OpenMeteoClient:
         # Bij single-model:
         #   'wind_speed_10m': [...]
 
-        def _key(field: str, model: str) -> str:
-            """Vind kolomnaam voor (field, model). Probeer suffix-vorm eerst."""
+        multi_model = len(models) > 1
+
+        def _key(field: str, model: str) -> Optional[str]:
+            """
+            Vind kolomnaam voor (field, model).
+
+            Bij multi-model is een suffixed key VERPLICHT — terugvallen op de
+            bare key zou alle modellen naar dezelfde kolom laten resolven en
+            de wind-spread silently nul maken (Sprint 2 #8 dead-feature bug).
+            Returns None als de suffixed key ontbreekt → caller logt en
+            slaat dit model over.
+
+            Bij single-model is bare prima.
+            """
             suffixed = f"{field}_{model}"
             if suffixed in hourly:
                 return suffixed
-            return field
+            if multi_model:
+                return None
+            return field if field in hourly else None
 
         result: Dict[str, List[Dict[str, Any]]] = {}
         for model in models:
-            model_result: List[Dict[str, Any]] = []
             ws_key = _key('wind_speed_10m', model)
             wd_key = _key('wind_direction_10m', model)
             wg_key = _key('wind_gusts_10m', model)
@@ -196,16 +209,31 @@ class OpenMeteoClient:
             p_key = _key('pressure_msl', model)
             cc_key = _key('cloud_cover', model)
 
+            # Essentiële velden (wind speed + dir) moeten aanwezig zijn.
+            if ws_key is None or wd_key is None:
+                logger.warning(
+                    "Model '%s' ontbreekt suffixed wind-keys in Open-Meteo "
+                    "response; sla over (multi_model=%s)",
+                    model, multi_model,
+                )
+                continue
+
+            model_result: List[Dict[str, Any]] = []
             for i, time_str in enumerate(times):
+                def _get(key: Optional[str]):
+                    if key is None:
+                        return None
+                    col = hourly.get(key, [])
+                    return col[i] if i < len(col) else None
                 model_result.append({
                     'timestamp': datetime.fromisoformat(time_str.replace('Z', '+00:00')),
-                    'wind_speed': hourly.get(ws_key, [])[i] if i < len(hourly.get(ws_key, [])) else None,
-                    'wind_direction': hourly.get(wd_key, [])[i] if i < len(hourly.get(wd_key, [])) else None,
-                    'wind_gusts': hourly.get(wg_key, [])[i] if i < len(hourly.get(wg_key, [])) else None,
-                    'temperature': hourly.get(t_key, [])[i] if i < len(hourly.get(t_key, [])) else None,
-                    'precipitation': hourly.get(pr_key, [])[i] if i < len(hourly.get(pr_key, [])) else None,
-                    'pressure': hourly.get(p_key, [])[i] if i < len(hourly.get(p_key, [])) else None,
-                    'cloud_cover': hourly.get(cc_key, [])[i] if i < len(hourly.get(cc_key, [])) else None,
+                    'wind_speed': _get(ws_key),
+                    'wind_direction': _get(wd_key),
+                    'wind_gusts': _get(wg_key),
+                    'temperature': _get(t_key),
+                    'precipitation': _get(pr_key),
+                    'pressure': _get(p_key),
+                    'cloud_cover': _get(cc_key),
                 })
             result[model] = model_result
 
@@ -213,6 +241,28 @@ class OpenMeteoClient:
         # die de oude single-model interface verwachten).
         if 'knmi_seamless' not in result and result:
             result['knmi_seamless'] = next(iter(result.values()))
+
+        # Sanity check: bij multi-model moeten de wind-snelheid series
+        # daadwerkelijk verschillen. Anders is iets misgegaan in het parsen
+        # (of geeft Open-Meteo identieke series terug — zeldzaam maar
+        # we willen het wel zien in de logs).
+        if multi_model and len(result) >= 2 and times:
+            sample_n = min(12, len(times))
+            speed_signature = {}
+            for name, series in result.items():
+                sig = tuple(
+                    round(row['wind_speed'], 3) if row['wind_speed'] is not None else None
+                    for row in series[:sample_n]
+                )
+                speed_signature[name] = sig
+            unique_signatures = set(speed_signature.values())
+            if len(unique_signatures) < 2:
+                logger.warning(
+                    "Multi-model wind data collapsed to single source — alle "
+                    "modellen identieke wind_speed reeksen: %s. "
+                    "wind-spread confidence zal 0 zijn.",
+                    list(speed_signature.keys()),
+                )
 
         logger.info(
             f"Retrieved {len(times)} hours of forecast data for "

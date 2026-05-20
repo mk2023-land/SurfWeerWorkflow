@@ -82,14 +82,63 @@ class TestComputeBuoyBias:
         model = [_model(1, 1.0, 6.0)]
         assert compute_buoy_bias(obs, model, _NOW) == {}
 
+    def test_geometric_mean_on_mixed_magnitude(self):
+        """
+        Regressietest: bij gemengde-magnitude samples moet de schatter
+        netto-géén bias zien wanneer per-sample ratios elkaar opheffen.
+
+        obs=[0.2, 2.0], model=[0.4, 1.0] → per-sample ratios 0.5 en 2.0
+        (multiplicatief symmetrisch rond 1). De fout-statistische
+        ratio-of-means zou 1.57 geven; de MLE (geometric mean) geeft 1.0.
+        """
+        obs = [_obs(2, 0.2, 6.0), _obs(1, 2.0, 6.0)]
+        model = [_model(2, 0.4, 6.0), _model(1, 1.0, 6.0)]
+        bias = compute_buoy_bias(obs, model, _NOW)
+        assert bias["hs_bias_factor"] == pytest.approx(1.0, abs=0.01)
+
     def test_naive_timestamps_handled(self):
-        """Naive datetimes (assumed UTC) moeten ook werken."""
+        """
+        Naive datetimes worden als Europe/Amsterdam geïnterpreteerd
+        (consistent met src.util.to_utc — B5 fix). Bij gelijke wallclock
+        in beide series moet match-window niet stuk lopen.
+        """
         obs = [{"timestamp": _ts(h).replace(tzinfo=None), "height_m": 1.0, "period_s": 6.0}
                for h in range(1, 6)]
         model = [{"timestamp": _ts(h).replace(tzinfo=None), "wave_height": 1.0, "wave_period": 6.0}
                  for h in range(1, 6)]
         bias = compute_buoy_bias(obs, model, _NOW.replace(tzinfo=None))
         assert bias != {}
+
+    def test_b5_mixed_naive_om_and_aware_rws_timestamps(self):
+        """
+        B5 regressie: Open-Meteo retourneert naive Europe/Amsterdam,
+        RWS retourneert aware UTC. Voorheen interpreteerde
+        `_coerce_aware_utc` naive als UTC → 2u offset → match-window ±30min
+        miste alle paren → bias-correctie permanent {} → Sprint 4 trainings-
+        data nooit gegenereerd.
+
+        Test: zelfde wallclock-uur, één naive (NL) en één aware (UTC).
+        Met de fix moeten de paren matchen.
+        """
+        # Wallclock 10:00 NL = 08:00 UTC (CEST in mei)
+        from datetime import timezone as _tz
+        wallclock_naive = datetime(2026, 5, 19, 10, 0, 0)  # 10:00 NL (naive)
+        rws_utc = datetime(2026, 5, 19, 8, 0, 0, tzinfo=_tz.utc)  # zelfde tijd UTC
+
+        obs = [
+            {"timestamp": rws_utc - timedelta(hours=h),
+             "height_m": 1.2, "period_s": 6.0}
+            for h in range(0, 4)
+        ]
+        model = [
+            {"timestamp": wallclock_naive - timedelta(hours=h),
+             "wave_height": 1.0, "wave_period": 6.0}
+            for h in range(0, 4)
+        ]
+        bias = compute_buoy_bias(obs, model, rws_utc)
+        assert bias != {}, \
+            "B5 fix: mix van naive-NL en aware-UTC moet matchen op zelfde wallclock"
+        assert bias["hs_bias_factor"] == pytest.approx(1.2, abs=0.05)
 
 
 class TestApplyBiasToForecast:

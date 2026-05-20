@@ -284,19 +284,49 @@ class SMSValidator:
         """
         Extraheer compass-richtingen uit tekst. Langste-eerst gretig matchen:
         'NNO' wordt voor 'N' herkend zodat 'NNO 5kn' niet als 'N' telt.
+
+        Levert ook ONBEKENDE 2-4 letter NOZW-tokens (bv. 'NWN', 'ZOW') terug
+        zodat de caller die als afwijking kan flaggen — anders zou een
+        hallucinatie als "wind uit NWN" stilzwijgend goedkeuren omdat NWN
+        niet in _COMPASS_DIRS staat.
+
+        Span-tracking voorkomt double-counting: een match die binnen een
+        eerdere langere match valt (bv. 'N' binnen 'NNO') wordt geskipt.
         """
-        # Werk met hoofdletter-versie en woordgrenzen
         upper = text.upper()
+        consumed_spans: List[tuple] = []  # (start, end) van al gematchte richtingen
+
+        def _overlaps(s: int, e: int) -> bool:
+            return any(not (e <= cs or s >= ce) for cs, ce in consumed_spans)
+
         found: List[str] = []
         for d in _COMPASS_DIRS:  # al gesorteerd langste-eerst
             for m in re.finditer(r'\b' + re.escape(d) + r'\b', upper):
-                # Skip als het deel is van een wind-label
-                start = m.start()
-                # Vinden we 'aflandig'/'aanlandig'/etc. direct na deze positie?
-                context = upper[max(0, start - 10):min(len(upper), start + 15)]
+                start, end = m.start(), m.end()
+                if _overlaps(start, end):
+                    continue
+                # Skip als het deel is van een wind-label expressie.
+                # Voorheen stond hier `pass` (no-op) — match werd alsnog
+                # toegevoegd. Nu skippen we de match echt.
+                context = upper[max(0, start - 10):min(len(upper), end + 15)]
                 if any(w.upper() in context for w in _WIND_LABELS if w.upper() != d):
-                    pass
+                    consumed_spans.append((start, end))
+                    continue
+                consumed_spans.append((start, end))
                 found.append(d)
+
+        # Sweep: onbekende NOZW-tokens (2-4 letters). Een hallucinatie als
+        # 'NWN' of 'ZOZ' (geen geldige compass-codes) moet als afwijking
+        # gerapporteerd worden zodat allowed_dirs-check faalt.
+        for m in re.finditer(r'\b[NOZW]{2,4}\b', upper):
+            token = m.group(0)
+            if token in _COMPASS_DIRS:
+                continue  # al via reguliere matcher gevangen
+            start, end = m.start(), m.end()
+            if _overlaps(start, end):
+                continue
+            found.append(token)
+
         return found
 
     def _input_mentions_spring_tide(self, structured_input: Dict) -> bool:
