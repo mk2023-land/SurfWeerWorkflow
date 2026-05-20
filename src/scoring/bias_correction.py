@@ -9,9 +9,14 @@ Wetenschappelijk gefundeerd: peer-reviewed Dutch-North-Sea-paper toonde
 1. Pak laatste 3-6 uur live IJG1 (of vergelijkbare) boei-observaties met
    timestamp.
 2. Pak voor dezelfde uren de Open-Meteo model-voorspelling (Hm0 / Tp / Tm02).
-3. Match per uur (binnen ±30 min) en bereken:
-       bias_factor_hs     = mean(boei_hs)     / mean(model_hs)
-       bias_factor_period = mean(boei_period) / mean(model_period)
+3. Match per uur (binnen ±30 min) en bereken de MLE voor een
+   multiplicatieve bias — de geometrische gemiddelde van per-sample
+   verhoudingen:
+       bias_factor_hs     = exp(mean(log(boei_hs     / model_hs)))
+       bias_factor_period = exp(mean(log(boei_period / model_period)))
+   Dit is de juiste schatter (vergelijk ratio-of-means: die overschat
+   systematisch bij gemengde-magnitude samples — bv. obs=[0.2,2.0]
+   model=[0.4,1.0] geeft RoM=1.57 terwijl GM=1.0 — geen netto bias).
    Beide factoren gecapt op [0.5, 2.0] zodat een uitschieter het forecast
    niet de stratosfeer in stuurt.
 4. `apply_bias_to_forecast` past de factor toe op de eerstvolgende 6-12 uur
@@ -53,10 +58,17 @@ DEFAULT_DECAY_TAU_H = 18.0
 
 
 def _coerce_aware_utc(ts: datetime) -> datetime:
-    """Maak een aware UTC datetime van naive (assumed UTC) of aware input."""
-    if ts.tzinfo is None:
-        return ts.replace(tzinfo=timezone.utc)
-    return ts.astimezone(timezone.utc)
+    """
+    Maak een aware UTC datetime; delegeer aan `src.util.to_utc` zodat
+    naive = Europe/Amsterdam (Open-Meteo convention) consistent met de
+    rest van de scoring-stack.
+
+    Voorheen: `naive → UTC` aanname → mismatch van 1-2u tussen naive
+    Open-Meteo marine rows en aware RWS observations → match-window
+    ±30min liep stuk → bias-correctie viel terug op no-bias mode en
+    `bias_log.jsonl` bleef leeg (Sprint 4 training-data niet gegenereerd).
+    """
+    return to_utc(ts)
 
 
 def _match_pairs(
@@ -151,7 +163,8 @@ def compute_buoy_bias(
 
     Args:
         boei_observations: Lijst RWS-boei rows. Vereiste velden per row:
-            - 'timestamp' (datetime, naive=UTC of aware)
+            - 'timestamp' (datetime, aware UTC of naive Europe/Amsterdam —
+              consistent met `src.util.to_utc`)
             - 'height_m'  (m, Hm0)
             - 'period_s'  (s, Tm02 of equivalent)
         model_predictions: Lijst Open-Meteo marine rows met dezelfde
@@ -177,21 +190,20 @@ def compute_buoy_bias(
         )
         return {}
 
-    # Means met defensieve filter tegen zero/near-zero (deeldoor-bescherming).
-    valid_hs = [p for p in pairs if p["model_hs"] > 0.05]
-    valid_period = [p for p in pairs if p["model_period"] > 0.5]
+    # Geometric mean of per-sample ratios = MLE voor multiplicatieve bias.
+    # Defensieve filter: zowel obs als model > 0 (anders log undefined).
+    valid_hs = [p for p in pairs if p["model_hs"] > 0.05 and p["obs_hs"] > 0.05]
+    valid_period = [p for p in pairs if p["model_period"] > 0.5 and p["obs_period"] > 0.5]
 
     if not valid_hs or not valid_period:
-        logger.info("Bias-correctie: alle model-waarden bijna nul, geen bias berekenbaar")
+        logger.info("Bias-correctie: onvoldoende valide samples (model of obs ~0)")
         return {}
 
-    obs_hs_mean = sum(p["obs_hs"] for p in valid_hs) / len(valid_hs)
-    model_hs_mean = sum(p["model_hs"] for p in valid_hs) / len(valid_hs)
-    obs_period_mean = sum(p["obs_period"] for p in valid_period) / len(valid_period)
-    model_period_mean = sum(p["model_period"] for p in valid_period) / len(valid_period)
+    hs_log_ratios = [math.log(p["obs_hs"] / p["model_hs"]) for p in valid_hs]
+    period_log_ratios = [math.log(p["obs_period"] / p["model_period"]) for p in valid_period]
 
-    hs_factor = obs_hs_mean / model_hs_mean if model_hs_mean > 0 else 1.0
-    period_factor = obs_period_mean / model_period_mean if model_period_mean > 0 else 1.0
+    hs_factor = math.exp(sum(hs_log_ratios) / len(hs_log_ratios))
+    period_factor = math.exp(sum(period_log_ratios) / len(period_log_ratios))
 
     hs_factor = max(BIAS_FACTOR_MIN, min(BIAS_FACTOR_MAX, hs_factor))
     period_factor = max(BIAS_FACTOR_MIN, min(BIAS_FACTOR_MAX, period_factor))

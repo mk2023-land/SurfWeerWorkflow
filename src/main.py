@@ -321,16 +321,43 @@ class SurfAlertSystem:
         return hour_states
 
     def _handle_alert(self, alert) -> dict:
-        """Genereer en verstuur alert-notificatie."""
+        """
+        Genereer en verstuur alert-notificatie.
+
+        B7: alerts gaan 4×/dag mogelijk uit en zijn vertrouwens-kritiek.
+        Twee validatie-lagen:
+          1. `validate_sms` (anti-hallucinatie): bij faal → ABORT, geen
+             alert sturen. Een verkeerde alert erodeert gebruikersvertrouwen
+             sneller dan een gemiste alert.
+          2. `validate_alert_format` (prefix + datum-pattern): bij faal →
+             log warning, alert wordt nog wel verstuurd (kosmetisch issue).
+        """
         sms_text = self.sms_generator.generate_alert_sms(alert)
 
-        validation_result = self.sms_validator.validate_sms(
+        anti_hallucination = self.sms_validator.validate_sms(
             sms_text,
             self.sms_generator._prepare_alert_input(alert)
         )
-        if not validation_result:
-            logger.warning(f"Alert validation failed: {validation_result.issues}, fallback gebruikt")
-            sms_text = self.sms_generator._fallback_alert_template(alert)
+        if not anti_hallucination:
+            logger.error(
+                "Alert anti-hallucinatie validatie FAILED — alert wordt "
+                "NIET verzonden. Issues: %s. Tekst was: %r",
+                anti_hallucination.issues, sms_text,
+            )
+            return {
+                'success': False,
+                'channel': self.notifier.channel,
+                'error': 'validation_failed',
+                'validation_issues': anti_hallucination.issues,
+                'message': sms_text,
+            }
+
+        format_ok = self.sms_validator.validate_alert_format(sms_text)
+        if not format_ok:
+            logger.warning(
+                "Alert format-check faalde (%s) — toch verstuurd want "
+                "anti-hallucinatie passed.", format_ok.issues,
+            )
 
         if not self.dry_run:
             return self.notifier.send_alert(sms_text)
@@ -342,7 +369,12 @@ class SurfAlertSystem:
         hourly_scores: List[ScoreBreakdown],
         windows: List[SurfWindow],
     ) -> dict:
-        """Genereer en verstuur digest SMS."""
+        """
+        Genereer en verstuur digest SMS.
+
+        B7: ook digest moet de anti-hallucinatie validator passeren.
+        Bij faal → fallback-template (deterministische digest zonder LLM).
+        """
         forecast_summary = {
             'total_hours': len(hourly_scores),
             'surfable_hours': len([s for s in hourly_scores if s.is_surfable()])
@@ -357,6 +389,31 @@ class SurfAlertSystem:
         if not format_ok:
             logger.warning(f"Digest format validation failed: {format_ok.issues}, fallback gebruikt")
             sms_text = self.sms_generator._fallback_digest_template(hour_states, hourly_scores, windows)
+        else:
+            # Anti-hallucinatie check op de LLM-output. Alleen als format OK
+            # is — voor de fallback-template is hallucinatie per definitie
+            # uitgesloten (deterministisch, gebouwd uit echte cijfers).
+            try:
+                digest_input = self.sms_generator._prepare_digest_input(
+                    hour_states, hourly_scores, windows, forecast_summary,
+                    wind_spread_series=getattr(self, '_last_wind_spread_full', None),
+                )
+                anti_hallucination = self.sms_validator.validate_sms(sms_text, digest_input)
+                if not anti_hallucination:
+                    logger.warning(
+                        "Digest anti-hallucinatie FAILED — fallback gebruikt. "
+                        "Issues: %s", anti_hallucination.issues,
+                    )
+                    sms_text = self.sms_generator._fallback_digest_template(
+                        hour_states, hourly_scores, windows
+                    )
+            except Exception as e:
+                # _prepare_digest_input kan extra argumenten verwachten die
+                # _handle_digest niet heeft — niet fataal, val terug op de
+                # format-only check die hierboven al passeerde.
+                logger.warning(
+                    "Digest anti-hallucinatie skipped (prep error): %s", e,
+                )
 
         if not self.dry_run:
             return self.notifier.send_digest(sms_text)

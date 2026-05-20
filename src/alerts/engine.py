@@ -3,6 +3,8 @@ Alert engine module.
 Coördineert detectie, besluitvorming, en state management.
 """
 import logging
+import os
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional, Set
 from zoneinfo import ZoneInfo
@@ -28,6 +30,41 @@ from .detectors import AlertDetectorEngine
 logger = logging.getLogger(__name__)
 
 
+# B9 — Primary alert-type priority. Bij meerdere triggered alerts wordt
+# de hoogst gerankte gekozen als primary (titel + alert_type). Voorheen
+# pakte `set.pop()` willekeurig waardoor identieke condities verschillende
+# alerts gaven op verschillende dagen.
+#
+# Rationale: T1 (nieuwe swell) is zeldzaam en meest informatief; T4
+# (sustained groundswell) is een kwaliteits-event; T2 (front-passage)
+# is een ingrijpende verandering; T5 (tide window) is precise maar
+# minder uniek; T3 (windstilte) is kortdurend en het minst urgent.
+PRIMARY_ALERT_PRIORITY = [
+    AlertType.SWELL_ARRIVAL,
+    AlertType.SUSTAINED_GROUNDSWELL,
+    AlertType.WIND_SHIFT,
+    AlertType.TIDE_GATED,
+    AlertType.WIND_DIP,
+]
+
+
+def select_primary_alert_type(triggered: Set[AlertType]) -> Optional[AlertType]:
+    """
+    Kies deterministisch de primary alert-type uit een set triggered types.
+
+    Returns None bij lege set, anders het hoogst geprioriteerde type
+    (PRIMARY_ALERT_PRIORITY volgorde). Onbekende types (die niet in de
+    priority-lijst staan) zijn vangnet — alleen geselecteerd als geen
+    bekende type voorkomt.
+    """
+    if not triggered:
+        return None
+    for t in PRIMARY_ALERT_PRIORITY:
+        if t in triggered:
+            return t
+    return next(iter(triggered))
+
+
 class AlertEngine:
     """
     Hoofd alert engine die detectie coördineert en beslissingen neemt.
@@ -39,26 +76,68 @@ class AlertEngine:
         self.state = self._load_state()
 
     def _load_state(self) -> SystemState:
-        """Laad state uit bestand."""
-        try:
-            state_path = Path(self.state_file)
-            if state_path.exists():
-                with open(state_path, 'r') as f:
-                    data = json.load(f)
-                    return SystemState(
-                        last_alert_time=datetime.fromisoformat(data['last_alert_time']) if data.get('last_alert_time') else None,
-                        alerts_sent_this_week=data.get('alerts_sent_this_week', 0),
-                        week_number=data.get('week_number', datetime.now().isocalendar()[1]),
-                        last_digest_time=datetime.fromisoformat(data['last_digest_time']) if data.get('last_digest_time') else None,
-                        cooldown_until=datetime.fromisoformat(data['cooldown_until']) if data.get('cooldown_until') else None
-                    )
-        except Exception as e:
-            logger.warning(f"Failed to load state: {e}, creating new state")
+        """Laad state uit bestand.
 
-        return SystemState()
+        B5: normaliseert alle datetimes naar tz-aware UTC zodat cooldown-
+        en digest-checks geen naive/aware TypeError kunnen gooien tussen
+        verschillende state.json generaties.
+
+        B10: bij een corrupt state.json (JSONDecodeError) wordt NIET stil
+        teruggevallen op een lege SystemState — dat zou de weekly cap
+        bypassen en de gebruiker een burst aan alerts kunnen geven na een
+        cache-corruptie. In plaats daarvan loggen we ERROR en raisen we,
+        zodat de GH Actions run faalt en de operator een CI-failure mail
+        krijgt (recoverable). De fallback-op-lege-SystemState blijft alleen
+        gelden voor de echte first-run (state.json bestaat niet).
+        """
+        def _aware_utc(s: Optional[str]) -> Optional[datetime]:
+            if not s:
+                return None
+            dt = datetime.fromisoformat(s)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(timezone.utc)
+
+        state_path = Path(self.state_file)
+        if not state_path.exists():
+            # First run: geen state.json → lege SystemState is correct.
+            return SystemState()
+
+        try:
+            with open(state_path, 'r') as f:
+                data = json.load(f)
+        except json.JSONDecodeError as e:
+            # B10: corrupt file — raise zodat de run faalt ipv stilletjes
+            # de weekly cap te resetten. Operator krijgt CI-failure mail
+            # en kan handmatig de state cache reset doen.
+            logger.error(
+                f"Corrupt state file at {state_path}: {e}. "
+                f"Refusing to start with empty state to avoid bypassing weekly cap. "
+                f"Delete the file (or the GH Actions cache entry) to force a clean first-run."
+            )
+            raise
+
+        return SystemState(
+            last_alert_time=_aware_utc(data.get('last_alert_time')),
+            alerts_sent_this_week=data.get('alerts_sent_this_week', 0),
+            week_number=data.get('week_number', datetime.now(timezone.utc).isocalendar()[1]),
+            last_digest_time=_aware_utc(data.get('last_digest_time')),
+            cooldown_until=_aware_utc(data.get('cooldown_until')),
+        )
 
     def _save_state(self):
-        """Sla state op naar bestand."""
+        """Sla state atomisch op naar bestand.
+
+        B10: voorheen schreef `json.dump` direct naar `state.json`. Als de
+        runner mid-write gekilled werd (zeldzaam maar gedocumenteerd voor
+        GH Actions) bleef een truncated/corrupt file achter. De daaropvolgende
+        run viel terug op een lege SystemState → weekly cap bypassed.
+
+        Fix: schrijf naar `state.json.tmp.<pid>.<uuid>` in dezelfde directory
+        (zelfde filesystem = `os.replace` is POSIX-atomair) en rename pas
+        ná een succesvolle write+flush+fsync. PID+UUID in de tmp-naam
+        voorkomt collisions als er ooit parallelle runs zouden zijn.
+        """
         state_path = Path(self.state_file)
         state_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -70,8 +149,23 @@ class AlertEngine:
             'cooldown_until': self.state.cooldown_until.isoformat() if self.state.cooldown_until else None
         }
 
-        with open(state_path, 'w') as f:
-            json.dump(data, f, indent=2)
+        tmp_path = state_path.with_name(
+            f"{state_path.name}.tmp.{os.getpid()}.{uuid.uuid4().hex}"
+        )
+        try:
+            with open(tmp_path, 'w') as f:
+                json.dump(data, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, state_path)
+        except Exception:
+            # Best-effort cleanup: laat geen tmp-files achter bij een crash.
+            try:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+            except OSError:
+                pass
+            raise
 
     def evaluate_forecast(
         self,
@@ -122,13 +216,14 @@ class AlertEngine:
                 skip_reason="Alerts disabled in configuration"
             )
 
-        # Check cooldown
-        if self.state.cooldown_until and datetime.now() < self.state.cooldown_until:
-            logger.info(f"In cooldown until {self.state.cooldown_until}")
+        # Check cooldown (B5: tz-aware UTC overal om naive/aware mix te vermijden)
+        cooldown = self.state._ensure_utc(self.state.cooldown_until)
+        if cooldown and datetime.now(timezone.utc) < cooldown:
+            logger.info(f"In cooldown until {cooldown}")
             return Decision(
                 send_digest=is_digest_time,
                 send_alerts=[],
-                skip_reason=f"In cooldown until {self.state.cooldown_until}"
+                skip_reason=f"In cooldown until {cooldown}"
             )
 
         # Check weekly cap
@@ -148,9 +243,14 @@ class AlertEngine:
             # Sorteer op score en kies beste
             best_window = max(alertworthy_windows, key=lambda w: w.peak_score)
 
-            # Maak alert candidate
+            # B9 fix: deterministische primary alert-type selectie via
+            # priority-ordering ipv set.pop() (= arbitrair). Volledige set
+            # gaat naar _generate_explanation zodat titel en body niet meer
+            # uit elkaar kunnen lopen.
+            primary_type = select_primary_alert_type(triggered_alerts)
+
             alert_candidate = AlertCandidate(
-                alert_type=triggered_alerts.pop(),  # Gebruik één type als primary
+                alert_type=primary_type,
                 window=best_window,
                 detection_time=datetime.now(),
                 explanation=self._generate_explanation(best_window, triggered_alerts),
