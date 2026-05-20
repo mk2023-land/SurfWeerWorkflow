@@ -23,7 +23,7 @@ from src.config import NOORDWIJK
 from src.data.sources.open_meteo import fetch_all_openmeteo_data, OpenMeteoClient
 from src.data.sources.rws import fetch_all_rws_data, tide_state_at
 from src.data.models import HourState, WindState
-from src.scoring.hourly import score_hour_series
+from src.scoring.hourly import score_hour_series, compute_wind_spread_per_hour
 from src.scoring.windows import analyze_windows
 from src.llm.generator import SMSGenerator
 from src.llm.validator import SMSValidator
@@ -40,16 +40,26 @@ async def main() -> int:
         rws = {}
 
     marine = openmeteo.get('marine') or []
-    forecast = (openmeteo.get('forecast') or {}).get('knmi_seamless') or []
+    forecast_by_model = openmeteo.get('forecast') or {}
+    forecast = forecast_by_model.get('knmi_seamless') or []
     if not marine or not forecast:
         print("✗ Geen forecast-data — kan niets bouwen.")
         return 1
-    print(f"→ {len(marine)} uur marine-data, {len(forecast)} uur wind-data.")
+    print(
+        f"→ {len(marine)} uur marine-data, {len(forecast)} uur wind-data "
+        f"({len(forecast_by_model)} model(en): {list(forecast_by_model.keys())})."
+    )
+
+    # Sprint 2 #8 — per-uur wind-spread tussen modellen
+    wind_spread_full = compute_wind_spread_per_hour(forecast_by_model)
+    spread_by_ts = {entry['timestamp']: entry for entry in wind_spread_full}
 
     om = OpenMeteoClient()
     tide = rws.get('tide') or {}
     states = []
     pressure_series = []
+    cloud_series = []
+    wind_spread_series = []
     for i in range(min(len(marine), len(forecast))):
         m, w = marine[i], forecast[i]
         if abs((m['timestamp'] - w['timestamp']).total_seconds()) > 3600:
@@ -67,14 +77,34 @@ async def main() -> int:
             forecast_source='open-meteo',
             confidence=1.0,
         ))
-        # Parallelle pressure series voor drukgradient detector (Sprint 1 fix)
+        # Parallelle series voor Sprint 1+2 features:
+        # - pressure_series: druk-gradient detector (Sprint 1)
+        # - cloud_series: diurnal wind-decay (Sprint 2 #12)
+        # - wind_spread_series: multi-model confidence (Sprint 2 #8)
         pressure_series.append(w.get('pressure') or 1013.0)
+        cloud_series.append(w.get('cloud_cover'))
+        wind_spread_series.append(spread_by_ts.get(m['timestamp']) or {})
 
-    scores = score_hour_series(states, pressure_series=pressure_series)
+    scores = score_hour_series(
+        states,
+        pressure_series=pressure_series,
+        cloud_cover_series=cloud_series,
+        wind_spread_series=wind_spread_series,
+    )
     windows = analyze_windows(scores)
     peak_today = max((s.total_score for s in scores[:24]), default=0)
     peak_tomorrow = max((s.total_score for s in scores[24:48]), default=0)
     print(f"→ Peak vandaag: {peak_today}, peak morgen: {peak_tomorrow}, windows: {len(windows)}")
+
+    # Sprint 2 #8 — print samenvatting van model-spread (debug-info)
+    if wind_spread_full:
+        avg_speed_std = sum(s['speed_std_kn'] for s in wind_spread_full[:48]) / max(48, len(wind_spread_full[:48]))
+        max_speed_std = max((s['speed_std_kn'] for s in wind_spread_full[:48]), default=0)
+        avg_dir_spread = sum(s['direction_spread_deg'] for s in wind_spread_full[:48]) / max(48, len(wind_spread_full[:48]))
+        print(
+            f"→ Wind-model spread 0-48u: speed avg/max {avg_speed_std:.1f}/{max_speed_std:.1f} kn, "
+            f"dir avg {avg_dir_spread:.1f}°"
+        )
 
     print("→ Tekst genereren via Claude Haiku...")
     gen = SMSGenerator()
@@ -82,7 +112,10 @@ async def main() -> int:
     summary = {'total_hours': len(scores),
                'surfable_hours': sum(1 for s in scores if s.is_surfable())}
     # Build input expliciet zodat we het ook door de contextuele validator kunnen halen
-    structured_input = gen._prepare_digest_input(states, scores, windows, summary)
+    structured_input = gen._prepare_digest_input(
+        states, scores, windows, summary,
+        wind_spread_series=wind_spread_full,
+    )
     text = gen._call_claude(structured_input) if gen.client else None
     if text:
         print(f"→ LLM-output ({len(text)} tekens):")

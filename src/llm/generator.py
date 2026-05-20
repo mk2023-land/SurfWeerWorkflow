@@ -306,6 +306,14 @@ EXTRA SIGNALEN
   "springtij". Anders NIET noemen.
 - `peak_height_hour.swell_refracts_around_ijmuiden=true` → noem pier-blokkade.
 - `peak_height_hour.swell_type="groundswell"` → benoem groundswell + periode.
+- `model_spread_warning=true` op een dag → noem dat "modellen nog uiteen"
+  of "voorspelling nog onzeker" voor díe dag. Niet kwantitatief uitleggen.
+- `peak_height_hour.tide_is_rising=true` met `tide_velocity_mh` ≥ 0.4 →
+  mag "tij komt stevig op" of "vloed bouwt op" zeggen. Bij is_rising=false
+  én velocity ≥ 0.4 → "tij valt nog stevig".
+- `confidence_label="laag"` → mag je voorbehouden formuleren ("modellen nog
+  onzeker", "spreiding tussen modellen"). Bij "hoog" of "matig": géén
+  voorbehoud, schrijf zoals altijd.
 
 ═══════════════════════════════════════════════════════════════════════
 STRIKTE REGELS — SAMENVATTING
@@ -349,11 +357,16 @@ class SMSGenerator:
         scores: List[ScoreBreakdown],
         windows: List[SurfWindow],
         forecast_summary: Optional[Dict] = None,
+        wind_spread_series: Optional[List[Dict]] = None,
     ) -> str:
         if not self.client:
             return self._fallback_digest_template(hour_states, scores, windows)
         try:
-            structured_input = self._prepare_digest_input(hour_states, scores, windows, forecast_summary or {})
+            structured_input = self._prepare_digest_input(
+                hour_states, scores, windows,
+                forecast_summary or {},
+                wind_spread_series=wind_spread_series,
+            )
             return self._call_claude(structured_input) or self._fallback_digest_template(hour_states, scores, windows)
         except Exception as e:
             logger.error(f"Failed to generate digest SMS with Claude Haiku: {e}")
@@ -403,24 +416,56 @@ class SMSGenerator:
         scores: List[ScoreBreakdown],
         windows: List[SurfWindow],
         forecast_summary: Dict,
+        wind_spread_series: Optional[List[Dict]] = None,
     ) -> Dict:
         """
         Multi-day digest: vandaag + 3 dagen vooruit. Per dag: peak_hour-condities,
         beste window (indien surfable), tij-richting + eerstvolgende hoog/laag,
         en springtij-context.
+
+        Sprint 2 #8 — optioneel `wind_spread_series` met inter-model spread per
+        uur. Indien aanwezig wordt een dag-level `model_spread_warning` veld
+        toegevoegd aan elk day_block zodat de LLM "modellen lopen nog uiteen"
+        kan verwoorden.
         """
         days = self._group_by_day(hour_states, scores)
         day_blocks: List[Dict] = []
         labels = ["vandaag", "morgen", "overmorgen", "+3"]
 
+        # Map timestamp → spread-dict voor snelle lookup per dag
+        spread_by_ts = {}
+        if wind_spread_series:
+            for entry in wind_spread_series:
+                spread_by_ts[entry['timestamp']] = entry
+
         for i, (date_obj, day_states, day_scores) in enumerate(days[:4]):
             if not day_states or not day_scores:
                 continue
             label = labels[i] if i < len(labels) else date_obj.strftime("%a %d/%m")
-            day_blocks.append(self._summarize_day(
+            day_block = self._summarize_day(
                 day_states, day_scores, windows,
                 date_obj=date_obj, label_nl=label
-            ))
+            )
+
+            # Sprint 2 #8 — dag-level model spread warning
+            if spread_by_ts:
+                day_spreads = [
+                    spread_by_ts[s.timestamp]
+                    for s in day_states
+                    if s.timestamp in spread_by_ts
+                ]
+                if day_spreads:
+                    max_speed_std = max(d['speed_std_kn'] for d in day_spreads)
+                    max_dir_spread = max(d['direction_spread_deg'] for d in day_spreads)
+                    day_block['model_spread'] = {
+                        'max_speed_std_kn': round(max_speed_std, 1),
+                        'max_direction_spread_deg': round(max_dir_spread, 1),
+                        'n_models': day_spreads[0].get('n_models', 1),
+                    }
+                    # Warning vlag voor de LLM
+                    if max_speed_std > 5.0 or max_dir_spread > 25.0:
+                        day_block['model_spread_warning'] = True
+            day_blocks.append(day_block)
 
         now = datetime.now()
         _, moon_label, is_spring = moon_phase_info(now)
@@ -513,6 +558,25 @@ class SMSGenerator:
 
         peak_height_conditions = self._hour_state_to_conditions(peak_height_state)
 
+        # Probabilistische confidence (Sprint 3 #17). Score-uren tellen alleen
+        # mee als ze daglicht-uren zijn (total_score > 0). Lege fallback → 1.0
+        # (volle vertrouwen) zodat ontbrekende multi-model data geen "laag"
+        # label oplevert.
+        confidence_values = [
+            getattr(sc, 'confidence', 1.0) for sc in day_scores
+            if sc.total_score > 0
+        ]
+        day_confidence = (
+            sum(confidence_values) / len(confidence_values)
+            if confidence_values else 1.0
+        )
+        if day_confidence >= 0.85:
+            confidence_label = "hoog"
+        elif day_confidence >= 0.65:
+            confidence_label = "matig"
+        else:
+            confidence_label = "laag"
+
         result: Dict = {
             "label_nl": label_nl,
             "date": date_obj.strftime("%Y-%m-%d"),
@@ -520,6 +584,8 @@ class SMSGenerator:
             "is_surfable": best_score.total_score >= 60,
             "peak_height_hour": peak_height_conditions,  # hier zit dé golfhoogte-piek
             "tide_summary": self._tide_summary_for_day(day_states, peak_height_state),
+            "confidence": round(day_confidence, 2),
+            "confidence_label": confidence_label,
         }
 
         def _window_payload(w):
@@ -618,7 +684,7 @@ class SMSGenerator:
 
     def _hour_state_to_conditions(self, state: HourState) -> Dict:
         """Pak fysische condities uit HourState. Alles in expliciete eenheden."""
-        from src.scoring.hourly import recommend_boards
+        from src.scoring.hourly import recommend_boards, tide_velocity_mh
 
         spectrum = state.wave_spectrum
         dominant = max(spectrum.peaks, key=lambda p: p.height_m) if spectrum.peaks else None
@@ -639,6 +705,16 @@ class SMSGenerator:
         # "rond hoog water", "afgaand tot 17u laag").
         hours_to_high = _hours_to(state.timestamp, state.tide.next_high)
         hours_to_low = _hours_to(state.timestamp, state.tide.next_low)
+
+        # Sprint 2 #11 — tide-flank features. Tide velocity (m/u) en is_rising
+        # boolean geven de LLM materiaal om referentie-forecaster-stijl te schrijven
+        # ("tij komt op stevig", "tij valt nog 2u").
+        is_rising = (state.tide.phase == "opgaand")
+        tide_vel = tide_velocity_mh(
+            state.tide.last_turn_time,
+            state.tide.next_turn_time,
+            state.tide.daily_range_m,
+        )
 
         # Board-aanbeveling: welke boards werken bij deze Hs/Tp/wind combo?
         # Lege lijst = niet surfbaar voor enig bord. De LLM mag deze lijst
@@ -665,6 +741,8 @@ class SMSGenerator:
             "wind_label": wind_label_for_noordwijk(state.wind.direction_deg),
             "tide_level_m": round(state.tide.level_m, 2),
             "tide_phase": state.tide.phase,
+            "tide_is_rising": is_rising,
+            "tide_velocity_mh": round(tide_vel, 2) if tide_vel > 0 else None,
             "hours_to_next_high": hours_to_high,
             "hours_to_next_low": hours_to_low,
             "tide_window_quality": _tide_window_quality(

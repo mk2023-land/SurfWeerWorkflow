@@ -22,6 +22,12 @@ from src.config import (
     SCORING_WEIGHTS,
     SURF_MINIMUMS,
     WIND_DIRECTIONS,
+    PARTITION_WEIGHTS,
+    TIDE_FLANK,
+    DIURNAL_WIND_DECAY,
+    WIND_SPREAD_THRESHOLDS,
+    PIER_REFRACTION,
+    SIZE_CAP_AGGREGATION,
 )
 
 
@@ -156,6 +162,119 @@ def iribarren_factor(hs_m: float, tp_s: float, beach_slope: float = 0.02) -> flo
     if xi < 0.80:
         return 1.10
     return 1.00
+
+
+def wind_spread_confidence(
+    speed_std_kn: Optional[float],
+    direction_spread_deg: Optional[float],
+) -> float:
+    """
+    Sprint 2 #8 — multiplier op golf_score op basis van model-spread.
+
+    Wanneer ECMWF / KNMI Harmonie / GFS-Wave duidelijk uiteenlopen, is er
+    sprake van synoptische onzekerheid (typisch bij frontpassages of
+    onbestendig weer). Pro-forecasters wegen dat zwaarder dan een single-
+    model output — referentie-forecaster' "modellen lopen uiteen, ik laat dit nog even
+    liggen" verwoording.
+
+    Spread > 5 kn of > 25° → start penalty (multiplier 1.0 → 0.85 lineair).
+    Maximum penalty bereikt bij 12 kn / 60° spread.
+
+    Returns multiplier in [0.85, 1.0]. Bij None / geen spread-info: 1.0.
+    """
+    if not speed_std_kn and not direction_spread_deg:
+        return 1.0
+
+    s_warn = WIND_SPREAD_THRESHOLDS['speed_kn_warning']
+    s_max = WIND_SPREAD_THRESHOLDS['speed_kn_max']
+    d_warn = WIND_SPREAD_THRESHOLDS['direction_deg_warning']
+    d_max = WIND_SPREAD_THRESHOLDS['direction_deg_max']
+    min_factor = WIND_SPREAD_THRESHOLDS['min_factor']
+
+    speed_severity = 0.0
+    if speed_std_kn is not None and speed_std_kn > s_warn:
+        speed_severity = min(1.0, (speed_std_kn - s_warn) / (s_max - s_warn))
+
+    dir_severity = 0.0
+    if direction_spread_deg is not None and direction_spread_deg > d_warn:
+        dir_severity = min(1.0, (direction_spread_deg - d_warn) / (d_max - d_warn))
+
+    severity = max(speed_severity, dir_severity)
+    if severity <= 0:
+        return 1.0
+    return 1.0 - severity * (1.0 - min_factor)
+
+
+def angular_spread_deg(directions_deg: list) -> float:
+    """
+    Bereken de spread tussen meerdere richting-waarden (°), rekening houdend
+    met de 360° wrap-around.
+
+    Aanpak: converteer naar eenheidsvectoren, neem het gemiddelde, bepaal
+    het mean-direction en de circular standard deviation.
+    Returns een hoek-spread in graden (0-180).
+    """
+    if not directions_deg or len(directions_deg) < 2:
+        return 0.0
+    rads = [math.radians(d % 360) for d in directions_deg]
+    sin_sum = sum(math.sin(r) for r in rads) / len(rads)
+    cos_sum = sum(math.cos(r) for r in rads) / len(rads)
+    R = math.sqrt(sin_sum ** 2 + cos_sum ** 2)  # mean resultant length
+    if R <= 0:
+        return 180.0
+    # Circular std-dev in radians: sqrt(-2 ln R). Capped voor numerieke stabiliteit.
+    R = min(R, 0.999999)
+    circ_std_rad = math.sqrt(-2.0 * math.log(R))
+    return math.degrees(circ_std_rad)
+
+
+def diurnal_wind_decay_kn(
+    timestamp: datetime,
+    wind_speed_kn: float,
+    cloud_cover_pct: Optional[float],
+) -> float:
+    """
+    Sprint 2 #12 — diurnal sea-breeze decay rond zonsondergang.
+
+    Empirische pro-forecaster regel: bij lage bewolking (<50%) ontstaat
+    overdag een land-zee thermische gradiënt die een sea-breeze van 2-3 kn
+    op de gemiddelde wind oplegt. Na zonsondergang valt dat thermische
+    veld weg (lucht boven land koelt af) en de effectieve wind aan de
+    kust daalt. referentie-forecaster' "na 19:30 valt de wind weg" verwoordt precies dit
+    fenomeen.
+
+    Window: sunset - 2u t/m sunset + 1u, alleen bij cloud_cover < 50%.
+    Effect: aftrek van ~2.5 kn op effectieve wind-snelheid (voor scoring,
+    niet als display-waarde naar de gebruiker).
+
+    Returns: gecorrigeerde wind_speed_kn (≥ 0).
+    """
+    if cloud_cover_pct is None or cloud_cover_pct >= DIURNAL_WIND_DECAY['max_cloud_cover_pct']:
+        return wind_speed_kn
+
+    from src.scoring.daylight import _sunrise_sunset_utc_hours
+    from src.util import to_utc
+
+    dt_utc = to_utc(timestamp)
+    _, sunset_utc_h = _sunrise_sunset_utc_hours(dt_utc.date())
+    hour_utc = dt_utc.hour + dt_utc.minute / 60.0
+
+    start_h = sunset_utc_h - DIURNAL_WIND_DECAY['hours_before_sunset']
+    end_h = sunset_utc_h + DIURNAL_WIND_DECAY['hours_after_sunset']
+
+    if not (start_h <= hour_utc <= end_h):
+        return wind_speed_kn
+
+    # Lineair "ramp-up" naar volledige reductie:
+    # bij sunset-2: factor 0 (geen reductie nog)
+    # bij sunset: factor 1.0 (volle reductie)
+    # bij sunset+1: factor 1.0
+    if hour_utc < sunset_utc_h:
+        ramp = (hour_utc - start_h) / DIURNAL_WIND_DECAY['hours_before_sunset']
+    else:
+        ramp = 1.0
+    reduction = ramp * DIURNAL_WIND_DECAY['speed_reduction_kn']
+    return max(0.0, wind_speed_kn - reduction)
 
 
 def wind_gust_penalty(wind_speed_kn: float, wind_gust_kn: Optional[float]) -> float:
@@ -457,37 +576,128 @@ def _period_factor(period_s: float) -> float:
     return 0.90
 
 
+def partition_energy_components(wave_spectrum: WaveSpectrum) -> dict:
+    """
+    Per-partition wave-energy decompositie (#10).
+
+    Splitst de spectrale energie naar swell-component (groundswell + lange
+    wind-swell) en wind-zee-component. Open-Meteo Marine leverde al beide
+    apart op (`swell_wave_*` en `wind_wave_*`), maar de oude scoring gebruikte
+    alleen `significant_height_total` — daardoor werd een 1,0m wave-veld dat
+    bestond uit 0,7m clean swell + 0,7m wind-chop identiek gescoord als
+    1,0m pure wind-chop.
+
+    Returns dict met:
+      swell_energy_kwm     : kW/m wave-energy flux voor swell-partitie
+      wind_sea_energy_kwm  : idem voor wind-zee-partitie
+      swell_height_m       : Hs van swell-partitie (0 als geen swell)
+      wind_sea_height_m    : Hs van wind-zee-partitie (0 als geen wind-zee)
+      dominant_period_s    : Tp van zwaarste partitie (voor period_factor)
+      effective_height_m   : "rideability-gewogen" totale hoogte (sqrt(E)),
+                             dit is de hoogte die we als basis voor de
+                             height-score gebruiken — wind-zee draagt met
+                             0.65 multiplier bij, swell met 1.0.
+    """
+    decomposition = decompose_spectrum(wave_spectrum)
+
+    # Swell-partitie = groundswell + wind_swell (alles ≥7s)
+    swell_h = 0.0
+    swell_T = 0.0
+    if decomposition['ground_swell']:
+        gs = decomposition['ground_swell']
+        # Wanneer ground + wind_swell beide bestaan: combineer kwadratisch
+        if decomposition['wind_swell']:
+            ws_swell = decomposition['wind_swell']
+            swell_h = math.sqrt(gs.height_m ** 2 + ws_swell.height_m ** 2)
+            # Energy-weighted average period — zwaarder gewicht op grootste
+            e_gs = gs.height_m ** 2 * gs.period_s
+            e_ws = ws_swell.height_m ** 2 * ws_swell.period_s
+            swell_T = (e_gs + e_ws) / (gs.height_m ** 2 + ws_swell.height_m ** 2) if (gs.height_m + ws_swell.height_m) > 0 else 0
+        else:
+            swell_h = gs.height_m
+            swell_T = gs.period_s
+    elif decomposition['wind_swell']:
+        ws = decomposition['wind_swell']
+        swell_h = ws.height_m
+        swell_T = ws.period_s
+
+    wind_h = 0.0
+    wind_T = 0.0
+    if decomposition['wind_sea']:
+        wsea = decomposition['wind_sea']
+        wind_h = wsea.height_m
+        wind_T = wsea.period_s
+
+    swell_energy = wave_energy_flux(swell_h, swell_T) if swell_h > 0 and swell_T > 0 else 0.0
+    wind_energy = wave_energy_flux(wind_h, wind_T) if wind_h > 0 and wind_T > 0 else 0.0
+
+    # Effectieve hoogte: gewogen kwadratische som per partitie. Sqrt(E_total)
+    # met E_total = swell_E + wind_E × multiplier.
+    # Wind-zee multiplier 0.65 betekent: 1m wind-chop telt voor scoring als
+    # 0.81m equivalente swell-hoogte (sqrt(0.65) ≈ 0.806).
+    swell_e_h_sq = swell_h ** 2 * PARTITION_WEIGHTS['swell_multiplier']
+    wind_e_h_sq = wind_h ** 2 * PARTITION_WEIGHTS['wind_sea_multiplier']
+    eff_height = math.sqrt(swell_e_h_sq + wind_e_h_sq)
+
+    # Fallback: bij geen partities (legacy data of test-fixture zonder peaks)
+    # gebruiken we significant_height_total met multiplier 0.80 — neutraal
+    # tussen pure swell (1.0) en wind-zee (0.65). Voorkomt dat een spectrum
+    # zonder peaks een 0-score krijgt terwijl Hs wel rapporteert.
+    if eff_height < 0.01 and wave_spectrum.significant_height_total > 0:
+        eff_height = wave_spectrum.significant_height_total * 0.90
+
+    # Dominante periode: pak de partitie met grootste energy contributie
+    if swell_energy >= wind_energy and swell_T > 0:
+        dominant_T = swell_T
+    elif wind_T > 0:
+        dominant_T = wind_T
+    elif wave_spectrum.peaks:
+        dominant = max(wave_spectrum.peaks, key=lambda p: p.height_m)
+        dominant_T = dominant.period_s
+    else:
+        dominant_T = wave_spectrum.mean_period or 5.0
+
+    return {
+        'swell_energy_kwm': swell_energy,
+        'wind_sea_energy_kwm': wind_energy,
+        'swell_height_m': swell_h,
+        'swell_period_s': swell_T,
+        'wind_sea_height_m': wind_h,
+        'wind_sea_period_s': wind_T,
+        'dominant_period_s': dominant_T,
+        'effective_height_m': eff_height,
+    }
+
+
 def score_golf_component(wave_spectrum: WaveSpectrum) -> float:
     """
     Bereken golf score (max SCORING_WEIGHTS['golf_max']).
 
-    Factoren:
-    - Totale hoogte (0-1.0m = 0-20pt, 1.0-2.0m = 20-40pt, >2.0m = 40pt)
-    - Periode-factor (continue curve, optimum 7-13s — zie `_period_factor`)
-    - Groundswell door wind sea bonus (+1pt)
-    - Clean swell bonus (+1pt)
+    Sprint 2 partition-aware refactor (#10):
+    - Hoogte-basis = `effective_height_m` uit `partition_energy_components`,
+      d.w.z. swell + 0.65×wind-zee gewogen kwadratisch. Een 1m wind-chop
+      veld scoort lager dan 1m clean swell.
+    - Periode-factor uit zwaarste partitie (swell > wind_sea bij gelijke E).
+    - Ridersguide-regel: secundaire goed-georiënteerde swell verhoogt
+      `effective_height_m` boven dominant_height — een 1.0m wind-chop met
+      0.5m@8s NW swell scoort hoger dan pure 1.0m wind-chop.
 
-    Periode komt uit de dominante (hoogste) spectrale piek; bij geen pieken
-    gebruiken we de Tm02 mean_period uit het spectrum.
+    Behoudt: T4 groundswell-through-windsea bonus, clean swell bonus.
     """
     decomposition = decompose_spectrum(wave_spectrum)
-    total_height = decomposition['total_height']
+    partitions = partition_energy_components(wave_spectrum)
+    eff_height = partitions['effective_height_m']
 
-    if total_height < 0.5:
+    if eff_height < 0.5:
         height_score = 0
-    elif total_height < 1.0:
-        height_score = (total_height - 0.5) * 40
-    elif total_height < 2.0:
-        height_score = 20 + (total_height - 1.0) * 20
+    elif eff_height < 1.0:
+        height_score = (eff_height - 0.5) * 40
+    elif eff_height < 2.0:
+        height_score = 20 + (eff_height - 1.0) * 20
     else:
         height_score = 40
 
-    # Periode uit dominante piek; fallback mean_period
-    if wave_spectrum.peaks:
-        dominant = max(wave_spectrum.peaks, key=lambda p: p.height_m)
-        T = dominant.period_s
-    else:
-        T = wave_spectrum.mean_period or 5.0
+    T = partitions['dominant_period_s']
 
     height_score *= _period_factor(T)
 
@@ -558,6 +768,66 @@ def score_wind_component(wind_speed_kn: float, wind_direction_deg: int) -> float
     direction_bonus = 7.0 * cos_term
 
     return max(0.0, min(SCORING_WEIGHTS['wind_max'], speed_score + direction_bonus))
+
+
+def tide_flank_bonus(
+    tide_level_normalized: float,
+    is_rising: bool,
+) -> float:
+    """
+    Sprint 2 #11 — bonus voor mid-tide flank.
+
+    Sweet spot voor de meeste NL beachbreaks volgens pro-forecaster lore
+    (zie research_pro_forecaster_methods.md mechanism 7):
+    - Mid-tide rising = sandbank krijgt vol energie, zandbanken werken
+      optimaal want het water bouwt zich op. Bonus +2pt.
+    - Mid-tide falling = ook surfbaar maar zandbanken raken bloot, de wave
+      verliest energie sneller. Bonus +1pt.
+    - Buiten mid-tide of buiten flanken: 0 bonus.
+
+    Grenzen: 0.40 ≤ norm ≤ 0.70 = "mid-tide" venster.
+    """
+    if not (TIDE_FLANK['mid_low'] <= tide_level_normalized <= TIDE_FLANK['mid_high']):
+        return 0.0
+    return TIDE_FLANK['mid_rising_bonus'] if is_rising else TIDE_FLANK['mid_falling_bonus']
+
+
+def tide_velocity_mh(
+    last_turn_time: Optional[datetime],
+    next_turn_time: Optional[datetime],
+    tide_range_m: Optional[float],
+) -> float:
+    """
+    Schatting van verticale tij-snelheid (m/u) op het huidige moment.
+
+    Halve cyclus duurt ~6.2u (NL). Sinusoïdale beweging tussen kentering en
+    kentering, dus piek-snelheid (mid-cycle) = π × range / (2 × half_cycle_h).
+
+    Returns signed float (positief = rising, negatief = falling) als
+    `is_rising` apart wordt afgeleid. Hier returnen we de absolute snelheid;
+    caller bepaalt richting via `phase`.
+
+    Bij ontbrekende info: returnt 0.0.
+    """
+    if not (last_turn_time and next_turn_time and tide_range_m):
+        return 0.0
+    if last_turn_time.tzinfo:
+        last = last_turn_time.replace(tzinfo=None)
+    else:
+        last = last_turn_time
+    if next_turn_time.tzinfo:
+        nxt = next_turn_time.replace(tzinfo=None)
+    else:
+        nxt = next_turn_time
+    half_cycle_h = (nxt - last).total_seconds() / 3600.0
+    if half_cycle_h <= 0:
+        return 0.0
+    # Piek-snelheid (mid-cycle, sinus-derivative) in m/u
+    peak_velocity_mh = math.pi * tide_range_m / (2.0 * half_cycle_h)
+    # Approximatie: huidige snelheid varieert sinusoïdaal van 0 → peak → 0.
+    # Caller kan via tidal_current_intensity al moment-fractie afleiden.
+    # Voor LLM is een gemiddelde benadering voldoende: peak_velocity zelf.
+    return peak_velocity_mh
 
 
 def score_tide_component(
@@ -640,47 +910,102 @@ def score_tide_component(
     # nauwelijks penalty, mid-cycle krijgt vol penalty.
     current_penalty = -8.0 * (tidal_current_intensity ** 2)
 
-    total = level_score + phase_bonus + timing_bonus + current_penalty
+    # 7) Tide-flank bonus (#11): mid-rising sweet spot voor NL beachbreaks.
+    # Geldt alleen binnen het mid-tide niveau-venster (0.40-0.70 standaard),
+    # ongeacht period_factor venster. Rising krijgt vol +2, falling +1.
+    is_rising = (tide_phase == "opgaand")
+    flank_bonus = tide_flank_bonus(tide_level_normalized, is_rising)
+
+    total = level_score + phase_bonus + timing_bonus + current_penalty + flank_bonus
     return max(0.0, min(SCORING_WEIGHTS['tide_max'], total))
 
 
-def score_swell_direction_bonus(swell_direction_deg: int) -> float:
+def pier_transmission_factor(swell_direction_deg: int, period_s: float = 7.0) -> float:
+    """
+    Sprint 2 #9 — continue refractie-factor voor pier-shadow.
+
+    Vervangt de oude binaire `blocked_swell_dir_min..max` knip. Pier-shadow
+    center op ~10° NNO (geometrisch tussen IJmuiden-pier en Noordwijk).
+    Buiten ±25° voorbij shadow center: vrijwel geen blokkade.
+
+    Gaussian-achtige transmission curve:
+        T(dir) = T_min + (T_max - T_min) × (1 - exp(-(Δ/σ)²))
+    waarbij Δ = angular afstand tot shadow center, σ = shadow_half_width_deg.
+
+    Periode-modifier: lange-periode swell (Tp ≥ 10s) refracteert beter
+    rond obstakels (kleinere k = grotere refractie-radius). Bij Tp ≥ 10s
+    krijgt de transmissie +15% (gecapt op 1.0).
+
+    Returns:
+        Transmission-factor in [PIER_REFRACTION['min_transmission'], 1.0].
+        1.0 = geen blokkade. 0.10 = 90% energie geblokkeerd.
+
+    Voorbeelden:
+        dir=10° (shadow center), Tp=6s → ~0.10 (zwaar geblokkeerd)
+        dir=15° (5° offset), Tp=6s → ~0.34
+        dir=25° (15° offset), Tp=6s → ~0.83
+        dir=0° (N), Tp=8s → ~0.51 (matig)
+        dir=0° (N), Tp=10s → ~0.66 (lange-periode bonus)
+        dir=45° (NO), Tp=6s → ~1.00 (vol)
+    """
+    d = swell_direction_deg % 360
+    center = PIER_REFRACTION['shadow_center_deg']
+    sigma = PIER_REFRACTION['shadow_half_width_deg']
+    t_min = PIER_REFRACTION['min_transmission']
+    t_max = PIER_REFRACTION['max_transmission']
+
+    # Korte angular afstand tot shadow center (modulo 360, korte zijde)
+    raw = (d - center) % 360
+    delta = min(raw, 360 - raw)
+
+    # Gaussian transmission: T → t_min in center, → t_max ver weg
+    gaussian = math.exp(-(delta / sigma) ** 2)
+    transmission = t_max - (t_max - t_min) * gaussian
+
+    # Lange-periode bonus: groundswell (Tp ≥ 10s) refracteert beter
+    if period_s >= 10.0:
+        bonus = PIER_REFRACTION['long_period_bonus']
+        # Schaal bonus zodat geen reductie áboven 1.0 maar wel echte
+        # verlichting in shadow center. Eindwaarde gecapt op 1.0.
+        transmission = min(1.0, transmission + bonus * (1.0 - transmission))
+
+    return max(t_min, min(1.0, transmission))
+
+
+def score_swell_direction_bonus(swell_direction_deg: int, period_s: float = 7.0) -> float:
     """
     Bereken swell richting bonus voor Noordwijk (max 10 punten).
 
-    Geblokkeerde sector (pier IJmuiden) krijgt 0 punten. Buiten dat gelden
-    voorkeuren: klassieke NL swell (W/NW/N) hoog, NO redelijk, zuid laag.
+    Sprint 2 #9 vervangt de oude binaire pier-blockade door een continue
+    pier-transmission-factor. De richting-bonus (klassieke NL voorkeur
+    W/NW/N) wordt vermenigvuldigd met deze factor: bij exact-NNO-swell
+    daalt de bonus naar ~10% van de raw waarde; bij N (0°) met lange
+    periode komt nog ~50-60% door.
+
+    `period_s` is de zwaarste swell-periode (default 7s als onbekend);
+    bij Tp ≥ 10s krijgt de transmissie een refractie-bonus.
+
+    Behoudt de bestaande directionele preferenties; de pier-factor schaalt
+    ze tot een fractionele bonus.
     """
     direction = swell_direction_deg % 360
 
-    # Geblokkeerd door obstakels (bv. pier van IJmuiden): wrap-around-range.
-    blocked_min = NOORDWIJK.blocked_swell_dir_min
-    blocked_max = NOORDWIJK.blocked_swell_dir_max
-    if not (blocked_min == 0 and blocked_max == 0):
-        if blocked_min <= blocked_max:
-            is_blocked = blocked_min <= direction <= blocked_max
-        else:  # wrap-around: bv. 350-30 → 350-360 én 0-30
-            is_blocked = direction >= blocked_min or direction <= blocked_max
-        if is_blocked:
-            return 0.0
+    # Continue pier-transmission (Sprint 2 #9): vervangt binaire blocked-sector
+    transmission = pier_transmission_factor(direction, period_s)
 
-    # Beste richtingen: W -> N
+    # Raw richtings-preferentie (continue mapping vergelijkbaar met oude versie)
     if 270 <= direction <= 360:
-        return 10.0
+        raw = 10.0
+    elif 45 <= direction <= 90:
+        raw = 8.0
+    elif 0 <= direction <= 45 or 90 <= direction <= 135:
+        raw = 5.0
+    elif 135 <= direction <= 225:
+        raw = 3.0
+    else:
+        raw = 5.0
 
-    # Goede richtingen: NO/ONO
-    if 45 <= direction <= 90:
-        return 8.0
-
-    # Redelijke richtingen: NNO (niet geblokkeerd deel) / O / ZO
-    if 0 <= direction <= 45 or 90 <= direction <= 135:
-        return 5.0
-
-    # Mindere richtingen: Z/ZZO/ZZW
-    if 135 <= direction <= 225:
-        return 3.0
-
-    return 5.0
+    return raw * transmission
 
 
 def _dominant_period_for_tide(spectrum: WaveSpectrum) -> float:
@@ -798,14 +1123,41 @@ def score_hour(state: HourState, context: Optional[dict] = None) -> ScoreBreakdo
         )
         golf_score *= trend
 
-    # Wind component
-    wind_score = score_wind_component(state.wind.speed_kn, state.wind.direction_deg)
+    # Diurnal wind decay (#12): bij lage bewolking + 2u rond sunset valt
+    # de thermische sea-breeze-component weg. Aftrek op effectieve wind-
+    # snelheid voor scoring (niet voor display). Cloud_cover komt via context
+    # mee uit Open-Meteo forecast — fallback: geen decay.
+    cloud_cover_pct = None
+    if context:
+        cloud_cover_pct = context.get('cloud_cover_pct')
+    effective_wind_kn = diurnal_wind_decay_kn(
+        state.timestamp, state.wind.speed_kn, cloud_cover_pct
+    )
+
+    # Wind component (gebruikt effective wind ná diurnal-decay)
+    wind_score = score_wind_component(effective_wind_kn, state.wind.direction_deg)
 
     # Wind-gust ratio penalty: vlagerige wind (gust/sustained > 1.3) = chop
     # op de face, onbetrouwbaar windveld. referentie-forecaster' "vlagerig" — extra penalty
-    # bovenop normale wind-score.
+    # bovenop normale wind-score. Gust gebruikt actual wind_speed (raw),
+    # niet de diurnal-decay versie, omdat de ratio iets zegt over
+    # turbulentie en die wijzigt niet door thermische effecten.
     gust_pen = wind_gust_penalty(state.wind.speed_kn, state.wind.gusts_kn)
     wind_score = max(0.0, wind_score + gust_pen)
+
+    # Multi-model wind-spread confidence-penalty (#8): bij hoge spread
+    # tussen ECMWF/KNMI/GFS wind-voorspellingen is de wind onzeker en
+    # daalt het vertrouwen in de hele forecast. Dit komt vooral voor bij
+    # frontpassages. Effect: multiplier op golf_score (niet wind_score)
+    # omdat ook de wave-respons indirect onzeker wordt.
+    if context:
+        spread = context.get('wind_spread') or {}
+        conf_mult = wind_spread_confidence(
+            spread.get('speed_std_kn'),
+            spread.get('direction_spread_deg'),
+        )
+        if conf_mult < 1.0:
+            golf_score *= conf_mult
 
     # Drukgradiënt-derivative: synoptische storing detectie. Sterke druk-
     # verandering (>1.5 hPa/uur over 3u) = front/trog-passage = instabiele
@@ -830,20 +1182,27 @@ def score_hour(state: HourState, context: Optional[dict] = None) -> ScoreBreakdo
         tidal_current_intensity=tidal_current,
     )
 
-    # Swell richting bonus (gebruik dominant swell richting)
+    # Swell richting bonus (gebruik dominant swell richting). Pier-refractie
+    # is nu periode-afhankelijk (#9): groundswell refracteert beter rond
+    # obstakels dan wind-zee.
     decomposition = decompose_spectrum(state.wave_spectrum)
     swell_dir_deg = 0
+    swell_period_s = 7.0
 
     if decomposition['ground_swell']:
         swell_dir_deg = decomposition['ground_swell'].direction_deg
+        swell_period_s = decomposition['ground_swell'].period_s
     elif decomposition['wind_swell']:
         swell_dir_deg = decomposition['wind_swell'].direction_deg
+        swell_period_s = decomposition['wind_swell'].period_s
     elif decomposition['wind_sea']:
         swell_dir_deg = decomposition['wind_sea'].direction_deg
+        swell_period_s = decomposition['wind_sea'].period_s
     else:
         swell_dir_deg = state.wave_spectrum.mean_direction
+        swell_period_s = state.wave_spectrum.mean_period or 7.0
 
-    swell_dir_bonus = score_swell_direction_bonus(swell_dir_deg)
+    swell_dir_bonus = score_swell_direction_bonus(swell_dir_deg, period_s=swell_period_s)
 
     return ScoreBreakdown(
         timestamp=state.timestamp,
@@ -854,7 +1213,78 @@ def score_hour(state: HourState, context: Optional[dict] = None) -> ScoreBreakdo
     )
 
 
-def score_hour_series(states: list, pressure_series: list = None) -> list:
+def compute_wind_spread_per_hour(model_forecasts: dict) -> list:
+    """
+    Sprint 2 #8 — bereken per uur de spread tussen meerdere wind-modellen.
+
+    Args:
+        model_forecasts: dict van model-naam → lijst van hourly dicts met
+            'timestamp', 'wind_speed', 'wind_direction'. Bijvoorbeeld output
+            van OpenMeteoClient.fetch_forecast_data.
+
+    Returns:
+        Lijst dicts (één per uur, geïndexeerd op tijd van het eerste model):
+            {
+                'timestamp': datetime,
+                'speed_std_kn': float (sample std-dev),
+                'speed_max_min_kn': float (range, alternatief),
+                'direction_spread_deg': float (circular std),
+                'n_models': int,
+            }
+    """
+    if not model_forecasts:
+        return []
+
+    # Pak alle modellen, gebruik de eerste als index. Aanname: alle modellen
+    # hebben identieke tijd-as (één API call) — Open-Meteo doet dit zo.
+    model_names = list(model_forecasts.keys())
+    if not model_names:
+        return []
+    base = model_forecasts[model_names[0]]
+    n_hours = len(base)
+
+    out = []
+    for i in range(n_hours):
+        speeds = []
+        directions = []
+        for name in model_names:
+            ser = model_forecasts.get(name) or []
+            if i >= len(ser):
+                continue
+            row = ser[i]
+            sp = row.get('wind_speed')
+            di = row.get('wind_direction')
+            if sp is not None:
+                speeds.append(float(sp))
+            if di is not None:
+                directions.append(float(di))
+
+        if len(speeds) >= 2:
+            mean_sp = sum(speeds) / len(speeds)
+            speed_std = math.sqrt(sum((x - mean_sp) ** 2 for x in speeds) / len(speeds))
+            speed_range = max(speeds) - min(speeds)
+        else:
+            speed_std = 0.0
+            speed_range = 0.0
+
+        dir_spread = angular_spread_deg(directions) if len(directions) >= 2 else 0.0
+
+        out.append({
+            'timestamp': base[i]['timestamp'],
+            'speed_std_kn': speed_std,
+            'speed_max_min_kn': speed_range,
+            'direction_spread_deg': dir_spread,
+            'n_models': len(speeds),
+        })
+    return out
+
+
+def score_hour_series(
+    states: list,
+    pressure_series: list = None,
+    cloud_cover_series: list = None,
+    wind_spread_series: list = None,
+) -> list:
     """
     Score een tijdreeks van HourStates met wind-trend EN druk-gradient context.
 
@@ -867,6 +1297,11 @@ def score_hour_series(states: list, pressure_series: list = None) -> list:
         pressure_series: optionele parallelle lijst druk-waarden (hPa) voor
             elke state. Gebruikt voor pressure_gradient_factor. Als None of
             mismatching length: drukgradient wordt niet toegepast.
+        cloud_cover_series: optionele parallelle lijst cloud_cover (%) per
+            uur. Gebruikt voor diurnal-wind-decay (#12).
+        wind_spread_series: optionele parallelle lijst dicts met spread-
+            informatie (output van compute_wind_spread_per_hour). Gebruikt
+            voor multi-model confidence-penalty (#8).
 
     Aanbevolen entrypoint voor multi-uurs scoring; score_hour() blijft
     direct bruikbaar voor single-hour use (zonder trend/gradient).
@@ -874,6 +1309,12 @@ def score_hour_series(states: list, pressure_series: list = None) -> list:
     scores = []
     have_pressure = (
         pressure_series is not None and len(pressure_series) == len(states)
+    )
+    have_cloud = (
+        cloud_cover_series is not None and len(cloud_cover_series) == len(states)
+    )
+    have_spread = (
+        wind_spread_series is not None and len(wind_spread_series) == len(states)
     )
     for i, state in enumerate(states):
         # Pak vorige 2 uur voor wind/wave trend (3-uurs venster met huidige).
@@ -892,6 +1333,10 @@ def score_hour_series(states: list, pressure_series: list = None) -> list:
             while len(p_hist) < 4:
                 p_hist = [p_hist[0]] + p_hist
             ctx['pressure_history_hpa'] = p_hist
+        if have_cloud:
+            ctx['cloud_cover_pct'] = cloud_cover_series[i]
+        if have_spread:
+            ctx['wind_spread'] = wind_spread_series[i]
 
         scores.append(score_hour(state, context=ctx))
     return scores

@@ -213,17 +213,68 @@ class ScoreBreakdown:
     tide_score: float        # max 15
     swell_dir_bonus: float   # max 10
 
+    # Probabilistische confidence (Sprint 3 #17). Default 1.0 = volle vertrouwen.
+    # Sprint 2 (multi-model wind-spread) zet deze lager bij grote inter-model
+    # afwijking. Sprint 3 levert hier alleen de struct: LLM-input vertaalt
+    # >=0.85 → "hoog", >=0.65 → "matig", anders "laag".
+    confidence: float = 1.0
+
     @property
     def total_score(self) -> float:
         """
         Totale score 0-100.
+
+        Sprint 2 #13 — hard size-cap met multiplicatieve aggregation.
+
+        Industry consensus (Surfline LOTUS, MSW): wind/tide/dir mogen nooit
+        een te kleine wave naar "epic" tillen. Een 0.5m golf bij perfecte
+        offshore + perfect tij + perfect richting mag GEEN 60+ score halen.
+
+        Aanpak: bereken zowel additief als multiplicatief, neem het minimum
+        van beide. Dat houdt het additieve maximum behouden voor grote
+        golven (waar de oude tests op gekalibreerd zijn) maar legt een
+        fysisch correct plafond op wanneer de golf marginaal is.
+
+        - Additief: golf + wind + tide + dir  (oude formule, behouden)
+        - Multiplicatief: golf × (1 + env_bonus) met env_bonus ∈ [0, 1]
+          afgeleid uit (wind+tide+dir) / max_env. Zo schaalt het plafond
+          met de wave-size: 5pt golf met perfecte environmentals → max 10pt;
+          25pt golf met perfecte environmentals → max 50pt; 38pt golf
+          (cap) → max 76pt (geen knip beneden additief maximum).
 
         Zonder golven (golf_score < 1) tellen wind/tij/richting niet mee —
         vlak water blijft onsurfbaar ongeacht offshore wind of perfect tij.
         """
         if self.golf_score < 1:
             return round(self.golf_score, 1)
-        return round(self.golf_score + self.wind_score + self.tide_score + self.swell_dir_bonus, 1)
+
+        # Additieve formule (oude versie behouden voor grote golven)
+        additive = self.golf_score + self.wind_score + self.tide_score + self.swell_dir_bonus
+
+        # Multiplicatieve formule (#13): env_bonus 0..env_bonus_cap
+        from src.config import SCORING_WEIGHTS, SIZE_CAP_AGGREGATION
+        if not SIZE_CAP_AGGREGATION['use_multiplicative']:
+            return round(additive, 1)
+
+        env_max = (
+            SCORING_WEIGHTS['wind_max']
+            + SCORING_WEIGHTS['tide_max']
+            + SCORING_WEIGHTS['swell_dir_max']
+        )
+        env_score = self.wind_score + self.tide_score + self.swell_dir_bonus
+        # env_fraction in [0, 1] (hoe goed scoort de omgeving)
+        env_fraction = (env_score / env_max) if env_max > 0 else 0.0
+        # env_bonus schaalt env_fraction lineair naar [0, env_bonus_cap].
+        # Met cap=2.5 bereikt perfect environment 2.5× multiplier op de golf.
+        env_bonus = SIZE_CAP_AGGREGATION['env_bonus_cap'] * env_fraction
+        multiplicative = self.golf_score * (1.0 + env_bonus)
+
+        # Hard size-cap: neem het MINIMUM van additief en multiplicatief.
+        # - Bij grote golven (golf ≥ 30): additief is de bottleneck (~96).
+        # - Bij marginale golven (golf < 10): multiplicatief is de bottleneck,
+        #   wat voorkomt dat een 0.4m wave met perfect environment naar 60+ stijgt.
+        total = min(additive, multiplicative)
+        return round(total, 1)
 
     def is_surfable(self) -> bool:
         """

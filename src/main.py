@@ -36,7 +36,12 @@ from data.sources.open_meteo import fetch_all_openmeteo_data, OpenMeteoClient
 from data.sources.rws import fetch_all_rws_data, RWSClient, tide_state_at
 
 from scoring.deconstruct import decompose_spectrum
-from scoring.hourly import score_hour, calculate_confidence
+from scoring.hourly import (
+    score_hour,
+    score_hour_series,
+    calculate_confidence,
+    compute_wind_spread_per_hour,
+)
 from scoring.windows import analyze_windows, filter_alertworthy_windows
 
 from alerts.engine import AlertEngine
@@ -69,6 +74,7 @@ class SurfAlertSystem:
         self.sms_generator = SMSGenerator()
         self.sms_validator = SMSValidator()
         self.notifier = get_notifier()
+        self._last_wind_spread_full: Optional[List[Dict]] = None
         logger.info(f"Notifier kanaal: {self.notifier.channel}")
 
         # Zorg dat data directory bestaat
@@ -122,9 +128,36 @@ class SurfAlertSystem:
                 run_log.error = "No data available"
                 return run_log
 
-            # Stap 3: Score elk uur
+            # Stap 3: Score elk uur — Sprint 2 stack via score_hour_series
+            # met pressure-, cloud- en wind-spread-series voor context.
             logger.info("Scoring hours...")
-            hourly_scores = [score_hour(state) for state in hour_states]
+            forecast_by_model = (openmeteo_data or {}).get('forecast') or {}
+            primary_model = forecast_by_model.get('knmi_seamless') or []
+
+            # Sprint 2 #8 — bereken per-uur wind-spread tussen modellen
+            wind_spread_full = compute_wind_spread_per_hour(forecast_by_model)
+            spread_by_ts = {entry['timestamp']: entry for entry in wind_spread_full}
+
+            # Bouw parallel series (alleen voor uren die ook in hour_states zitten)
+            pressure_series = []
+            cloud_series = []
+            wind_spread_series = []
+            primary_by_ts = {row['timestamp']: row for row in primary_model}
+            for st in hour_states:
+                row = primary_by_ts.get(st.timestamp) or {}
+                pressure_series.append(row.get('pressure') or 1013.0)
+                cloud_series.append(row.get('cloud_cover'))
+                wind_spread_series.append(spread_by_ts.get(st.timestamp) or {})
+
+            hourly_scores = score_hour_series(
+                hour_states,
+                pressure_series=pressure_series,
+                cloud_cover_series=cloud_series,
+                wind_spread_series=wind_spread_series,
+            )
+
+            # Bewaar voor _handle_digest (Sprint 2 #8 — model spread → LLM)
+            self._last_wind_spread_full = wind_spread_full
 
             # Stap 4: Analyseer windows
             logger.info("Analyzing surf windows...")
@@ -146,6 +179,31 @@ class SurfAlertSystem:
                 'A12': rws_data['early_warning_buoys']['A12']['spectra'] if rws_data.get('early_warning_buoys') else [],
                 'K13': rws_data['early_warning_buoys']['K13']['spectra'] if rws_data.get('early_warning_buoys') else []
             }
+
+            # Sprint 3 #15 — append A12/K13 spectrum-snapshots naar history-jsonl
+            # voor T1 swell-arrival detectie. Stille fail bij missing data.
+            try:
+                from src.scoring.trigger_T1 import append_buoy_snapshot
+                append_buoy_snapshot({
+                    'A12': buoy_history.get('A12') or [],
+                    'K13': buoy_history.get('K13') or [],
+                })
+            except Exception as e:
+                logger.warning(f"Buoy spectra history append failed: {e}")
+
+            # Sprint 3 #16 — bias-log voor lange-termijn learning. Pakt model
+            # marine-data + actuele boei-rows.
+            try:
+                from src.scoring.bias_correction import log_bias_observation
+                marine_rows = (openmeteo_data or {}).get('marine') or []
+                actual_obs = {
+                    'IJG1': (rws_data.get('primary_buoy') or {}).get('raw_data') or [],
+                    'A12':  ((rws_data.get('early_warning_buoys') or {}).get('A12') or {}).get('raw_data') or [],
+                    'K13':  ((rws_data.get('early_warning_buoys') or {}).get('K13') or {}).get('raw_data') or [],
+                }
+                log_bias_observation(datetime.now(), marine_rows, actual_obs)
+            except Exception as e:
+                logger.warning(f"Bias log write failed: {e}")
 
             triggered_alerts = detector_engine.detect_all(
                 forecast, history, buoy_history, windows
@@ -177,7 +235,14 @@ class SurfAlertSystem:
                 result = self._handle_digest(hour_states, hourly_scores, windows)
                 run_log.sms_sent = format_send_result_for_logging(result)
                 run_log.llm_used = True
-                self.alert_engine.record_digest_sent()
+                # MANUAL_RUN=true (set door workflow_dispatch / lokale tests):
+                # verstuur wel maar pollueer state.last_digest_time NIET zodat
+                # de eerstvolgende scheduled cron-run niet onterecht geblokkeerd
+                # wordt door "vandaag al verstuurd"-check.
+                if os.getenv('MANUAL_RUN', '').lower() not in ('true', '1', 'yes'):
+                    self.alert_engine.record_digest_sent()
+                else:
+                    logger.info("MANUAL_RUN=true → state.last_digest_time NIET geüpdatet")
 
             else:
                 logger.info(f"No action: {decision.skip_reason}")
@@ -284,7 +349,8 @@ class SurfAlertSystem:
         }
 
         sms_text = self.sms_generator.generate_digest_sms(
-            hour_states, hourly_scores, windows, forecast_summary
+            hour_states, hourly_scores, windows, forecast_summary,
+            wind_spread_series=getattr(self, '_last_wind_spread_full', None),
         )
 
         format_ok = self.sms_validator.validate_digest_format(sms_text)

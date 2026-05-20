@@ -7,12 +7,12 @@
 
 ## 0. Bronnen die in dit plan gesynthetiseerd zijn
 
-1. **`research_gap_analysis.md`** (4411 woorden) — Per-case gap-analyse referentie-forecaster' 13 historische SMSes + woensdag 20 mei
-2. **`research_industry_models.md`** (5750 woorden) — Surfline LOTUS, Magicseaweed, Stormsurf, Surf-Forecast.com, Windguru, NL-diensten
-3. **`research_pro_forecaster_methods.md`** (6600 woorden) — WSL, Pat Caldwell, Sean Collins, wave physics, NL-specifiek
-4. **`research_academic_ml.md`** (4100 woorden) — WW3/SWAN/ECWAM, XGBoost bias correction, ML approaches, EMODnet bathymetrie
+1. **`gap_analysis.md`** (4411 woorden) — Per-case gap-analyse referentie-forecaster' 13 historische SMSes + woensdag 20 mei
+2. **`industry_models.md`** (5750 woorden) — Surfline LOTUS, Magicseaweed, Stormsurf, Surf-Forecast.com, Windguru, NL-diensten
+3. **`pro_forecaster_methods.md`** (6600 woorden) — WSL, Pat Caldwell, Sean Collins, wave physics, NL-specifiek
+4. **`academic_ml.md`** (4100 woorden) — WW3/SWAN/ECWAM, XGBoost bias correction, ML approaches, EMODnet bathymetrie
 
-Plus eerder onderzoek: `research_wave_physics_benchmark.md`, `research_reference_methodology.md`, `research_benchmark_comparison.md`.
+Plus eerder onderzoek: `wave_physics_benchmark.md`, `reference_methodology.md`, `benchmark_comparison.md`.
 
 ---
 

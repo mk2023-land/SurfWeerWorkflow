@@ -4,7 +4,7 @@
 
 **Datum analyse:** 19 mei 2026, met case-set woensdag 20 mei 2026 + 12 historische SMS-dagen uit `noordwijk-surf-alert-plan-v3.md`.
 
-**Niet in scope:** alles wat al gedicht is volgens het ADDENDUM in `research_benchmark_comparison.md` (anti-hallucinatie, daglicht-filter, longboard-threshold, periode-optimumcurve, tidal-current penalty). Die fixes zitten nu in `src/scoring/hourly.py`, `src/llm/generator.py`, `src/config.py` en zijn op zichzelf adequaat. De analyse hieronder gaat over wat *daarna* nog structureel mist.
+**Niet in scope:** alles wat al gedicht is volgens het ADDENDUM in `benchmark_comparison.md` (anti-hallucinatie, daglicht-filter, longboard-threshold, periode-optimumcurve, tidal-current penalty). Die fixes zitten nu in `src/scoring/hourly.py`, `src/llm/generator.py`, `src/config.py` en zijn op zichzelf adequaat. De analyse hieronder gaat over wat *daarna* nog structureel mist.
 
 ---
 
@@ -378,14 +378,14 @@ Na Sprint 1+2 zou de benchmark-score van 23/24 (huidig na blok 2) naar 27-28/30 
 
 ## Bronnen geraadpleegd voor deze analyse
 
-- `research_wave_physics_benchmark.md` (intern, internationale wave physics)
-- `research_reference_methodology.md` (intern, reverse-engineering referentie-forecaster' methode)
-- `research_benchmark_comparison.md` (intern, eerdere benchmark + ADDENDUM na blok 2)
+- `wave_physics_benchmark.md` (intern, internationale wave physics)
+- `reference_methodology.md` (intern, reverse-engineering referentie-forecaster' methode)
+- `benchmark_comparison.md` (intern, eerdere benchmark + ADDENDUM na blok 2)
 - `noordwijk-surf-alert-plan-v3.md` (intern, plan + 13 SMS validatie-set)
 - `src/scoring/hourly.py`, `src/scoring/windows.py`, `src/data/models.py`, `src/llm/generator.py`, `src/config.py`, `src/data/sources/open_meteo.py` (huidige codebase)
 - Open-Meteo Marine API documentatie ([open-meteo.com/en/docs/marine-weather-api](https://open-meteo.com/en/docs/marine-weather-api))
 - Open-Meteo Forecast multi-model documentatie (`models=knmi_seamless,ecmwf_ifs025,gfs_seamless,ukmo_global_deterministic`)
-- ECMWF WAM / DWD ICON-WAM model-bias literatuur (zie research_wave_physics_benchmark.md §7)
+- ECMWF WAM / DWD ICON-WAM model-bias literatuur (zie wave_physics_benchmark.md §7)
 - Vaklodingen Rijkswaterstaat ([opendap.deltares.nl/thredds/catalog/opendap/rijkswaterstaat/vaklodingen/](https://opendap.deltares.nl/thredds/catalog/opendap/rijkswaterstaat/vaklodingen/catalog.html))
 - RWS DDAPI20 Waterwebservices documentatie ([rijkswaterstaat.github.io/wm-ws-dl/](https://rijkswaterstaat.github.io/wm-ws-dl/))
 

@@ -214,3 +214,76 @@ VALIDATION_CONFIG = {
     'min_validation_accuracy': 0.70,  # Min 70% van cases moeten kloppen
     'number_precision': 0.1           # Getallen precisie voor validatie
 }
+
+# ---------------------------------------------------------------------------
+# Sprint 2 — structurele verbeteringen
+# ---------------------------------------------------------------------------
+
+# Multi-model wind triangulatie via Open-Meteo. ECMWF + GFS + KNMI Harmonie
+# zijn drie semi-onafhankelijke modellen (verschillende grid-resolution,
+# verschillende cycle-tijden, verschillende fysica). Hun spread is een
+# directe uncertainty-proxy. Open-Meteo accepteert deze als één
+# multi-value `models=` parameter in dezelfde API-call (geen extra quota).
+OPEN_METEO_MODELS = ['knmi_seamless', 'ecmwf_ifs025', 'gfs_seamless']
+
+# Drempels voor wind-spread confidence-penalty (#8).
+# Boven deze waarden geven de modellen genoeg onzekerheidssignaal om de
+# golf_score met een multiplier 0.85-1.0 te penaliseren (lineaire schaal).
+WIND_SPREAD_THRESHOLDS = {
+    'speed_kn_warning': 5.0,      # spread > 5 kn (std dev) → start penalty
+    'speed_kn_max': 12.0,         # spread > 12 kn → maximale penalty
+    'direction_deg_warning': 25.0, # angular spread > 25° → start penalty
+    'direction_deg_max': 60.0,    # > 60° → maximale penalty
+    'min_factor': 0.85,           # multiplier op golf_score bij max spread
+}
+
+# Partition-aware scoring (#10): wind-zee partitie krijgt lagere multiplier
+# dan swell-partitie. Bron: pro-forecaster cheat-sheet — een wind-zee veld
+# levert minder schone face per kW dan een gelijkmatige swell van zelfde Hs.
+PARTITION_WEIGHTS = {
+    'swell_multiplier': 1.00,     # volledige weging swell-energie
+    'wind_sea_multiplier': 0.65,  # wind-zee 65% van swell-energie
+}
+
+# Tide-flank features (#11) — bonus voor mid-rising sweet spot.
+TIDE_FLANK = {
+    'mid_low': 0.40,              # ondergrens "mid-tide"
+    'mid_high': 0.70,              # bovengrens "mid-tide"
+    'mid_rising_bonus': 2.0,       # bonus mid-rising
+    'mid_falling_bonus': 1.0,      # bonus mid-falling (helft)
+}
+
+# Diurnal wind-decay (#12): rond zonsondergang valt zeebries-component weg
+# bij lage bewolking. Toegepast als aftrek op effectieve wind_speed_kn.
+DIURNAL_WIND_DECAY = {
+    'hours_before_sunset': 2.0,    # start venster (uur vóór sunset)
+    'hours_after_sunset': 1.0,     # einde venster (uur na sunset)
+    'max_cloud_cover_pct': 50.0,   # alleen bij lage bewolking
+    'speed_reduction_kn': 2.5,     # aftrek op effectieve wind-snelheid
+}
+
+# Continue refractie pier-shadow (#9). Pier-shadow center ~10° (NNO).
+# Sigmoid-based: 0-15° NNO = zware shadow, 30°+ = vrijwel geen blokkade.
+PIER_REFRACTION = {
+    'shadow_center_deg': 10.0,
+    'shadow_half_width_deg': 12.0, # waar transmissie 50% bereikt
+    'min_transmission': 0.10,      # min energie-doorgang in shadow center
+    'max_transmission': 1.00,      # geen blokkade buiten shadow
+    'long_period_bonus': 0.15,     # +15% transmissie voor Tp ≥ 10s (refractie)
+}
+
+# Hard size-cap met multiplicatieve aggregation (#13).
+# `env_bonus_cap`: maximaal hoeveel de omgeving (wind+tide+dir) de golf
+# kan boosten als percentage. 2.5 = max +250% bonus bij perfecte combo.
+# Gekalibreerd zodat:
+# - 0.3m golf (~5pt) × max env bonus → ~17 (terecht onder surfable=60)
+# - 1.0m groundswell (~20pt) × max env bonus → ~70 (terecht surfable)
+# - 1.5m+ wave (~30+pt) × max env bonus → bereikt additieve som
+# De bedoeling van #13 is voorkomen dat MARGINALE golven (<0.5m) tot
+# epic-score schalen door perfect environment — niet om reasonable
+# small-but-quality groundswells (referentie-forecaster' "smal alert 11-12u zonder wind")
+# uit te sluiten van surfable-threshold.
+SIZE_CAP_AGGREGATION = {
+    'env_bonus_cap': 2.5,          # max +250% via wind/tide/dir
+    'use_multiplicative': True,    # multiplicatief naast additief, min van beide
+}

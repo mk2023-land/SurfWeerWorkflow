@@ -38,6 +38,8 @@ venv.bak/
 data/seasonal_baseline.json
 data/state.json
 data/forecasts_log.jsonl
+data/buoy_spectra_history.jsonl
+data/bias_log.jsonl
 data/*.json
 data/*.jsonl
 
