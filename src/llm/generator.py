@@ -375,19 +375,71 @@ class SMSGenerator:
     # ---------- LLM call ----------
 
     def _call_claude(self, structured_input: Dict) -> Optional[str]:
-        message = self.client.messages.create(
-            model=ANTHROPIC_CONFIG['model'],
-            max_tokens=ANTHROPIC_CONFIG['max_tokens'],
-            temperature=ANTHROPIC_CONFIG['temperature'],
-            system=SYSTEM_PROMPT,
-            messages=[{
-                "role": "user",
-                "content": json.dumps(structured_input, indent=2, default=str),
-            }],
+        """
+        Anthropic Messages API call met retry voor transient overload + model fallback.
+
+        Strategie:
+          1. Probeer primair model (haiku-4-5) — tot 2x retry bij 529/429.
+          2. Bij aanhoudende overload: schakel naar fallback_model (sonnet-4-5).
+          3. Pas dáárna geef op en laat caller fallback-template gebruiken.
+
+        Haiku is goedkoop én populair → krijgt het eerst peak-load. Sonnet
+        is duurder (~3x) maar fungeert als verzekering: pipeline blijft up
+        bij Anthropic-side haiku-specifieke outage.
+        """
+        import time
+        from anthropic._exceptions import OverloadedError, RateLimitError
+
+        def _attempt(model_name: str, retries: int) -> Optional[str]:
+            body = {
+                "model": model_name,
+                "max_tokens": ANTHROPIC_CONFIG['max_tokens'],
+                "temperature": ANTHROPIC_CONFIG['temperature'],
+                "system": SYSTEM_PROMPT,
+                "messages": [{
+                    "role": "user",
+                    "content": json.dumps(structured_input, indent=2, default=str),
+                }],
+            }
+            for attempt in range(retries):
+                try:
+                    message = self.client.messages.create(**body)
+                    sms_text = message.content[0].text.strip()
+                    logger.info(
+                        f"Generated SMS via {model_name}: {sms_text[:80]}..."
+                    )
+                    return sms_text
+                except (OverloadedError, RateLimitError) as e:
+                    wait_s = 2 ** (attempt + 1)
+                    logger.warning(
+                        f"{model_name} {type(e).__name__} "
+                        f"(retry {attempt + 1}/{retries} na {wait_s}s)"
+                    )
+                    if attempt < retries - 1:
+                        time.sleep(wait_s)
+            return None
+
+        primary_model = ANTHROPIC_CONFIG['model']
+        fallback_model = ANTHROPIC_CONFIG.get('fallback_model')
+
+        # Stap 1: primair model, 2 retries
+        result = _attempt(primary_model, retries=2)
+        if result:
+            return result
+
+        # Stap 2: fallback model, 1 retry
+        if fallback_model and fallback_model != primary_model:
+            logger.warning(
+                f"{primary_model} uitgeput → switch naar {fallback_model}"
+            )
+            result = _attempt(fallback_model, retries=2)
+            if result:
+                return result
+
+        logger.error(
+            f"Anthropic API niet beschikbaar — beide modellen overloaded"
         )
-        sms_text = message.content[0].text.strip()
-        logger.info(f"Generated SMS via Claude Haiku: {sms_text[:80]}...")
-        return sms_text
+        return None
 
     # ---------- input shaping ----------
 

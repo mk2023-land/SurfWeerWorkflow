@@ -173,6 +173,11 @@ API_ENDPOINTS = {
 ANTHROPIC_CONFIG = {
     'api_key': os.getenv('ANTHROPIC_API_KEY'),
     'model': 'claude-haiku-4-5',
+    # Fallback wanneer haiku-4-5 specifiek 529 (overloaded) geeft — Haiku is
+    # populair-goedkoop dus krijgt vaakst peak-load. Sonnet kost ~3× meer per
+    # token (digest ~1k tokens = $0.003 ipv $0.001) maar pipeline altijd up.
+    # In praktijk pakt Haiku 90%+ van de calls; sonnet alleen bij echte outage.
+    'fallback_model': 'claude-sonnet-4-5',
     'max_tokens': 800,   # bumped van 320: referentie-forecaster-stijl 4-daagse digest komt makkelijk
                          # boven 320 tokens uit; afgekapte berichten leveren een
                          # ongeldige format op die in fallback eindigt
