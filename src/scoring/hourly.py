@@ -25,6 +25,226 @@ from src.config import (
 )
 
 
+def wave_energy_flux(hs_m: float, te_s: float) -> float:
+    """
+    Wave energy flux per meter golfkam, in kW/m.
+
+    Standaard fysica-formule: P = (ρg²/64π) · Hs² · Te ≈ 0.49 · Hs² · Te.
+    Pro-forecasters (Stormsurf, Surf-Forecast.com) gebruiken dit als de
+    ECHTE size-metric die periode én hoogte fysisch correct combineert.
+
+    Voorbeelden voor referentie:
+        1.0m @ 5s windswell  →  2.45 kW/m  (NL marginaal)
+        1.0m @ 7s windswell  →  3.43 kW/m  (NL OK-dag, referentie)
+        1.0m @ 10s groundswell  → 4.90 kW/m
+        1.5m @ 9s   →  9.92 kW/m  (kwaliteits-dag)
+        2.0m @ 12s  →  23.5 kW/m  (big-day NL)
+    """
+    return 0.49 * hs_m * hs_m * te_s
+
+
+def wave_energy_factor(hs_m: float, te_s: float, reference_kw_m: float = 3.43) -> float:
+    """
+    Multiplier op golf_score gebaseerd op wave energy flux relatief aan
+    referentie-conditie (1.0m @ 7s = NL OK-dag ≈ 3.43 kW/m).
+
+    Vermenigvuldigingsfactor in [0.75, 1.20] — bewust mild zodat de
+    bestaande period_factor en height-score niet overruled worden, maar
+    wel de "echte power" van een wave correct gewogen wordt naast hoogte
+    en periode apart.
+
+    Q1=(c) keuze: multiplier ipv nieuwe component — minst disruptief, behoudt
+    bestaande tests, maakt fysisch correct onderscheid tussen 1.4m@4s
+    windchop (lage power) en 1.0m@10s groundswell (hoge power).
+    """
+    if hs_m <= 0 or te_s <= 0:
+        return 1.0
+    p = wave_energy_flux(hs_m, te_s)
+    # Genormaliseerd t.o.v. referentie. log-schaal werkt rustiger dan lineair
+    # voor brede ranges. Reference = 1.0; range capped op realistische uitersten.
+    ratio = p / reference_kw_m
+    # Sigmoid-achtig: 0.5×ref → 0.85, 1× → 1.0, 2× → 1.13, 3× → 1.18
+    import math
+    factor = 1.0 + 0.15 * math.tanh((ratio - 1.0) / 1.5)
+    return max(0.75, min(1.20, factor))
+
+
+def wave_age(tp_s: float, wind_speed_kn: float) -> float:
+    """
+    Wave-age: c_p / U10. Maat voor "rijpheid" van wind-zee.
+
+    Fysica:
+        c_p = 1.56 · T (m/s, phase velocity diep water)
+        U10 = wind op 10m
+
+    Interpretatie:
+        > 1.5 : oude swell, schone face (groundswell-territory)
+        1.0-1.5: matured wind-zee, surfbaar
+        0.83-1.0: borderline, marginal
+        < 0.83: jonge wind-zee, choppy, wind voedt nog actief (Pierson-Moskowitz
+                fully-developed sea drempel)
+
+    Tobias' empirische cutoff (5s minimum, zie research_tobias_methodology.md)
+    is een proxy hiervoor: bij T=5s en 10 m/s wind is wave_age=0.78 → marginal.
+    """
+    if wind_speed_kn <= 0 or tp_s <= 0:
+        return 999.0  # geen wind = wave is "oud" per definitie
+    cp = 1.56 * tp_s
+    u10_ms = wind_speed_kn / 1.944  # kn → m/s
+    return cp / u10_ms
+
+
+def wave_age_factor(tp_s: float, wind_speed_kn: float) -> float:
+    """
+    Soft penalty (Q2=(b)) op golf_score gebaseerd op wave-age.
+
+    Curve (genuanceerd na benchmark-tuning — Tobias accepteert wave_age ≈ 0.9
+    als longboard, dus penalty bij borderline mag mild zijn; alleen écht
+    jonge wind-zee < 0.6 wordt zwaar gestraft):
+        wave_age < 0.5  : factor 0.50 (zware chop)
+        0.5 - 0.9       : factor 0.50 → 0.92 (opbouwende sea, mild penalty)
+        0.9 - 1.2       : factor 0.92 → 1.00 (mature wind-zee)
+        >= 1.2          : factor 1.00 (swell-domein, geen extra bonus —
+                          groundswell-bonus zit al elders)
+
+    Het effect is asymmetrisch: jong wind-zee wordt gestraft, swell krijgt
+    geen bonus (wordt elders al beloond). Dit voorkomt double-counting van
+    "lange periode is goed".
+    """
+    age = wave_age(tp_s, wind_speed_kn)
+    if age >= 1.2:
+        return 1.00
+    if age >= 0.9:
+        return 0.92 + (age - 0.9) * (0.08 / 0.30)
+    if age >= 0.5:
+        return 0.50 + (age - 0.5) * (0.42 / 0.40)
+    return 0.50
+
+
+def iribarren_factor(hs_m: float, tp_s: float, beach_slope: float = 0.02) -> float:
+    """
+    Iribarren-getal ξ = tan(β) / √(H/L₀) — voorspelt breaker-type.
+
+    Voor NL beachbreaks (tan(β) ≈ 0.02 = 1:50) — voor het overgrote deel van
+    de tijd ξ ≈ 0.10-0.20 = spilling. Dat is de "standaard" NL conditie, niet
+    een penalty. Alleen extreem mushy of net-plunging krijgt aanpassing.
+
+        ξ < 0.10  : zware mushy → factor 0.93 (mild penalty)
+        0.10-0.18 : standaard spilling → factor 0.98
+        0.18-0.45 : neigend naar plunging (kwaliteit!) → factor 1.00 → 1.10
+        0.45-0.80 : plunging (zeldzaam NL, kwaliteit-event) → factor 1.10
+        > 0.80    : surging/collapsing edge case → factor 1.00 (neutraal)
+
+    Effect: kleine wave + lange periode (0.5m@10s groundswell) krijgt
+    quality-bonus omdat ξ stijgt; chop (1.4m@4s) blijft "standard NL".
+
+    Bron: Coastal Wiki surf similarity parameter, Wikipedia Iribarren.
+    """
+    if hs_m <= 0 or tp_s <= 0:
+        return 1.00
+    L0 = 1.56 * tp_s * tp_s  # diep-water wavelength
+    if L0 <= 0:
+        return 1.00
+    import math
+    xi = beach_slope / math.sqrt(hs_m / L0)
+    if xi < 0.10:
+        return 0.93
+    if xi < 0.18:
+        return 0.98
+    if xi < 0.45:
+        return 1.00 + (xi - 0.18) * (0.10 / 0.27)  # linear 1.00 → 1.10
+    if xi < 0.80:
+        return 1.10
+    return 1.00
+
+
+def wind_gust_penalty(wind_speed_kn: float, wind_gust_kn: Optional[float]) -> float:
+    """
+    Penalty op wind_score voor vlagerige condities.
+
+    gust/sustained ratio > 1.3 wijst op turbulente luchtmassa — typisch
+    achter een frontpassage, in convectieve buien, of bij thermisch onstabiele
+    stratificatie. Tobias' "vlagerig" — wind die geen schone face oplevert
+    ondanks gemiddelde snelheid binnen acceptabel bereik.
+
+    Returns: 0 (geen penalty) tot -5 (zware gust-variabiliteit).
+    """
+    if not wind_gust_kn or wind_speed_kn < 4:
+        return 0.0  # geen gust-info of te weinig wind voor zinvolle ratio
+    ratio = wind_gust_kn / wind_speed_kn
+    if ratio < 1.3:
+        return 0.0
+    if ratio < 1.5:
+        return -1.0 * ((ratio - 1.3) / 0.2) * 2.0  # 0 → -2
+    if ratio < 2.0:
+        return -2.0 - ((ratio - 1.5) / 0.5) * 3.0  # -2 → -5
+    return -5.0  # extreme gust-variabiliteit
+
+
+def mixed_sea_penalty(
+    spectrum: WaveSpectrum,
+    angle_threshold_deg: float = 30.0,
+    min_height_m: float = 0.4,
+) -> tuple:
+    """
+    Detecteer "mixed sea" — twee swell-componenten uit duidelijk verschillende
+    richtingen. Resultaat is een rommelige zee zonder dominante set-richting,
+    moeilijker surfbaar dan single-swell sea van zelfde hoogte.
+
+    Wave_direction = totaal (energy-weighted gemiddelde van alle partities).
+    Swell_wave_direction = de pure swell-partitie. Als die >30° verschillen
+    en beide componenten substantieel zijn (>0.4m elk), is er sprake van
+    significant mixed sea.
+
+    Returns: (is_mixed: bool, penalty: float in pt)
+        is_mixed=True  → penalty -3.0 op golf_score, en flag voor LLM
+        is_mixed=False → (False, 0.0)
+    """
+    import math
+    if not spectrum.peaks or len(spectrum.peaks) < 2:
+        return (False, 0.0)
+    # Sorteer pieken op hoogte; pak top-2
+    sorted_peaks = sorted(spectrum.peaks, key=lambda p: p.height_m, reverse=True)
+    p1, p2 = sorted_peaks[0], sorted_peaks[1]
+    if p1.height_m < min_height_m or p2.height_m < min_height_m:
+        return (False, 0.0)
+    # Hoek-verschil tussen twee partities (modulo 360, neem korte zijde)
+    raw = abs(p1.direction_deg - p2.direction_deg) % 360
+    angle = min(raw, 360 - raw)
+    if angle >= angle_threshold_deg:
+        return (True, -3.0)
+    return (False, 0.0)
+
+
+def pressure_gradient_factor(pressure_history_hpa: list) -> float:
+    """
+    Detecteer synoptische storing (front/trog-passage) uit druk-trend.
+
+    |dp/dt| > 1.5 hPa/uur over 3-uurs venster = front passing.
+    Tijdens en kort na frontpassage: turbulente luchtmassa, instabiele wind,
+    onbetrouwbare wave-forecast — penalty op de output.
+
+    Args:
+        pressure_history_hpa: lijst [3u terug, 2u terug, 1u terug, nu] (4 elementen)
+                              of korter (dan return 1.0).
+
+    Returns:
+        Multiplier 0.85-1.0 op wind_score component.
+        0.85 = sterke synoptische storing
+        1.00 = stabiel
+    """
+    if not pressure_history_hpa or len(pressure_history_hpa) < 4:
+        return 1.0
+    # Lineaire regressie-vrije derivative: gewoon (nu - 3u_terug) / 3
+    dp_dt = (pressure_history_hpa[-1] - pressure_history_hpa[0]) / 3.0  # hPa/uur
+    abs_grad = abs(dp_dt)
+    if abs_grad < 1.5:
+        return 1.0
+    # Lineaire scaling: 1.5 → 1.0, 4.0 → 0.85
+    factor = 1.0 - min(0.15, (abs_grad - 1.5) * (0.15 / 2.5))
+    return factor
+
+
 def _wind_direction_cosine(wind_dir_deg: int, beach_normal_deg: int) -> float:
     """
     Cosinus van de hoek tussen de wind-richting en de pure offshore-richting.
@@ -271,8 +491,27 @@ def score_golf_component(wave_spectrum: WaveSpectrum) -> float:
 
     height_score *= _period_factor(T)
 
-    if has_groundswell_through_windsea(wave_spectrum):
-        height_score += 1
+    # T4 bonus: groundswell DOOR de windsea heen (Tobias' iconische pattern).
+    # Voorheen +1pt — veel te bescheiden. Een 1.4m groundswell op 100mhz die
+    # door windgolven heen komt is HET ALERT-paradigma. Per benchmark-onderzoek:
+    # bonus moet 8-12pt zijn mits substantiële groundswell-dominantie.
+    decomp = decompose_spectrum(wave_spectrum)
+    if decomp.get('ground_swell') and decomp.get('wind_sea'):
+        gs = decomp['ground_swell']
+        ws = decomp['wind_sea']
+        # Strenge T4-criteria: groundswell substantieel + dominant qua hoogte
+        gs_substantial = gs.height_m >= 0.7 and gs.period_s >= 9.0
+        gs_dominant = gs.height_m >= 0.6 * ws.height_m
+        if gs_substantial and gs_dominant:
+            t4_bonus = 8.0
+            # Extra +4 voor lange-periode groundswell (≥11s, zeldzaam in NL)
+            if gs.period_s >= 11.0:
+                t4_bonus += 4.0
+            height_score += t4_bonus
+        elif has_groundswell_through_windsea(wave_spectrum):
+            # Compromise: groundswell + windsea aanwezig maar niet dominant.
+            # Minor bonus, was de oude default.
+            height_score += 1
 
     if is_clean_swell(wave_spectrum):
         height_score += 1
@@ -513,8 +752,32 @@ def score_hour(state: HourState, context: Optional[dict] = None) -> ScoreBreakdo
             swell_dir_bonus=0.0,
         )
 
-    # Golf component — basisscore op Hs/Tp/type
+    # Golf component — basisscore op Hs/Tp/type + opgewaardeerde T4-bonus
     golf_score = score_golf_component(state.wave_spectrum)
+
+    # Wave energy flux multiplier (Q1=(c)): fysisch correcte size-metric die
+    # periode en hoogte combineert. Mild ±15-25% effect bovenop bestaande
+    # period_factor — beloont echte power (1.0m@10s) boven height-only (1.4m@4s).
+    we_factor = wave_energy_factor(Hs, Tp)
+    golf_score *= we_factor
+
+    # Wave-age soft penalty (Q2=(b)): cp/U10 < 0.83 = jonge wind-zee = chop.
+    # Mature wave (>1.2) krijgt geen extra bonus (zit elders al), maar marginal
+    # (0.83-1.0) en jong (<0.83) krijgen schaalbare penalty op golf_score.
+    age_factor = wave_age_factor(Tp, state.wind.speed_kn)
+    golf_score *= age_factor
+
+    # Iribarren-getal: continue quality-modifier op basis van breaker-type.
+    # NL beachbreaks doen meestal mushy spilling; bij lange periode + matige
+    # hoogte stijgt ξ richting plunging = kwaliteits-bonus.
+    iri_factor = iribarren_factor(Hs, Tp)
+    golf_score *= iri_factor
+
+    # Mixed-sea detector: twee swell-componenten uit verschillende richtingen
+    # = rommelig, lagere effectieve surfability ondanks dezelfde totaal-Hs.
+    is_mixed_sea, mixed_pen = mixed_sea_penalty(state.wave_spectrum)
+    if is_mixed_sea:
+        golf_score = max(0.0, golf_score + mixed_pen)
 
     # Wave face quality: wind op de wave-face. Onshore wind degradeert de face
     # ongeacht hoogte. Toegepast als multiplier op golf_score zodat een 1.5m
@@ -537,6 +800,21 @@ def score_hour(state: HourState, context: Optional[dict] = None) -> ScoreBreakdo
 
     # Wind component
     wind_score = score_wind_component(state.wind.speed_kn, state.wind.direction_deg)
+
+    # Wind-gust ratio penalty: vlagerige wind (gust/sustained > 1.3) = chop
+    # op de face, onbetrouwbaar windveld. Tobias' "vlagerig" — extra penalty
+    # bovenop normale wind-score.
+    gust_pen = wind_gust_penalty(state.wind.speed_kn, state.wind.gusts_kn)
+    wind_score = max(0.0, wind_score + gust_pen)
+
+    # Drukgradiënt-derivative: synoptische storing detectie. Sterke druk-
+    # verandering (>1.5 hPa/uur over 3u) = front/trog-passage = instabiele
+    # wind die niet door enkelvoudig uurgemiddeld goed gevangen wordt.
+    if context:
+        pres_factor = pressure_gradient_factor(
+            context.get('pressure_history_hpa') or []
+        )
+        wind_score *= pres_factor
 
     # Tij component — periode-afhankelijk venster + spring/doodtij + timing-fit
     # + tidal-current penalty (Tobias' "vloedstroom" effect)
@@ -576,30 +854,46 @@ def score_hour(state: HourState, context: Optional[dict] = None) -> ScoreBreakdo
     )
 
 
-def score_hour_series(states: list) -> list:
+def score_hour_series(states: list, pressure_series: list = None) -> list:
     """
-    Score een tijdreeks van HourStates met wind-trend context per uur.
+    Score een tijdreeks van HourStates met wind-trend EN druk-gradient context.
 
-    Wind-trend (clean-opening detectie) heeft historie nodig — deze helper
-    bouwt een rolling window van 3 uur en geeft die mee aan score_hour.
+    Wind-trend (clean-opening detectie) en druk-gradient (synoptische storing)
+    beide hebben historie nodig — deze helper bouwt rolling windows en geeft
+    die mee aan score_hour.
+
+    Args:
+        states: lijst HourStates in chronologische volgorde.
+        pressure_series: optionele parallelle lijst druk-waarden (hPa) voor
+            elke state. Gebruikt voor pressure_gradient_factor. Als None of
+            mismatching length: drukgradient wordt niet toegepast.
+
     Aanbevolen entrypoint voor multi-uurs scoring; score_hour() blijft
-    direct bruikbaar voor single-hour use (zonder trend-bonus).
+    direct bruikbaar voor single-hour use (zonder trend/gradient).
     """
     scores = []
+    have_pressure = (
+        pressure_series is not None and len(pressure_series) == len(states)
+    )
     for i, state in enumerate(states):
-        # Pak vorige 2 uur (uit dezelfde state-lijst). Aan begin van reeks:
-        # neem wat beschikbaar is (1-of-2 historie + huidige).
+        # Pak vorige 2 uur voor wind/wave trend (3-uurs venster met huidige).
         hist_start = max(0, i - 2)
         hist_states = states[hist_start:i + 1]
-        # Pad indien minder dan 3: herhaal het oudste element zodat trend=neutral
         while len(hist_states) < 3:
             hist_states = [hist_states[0]] + hist_states
         wind_hist = [s.wind.speed_kn for s in hist_states]
         wave_hist = [s.wave_spectrum.significant_height_total for s in hist_states]
-        scores.append(score_hour(
-            state,
-            context={'wind_history_kn': wind_hist, 'wave_history_m': wave_hist},
-        ))
+
+        # Druk-historie: 4-uurs venster (t-3 t/m t) voor 3-uurs derivative
+        ctx = {'wind_history_kn': wind_hist, 'wave_history_m': wave_hist}
+        if have_pressure:
+            p_start = max(0, i - 3)
+            p_hist = list(pressure_series[p_start:i + 1])
+            while len(p_hist) < 4:
+                p_hist = [p_hist[0]] + p_hist
+            ctx['pressure_history_hpa'] = p_hist
+
+        scores.append(score_hour(state, context=ctx))
     return scores
 
 
