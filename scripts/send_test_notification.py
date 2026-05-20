@@ -49,6 +49,7 @@ async def main() -> int:
     om = OpenMeteoClient()
     tide = rws.get('tide') or {}
     states = []
+    pressure_series = []
     for i in range(min(len(marine), len(forecast))):
         m, w = marine[i], forecast[i]
         if abs((m['timestamp'] - w['timestamp']).total_seconds()) > 3600:
@@ -66,8 +67,10 @@ async def main() -> int:
             forecast_source='open-meteo',
             confidence=1.0,
         ))
+        # Parallelle pressure series voor drukgradient detector (Sprint 1 fix)
+        pressure_series.append(w.get('pressure') or 1013.0)
 
-    scores = score_hour_series(states)
+    scores = score_hour_series(states, pressure_series=pressure_series)
     windows = analyze_windows(scores)
     peak_today = max((s.total_score for s in scores[:24]), default=0)
     peak_tomorrow = max((s.total_score for s in scores[24:48]), default=0)

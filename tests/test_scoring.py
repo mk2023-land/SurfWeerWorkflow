@@ -391,8 +391,10 @@ class TestValidatieCases:
 
         score = score_hour(hour_state)
 
-        # Verwacht: score 82-95 (v4 scoring met opgaand-tij bonus en tide_max=20)
-        assert 82 <= score.total_score <= 95
+        # Verwacht: score 90-100 (Sprint 1 T4-bonus opwaardering: groundswell-
+        # door-windsea-heen geeft nu +8pt ipv +1pt zoals voorheen).
+        # Dit is hét paradigma-voorbeeld dat ALERT-waardig moet zijn.
+        assert 90 <= score.total_score <= 100
 
     def test_case_16_mei_windstilte(self):
         """
