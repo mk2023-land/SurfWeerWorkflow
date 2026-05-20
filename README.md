@@ -1,27 +1,29 @@
 # Noordwijk Surf Alert Systeem
 
-Geautomatiseerd surfweer alert systeem voor Noordwijk dat elke 6 uur surfcondities analyseert en notificaties verstuurt (push via ntfy.sh, mail via SMTP, of SMS via Twilio) bij gunstige golven.
+Geautomatiseerd surfweer alert systeem voor Noordwijk dat 4x per dag surfcondities analyseert en notificaties verstuurt (push via ntfy.sh, mail via SMTP, of SMS via Twilio) bij gunstige golven.
 
 ## 📋 Overzicht
 
 Dit systeem analyseert surfcondities voor Noordwijk door:
 
-1. **Data verzameling** uit meerdere bronnen (Open-Meteo, Rijkswaterstaat)
-2. **Scoring** van surfcondities (0-100 punten) op basis van golf, wind, tij en swell richting
-3. **5 alert types** detecteren (swell arrival, wind shift, wind dip, sustained groundswell, tide-gated windows)
-4. **Notificaties** versturen via ntfy.sh (default, gratis push), SMTP-mail of Twilio-SMS, met Claude Haiku voor natuurlijke berichten
+1. **Data verzameling** uit meerdere bronnen (Open-Meteo multi-model: KNMI + ECMWF + GFS, Rijkswaterstaat DDAPI20 boeien)
+2. **Scoring** van surfcondities (0-100 punten) op basis van golf, wind, tij, swell richting, plus modifiers voor wave-age, energy-flux, Iribarren, pier-refractie en wind-wave interactie
+3. **5 alert types** detecteren (T1 swell arrival via boei-spectrum trends, T2 wind shift, T3 wind dip, T4 sustained groundswell-through-windsea, T5 tide-gated windows)
+4. **Notificaties** versturen via ntfy.sh (default, gratis push), SMTP-mail of Twilio-SMS, met Claude Sonnet 4.5 (Haiku als fallback) voor natuurlijke Tobias-stijl berichten
 5. **Automatische runs** op GitHub Actions (4x per dag)
 
 ### Hoe het werkt
 
 Het systeem berekent per uur een score op basis van:
 
-- **Golf (40pt)**: Hoogte, periode, swell type (groundswell = bonus)
-- **Wind (35pt)**: Snelheid en richting (offshore = beste)
-- **Tij (15pt)**: Waterstand en fase (mid-tijd = beste)
-- **Swell richting (10pt)**: W-NNW = beste, NNO = geblokkeerd door IJmuiden pier
+- **Golf (38pt)**: Hoogte, periode, energy-flux, wave-age, Iribarren breaker-type, partition-aware (swell ×1.00 + wind-zee ×0.65)
+- **Wind (32pt)**: Snelheid + richting (cosinus-additief), gust-penalty, diurnal decay, wave-face quality bij onshore
+- **Tij (20pt)**: Waterstand, fase, periode-afhankelijk venster (groundswell breder dan wind-sea), spring/doodtij modulator, timing-fit bonus
+- **Swell richting (10pt)**: W-NNW = beste, continue pier-refractie rond NNO (10°) i.p.v. binair geblokkeerd
 
-Scores ≥60 = surfbaar, scores ≥75 = alert-waardig.
+Plus multiplicatieve size-cap (#13) zodat marginale golven niet via perfect environment alsnog 60+ halen, en confidence-penalty op basis van multi-model wind-spread.
+
+Scores ≥60 = surfbaar (shortboard, alert-candidate), ≥42 = longboard-only (alleen digest), ≥75 = alert-waardig.
 
 ## 🚀 Quick Start
 
@@ -48,7 +50,7 @@ python main.py --dry-run
 
 1. **Repository aanmaken** (private aanbevolen)
 2. **GitHub Secrets** configureren (Settings → Secrets and variables → Actions → New repository secret):
-   - `ANTHROPIC_API_KEY` — voor Claude Haiku tekst-generatie
+   - `ANTHROPIC_API_KEY` — voor Claude Sonnet 4.5 (primair) + Haiku 4.5 (fallback) tekst-generatie
 
    Daarna één set afhankelijk van je gekozen notifier (default: `ntfy`):
 
@@ -76,22 +78,27 @@ python main.py --dry-run
 src/
 ├── config.py              # Configuratie en constants
 ├── main.py                # Hoofdscript
+├── util.py                # Gedeelde tz/time helpers
 ├── data/
 │   ├── models.py          # Data structuren
 │   └── sources/
-│       ├── open_meteo.py  # Weer data API
-│       └── rws.py         # Rijkswaterstaat boeien
+│       ├── open_meteo.py  # Weer data API (multi-model: KNMI + ECMWF + GFS)
+│       └── rws.py         # Rijkswaterstaat DDAPI20 WaterWebservices
 ├── scoring/
-│   ├── deconstruct.py     # Swell deconstructie
-│   ├── hourly.py          # Per-uur scoring
-│   └── windows.py         # Window analyse
+│   ├── deconstruct.py     # Swell deconstructie + partition-aware energy
+│   ├── hourly.py          # Per-uur scoring (energy-flux, wave-age, Iribarren, ...)
+│   ├── windows.py         # Window analyse + multi-window detectie
+│   ├── daylight.py        # Daglicht-filter (asymmetrisch dawn/dusk)
+│   ├── bias_correction.py # Real-time IJG1-boei bias correctie (exp decay)
+│   └── trigger_T1.py      # Boei-spectrum history + swell-arrival detector
 ├── alerts/
-│   ├── detectors.py       # 5 alert detectors
-│   └── engine.py          # Alert besluit logica
+│   ├── detectors.py       # 5 alert detectors (T1-T5)
+│   └── engine.py          # Alert besluit logica + cooldown + budget
 ├── llm/
-│   ├── generator.py       # Bericht-tekst generator (Claude Haiku)
-│   └── validator.py       # Output validatie
+│   ├── generator.py       # Bericht generator (Sonnet 4.5 → Haiku fallback)
+│   └── validator.py       # Output validatie (anti-hallucinatie)
 ├── notify/
+│   ├── __init__.py        # get_notifier() factory + NL-datum helper
 │   ├── ntfy.py            # ntfy.sh push (default)
 │   ├── mail.py            # SMTP-mail
 │   └── twilio.py          # Twilio-SMS (optionele fallback)
@@ -99,23 +106,40 @@ src/
     └── seasonal.py        # Seizoensbaseline builder
 
 tests/
-├── test_scoring.py        # Unit tests
+├── test_scoring.py        # Unit tests (scoring + windows)
+├── test_bias_correction.py# Bias-correctie tests
+├── test_trigger_T1.py     # T1 detector tests
 └── test_validation.py     # Backtest validatie
 
+scripts/
+├── send_test_notification.py # End-to-end test van notifier-pipeline
+└── ingest_tobias_message.py  # Tobias-SMS archiveren als training-labels
+
+research/                  # 9 onderzoeksrapporten + master plan
+data/
+├── state.json             # Runtime state (cooldowns, weekly counts)
+├── seasonal_baseline.json # Seizoensbaseline (jaarlijks rebuild)
+├── forecasts_log.jsonl    # Run-by-run audit log
+├── bias_log.jsonl         # Forecast-vs-observation bias (Sprint 4 training)
+├── buoy_spectra_history.jsonl # T1 detector rolling buoy history
+└── tobias_archive/        # User-geleverde Tobias-SMS + parse-metadata
+
 .github/workflows/
-├── check.yml              # Hoofd workflow (cron)
+├── check.yml              # Hoofd workflow (cron 4x/dag)
 ├── rebuild-baseline.yml   # Baseline update
 └── run-validation.yml     # Validatie workflow
 ```
 
 ## 🔑 API Keys Setup
 
-### Anthropic API (Claude Haiku 4.5)
+### Anthropic API (Claude Sonnet 4.5 primair, Haiku 4.5 fallback)
 
 1. Ga naar https://console.anthropic.com/
 2. Maak account aan
 3. Genereer API key
 4. Sla op als GitHub Secret: `ANTHROPIC_API_KEY`
+
+Sonnet wordt gebruikt voor de daadwerkelijke tekst-generatie omdat het significant rijkere Nederlandse Tobias-stijl prose levert (wind-wave interactie expliciet benoemd, uncertainty gerendered, tij-tijden verweven in lopende zinnen). Bij Sonnet-overload (HTTP 529) schakelt de pipeline na exponential backoff automatisch over op Haiku. Verwachte kosten: €0,50–€1/maand bij 30–60 calls.
 
 ### Notifier setup
 
@@ -132,11 +156,15 @@ Andere kanalen (SMTP-mail of Twilio-SMS) staan beschreven in `.env.example`.
 ### Unit tests
 
 ```bash
-# Run alle tests
+# Run alle tests (77 tests in totaal: scoring + bias correction + T1 + validation)
 pytest tests/ -v
 
 # Run alleen scoring tests
 pytest tests/test_scoring.py -v
+
+# Run bias-correctie of T1-detector tests
+pytest tests/test_bias_correction.py -v
+pytest tests/test_trigger_T1.py -v
 ```
 
 ### Backtest validatie
@@ -156,6 +184,11 @@ python test_validation.py
 - **Surf alerts**: `data/surf_alert.log`
 - **Forecasts log**: `data/forecasts_log.jsonl` (JSON per run)
 - **State**: `data/state.json` (runtime state)
+- **Bias log**: `data/bias_log.jsonl` (forecast-vs-observation, voor Sprint 4 XGBoost training)
+- **Boei-spectrum history**: `data/buoy_spectra_history.jsonl` (rolling input voor T1 swell-arrival detector)
+- **Tobias archief**: `data/tobias_archive/` (user-geleverde SMS + parse-metadata, training-labels)
+
+De GitHub Actions cache bewaart de hele `data/` map (7-dagen TTL), zodat de jsonl-historie tussen runs gepersisteerd blijft.
 
 ### Log formaat
 
@@ -210,12 +243,28 @@ ALERT_CONFIG = {
     'alerts_enabled': True          # Alerts aan/uit
 }
 
-# Scoring gewichten
+# Scoring gewichten (v4: tij verhoogd 15→20 want top-3 factor voor beachbreaks)
 SCORING_WEIGHTS = {
-    'golf_max': 40,       # Golf component max
-    'wind_max': 35,       # Wind component max
-    'tide_max': 15,       # Tij component max
+    'golf_max': 38,       # Golf component max
+    'wind_max': 32,       # Wind component max
+    'tide_max': 20,       # Tij component max
     'swell_dir_max': 10   # Richting bonus max
+}
+
+# Dubbele surf-drempels
+SURF_THRESHOLDS = {
+    'surfable': 60,       # shortboard, alert-candidate
+    'longboard': 42,      # longboard-only, alleen voor digest
+    'min_golf_surfable': 15,   # min wave-energy floor (~1m bij 6s)
+    'min_golf_longboard': 5,   # ~0.5-0.6m bij 5s
+}
+
+# Anthropic (Sonnet primair, Haiku fallback bij overload)
+ANTHROPIC_CONFIG = {
+    'model': 'claude-sonnet-4-5',
+    'fallback_model': 'claude-haiku-4-5',
+    'max_tokens': 800,
+    'temperature': 0.4,
 }
 ```
 
@@ -227,21 +276,26 @@ NWIJK ALERT 06-08 06:00-08:00u: groundswell 10s door windgolven heen,
 0,9m WNW, wind 6kn O aflandig, opgaand tij. Cam: surfweer.nl/webcams/noordwijk/
 ```
 
-### Digest (4-daagse outlook, push of mail)
+### Digest (4-daagse outlook, push of mail — titel: "Surfweerbericht van ma 19 mei")
 ```
-Nwijk di: Vandaag rond 09:00 iets meer actie met 1,2m en 4,5s WZW, wind
-loopt op naar 15,6kn ZW zijaflandig. Morgen flat (0,4m). Donderdag rond
-20:00 minimal (0,3m). Vrijdag rond 05:00 nog steeds klein (0,2m).
-Cam: surfweer.nl/webcams/noordwijk/
+Vandaag rond 09:00 iets meer actie met 1,2m en 4,5s WZW, wind loopt op
+naar 15,6kn ZW zijaflandig, opkomend tij tot 14u. Modellen lopen nog wat
+uiteen over de details — geen alert maar wel longboard-vriendelijk.
+Morgen flat (0,4m). Donderdag rond 20:00 minimal (0,3m), na 19:30 valt
+de wind weg. Vrijdag rond 05:00 nog klein (0,2m). Cam: surfweer.nl/webcams/noordwijk/
 ```
 
 ## 🛡️ Safety Features
 
-- **Output validatie**: LLM output wordt gevalideerd tegen hallucinatie
-- **Fallback templates**: Bij validatie falen wordt deterministische template gebruikt
+- **Output validatie**: LLM output wordt gevalideerd tegen hallucinatie (getallen, kompas-richtingen, board-claims, springtij-claims contextueel gecheckt)
+- **Fallback templates**: Bij validatie falen of LLM-error wordt deterministische 4-daagse template gebruikt
+- **Sonnet → Haiku fallback**: Bij Anthropic 529 overload retry met exponential backoff + automatische switch naar Haiku
 - **Cooldown**: Minimaal 4u tussen alerts
 - **Weekly cap**: Max 8 alerts per week
 - **Rarity threshold**: Alleen alerts bij ≥70e percentile
+- **Daglicht-filter**: Geen "piek-uren" buiten asymmetrisch dawn-dusk venster (zonsopkomst -1.5u, zonsondergang +0.5u)
+- **Hard size-cap**: Marginale golven (<0.5m) kunnen niet via perfect environment naar score 60+ schalen (multiplicatieve aggregation)
+- **Confidence-penalty**: Multi-model wind-spread genereert uncertainty-multiplier op golf-score
 - **Dry run mode**: Lokale testing zonder dat er een notificatie verstuurd wordt
 
 ## 🔧 Troubleshooting
@@ -273,9 +327,10 @@ In de huidige default-setup (`NOTIFIER=ntfy`) is **alles gratis**:
 | Service | Kosten |
 |---------|--------|
 | ntfy.sh push | Gratis |
-| Anthropic Haiku | ~€0.001 per bericht (verwaarloosbaar — pak <€0,10/maand) |
-| Open-Meteo | Gratis |
-| Rijkswaterstaat WaterWebservices | Gratis |
+| Anthropic Sonnet 4.5 (primair) | ~€0,50-€1/maand bij 30-60 calls |
+| Anthropic Haiku 4.5 (fallback) | ~€0,001 per bericht (alleen bij Sonnet-overload) |
+| Open-Meteo multi-model | Gratis (KNMI + ECMWF + GFS in 1 request) |
+| Rijkswaterstaat DDAPI20 | Gratis |
 | GitHub Actions | Gratis (publiek repo, 2000 min/maand privé) |
 
 Als je naar Twilio SMS terugschakelt (`NOTIFIER=twilio`), komt daar ~€0.08/SMS bij — ~€0.50-0.65/week bij 7-8 berichten.
@@ -300,7 +355,9 @@ MIT License - zie LICENSE bestand voor details.
 ## 🙏 Credits
 
 Gebaseerd op meteorologische analyse van Tobias van surfweer.nl.
-Gebruikt Open-Meteo, Rijkswaterstaat DDAPI20 WaterWebservices, Anthropic Claude Haiku, en ntfy.sh.
+Gebruikt Open-Meteo multi-model forecast (KNMI + ECMWF + GFS), Rijkswaterstaat DDAPI20 WaterWebservices, Anthropic Claude (Sonnet 4.5 + Haiku 4.5 fallback), en ntfy.sh.
+
+Scoring-fysica gebaseerd op 9 onderzoeksrapporten in `research/`: industry models (Surfline/Stormsurf/Magicseaweed), pro forecaster methodology (Pat Caldwell NWS, WSL), academic ML (XGBoost bias-correctie peer-reviewed Dutch North Sea), en gap-analysis tegen Tobias-SMSes.
 
 ## 📞 Support
 
