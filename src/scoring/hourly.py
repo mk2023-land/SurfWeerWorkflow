@@ -1028,6 +1028,123 @@ def _dominant_period_partition_based(spectrum: WaveSpectrum) -> float:
     return 8.0
 
 
+def atmospheric_stability_factor(
+    air_temp_c: Optional[float],
+    sst_c: Optional[float],
+) -> float:
+    """
+    Soft multiplier op wind-score op basis van air-sea temperature difference.
+
+    Fysica:
+      ΔT = T_air - T_sea
+      - ΔT > +5°C → stabiele grenslaag, schone (laminaire) wind → mild bonus
+      - −2 ≤ ΔT ≤ +2 → neutraal
+      - ΔT < −5°C → koude lucht over warmere zee → onstabiele grenslaag,
+        thermische turbulentie, gust-bursts → mild penalty
+
+    Returns: multiplier in [0.93, 1.05]. Bij ontbrekende input: 1.0.
+    """
+    if air_temp_c is None or sst_c is None:
+        return 1.0
+    delta = air_temp_c - sst_c
+    if delta > 5.0:
+        return 1.05
+    if delta > 2.0:
+        return 1.02
+    if delta >= -2.0:
+        return 1.00
+    if delta >= -5.0:
+        return 0.97
+    return 0.93
+
+
+def wave_quality_spread_factor(directional_spread_deg: Optional[float]) -> float:
+    """
+    Multiplier op golf-score op basis van directionele spreiding (SObh).
+
+    Lage spreiding = clean groomed swell (alle energie uit één richting).
+    Hoge spreiding = rommelig wave-veld uit meerdere richtingen → moeilijker
+    surfen, kortere rideable sets.
+
+    Toepasbaar ALLEEN wanneer er een echte boei-observatie van directional
+    spread beschikbaar is (typisch nowcast t=0..3u). Bij None → 1.0.
+
+    Returns: multiplier in [0.88, 1.05].
+    """
+    if directional_spread_deg is None:
+        return 1.0
+    s = directional_spread_deg
+    if s < 20.0:
+        return 1.05
+    if s < 30.0:
+        return 1.00
+    if s < 45.0:
+        return 0.95
+    return 0.88
+
+
+def convective_warning(
+    cape: Optional[float],
+    lifted_index: Optional[float],
+) -> bool:
+    """
+    Onweer-risico flag voor LLM-context (geen scoring impact).
+
+    Criteria: CAPE > 500 J/kg én lifted_index < -2 → onstabiele troposfeer
+    met genoeg warmte/vocht voor convectieve buien.
+    """
+    if cape is None or lifted_index is None:
+        return False
+    try:
+        return float(cape) > 500.0 and float(lifted_index) < -2.0
+    except (TypeError, ValueError):
+        return False
+
+
+def visibility_concern(
+    visibility_m: Optional[float],
+    dew_point_c: Optional[float],
+    air_temp_c: Optional[float],
+) -> Optional[str]:
+    """
+    Classificeer zicht-condities als string-flag voor LLM.
+
+    - "dichte_mist"        : zicht < 1 km
+    - "haarmist_risico"    : zicht < 5 km én (T − T_dew) < 2°C (vocht saturatie)
+    - "matig_zicht"        : zicht < 10 km
+    - "goed"               : zicht ≥ 10 km (expliciet)
+    - None                 : geen data
+
+    Een specifieke string maakt de LLM-context expressiever dan een boolean.
+    """
+    if visibility_m is None:
+        return None
+    try:
+        v = float(visibility_m)
+    except (TypeError, ValueError):
+        return None
+    if v < 1000.0:
+        return "dichte_mist"
+    if v < 5000.0 and (
+        air_temp_c is not None and dew_point_c is not None
+        and (float(air_temp_c) - float(dew_point_c)) < 2.0
+    ):
+        return "haarmist_risico"
+    if v < 10000.0:
+        return "matig_zicht"
+    return "goed"
+
+
+def storm_surge_warning(surge_cm: Optional[float]) -> bool:
+    """Flag voor LLM: surge ≥ 30cm = noemenswaardige opzet bovenop astronomisch tij."""
+    if surge_cm is None:
+        return False
+    try:
+        return abs(float(surge_cm)) >= 30.0
+    except (TypeError, ValueError):
+        return False
+
+
 def _hours_until(when: datetime, target: Optional[datetime]) -> Optional[float]:
     """
     Aantal uren tussen `when` en `target` (positief als target in toekomst).
@@ -1149,6 +1266,24 @@ def score_hour(state: HourState, context: Optional[dict] = None) -> ScoreBreakdo
     # turbulentie en die wijzigt niet door thermische effecten.
     gust_pen = wind_gust_penalty(state.wind.speed_kn, state.wind.gusts_kn)
     wind_score = max(0.0, wind_score + gust_pen)
+
+    # Atmospheric stability (ΔT = T_air - SST): koude lucht boven warmere zee
+    # geeft thermische turbulentie / gust-bursts (penalty), warme lucht over
+    # koudere zee geeft stabielere, "schonere" wind (mild bonus). Soft multiplier
+    # in [0.93, 1.05]. Bij missing data: 1.0.
+    stab_factor = atmospheric_stability_factor(
+        state.air_temperature_c, state.sea_surface_temperature_c
+    )
+    wind_score *= stab_factor
+
+    # Wave quality op basis van directionele spreiding (SObh van boei).
+    # Alleen toegepast wanneer een echte observatie aanwezig is (nowcast t=0..3u).
+    # Lage spread = clean groomed swell (bonus), hoge spread = rommelig (penalty).
+    if state.wave_spectrum.directional_spread_deg is not None:
+        spread_factor = wave_quality_spread_factor(
+            state.wave_spectrum.directional_spread_deg
+        )
+        golf_score *= spread_factor
 
     # Multi-model wind-spread confidence-penalty (#8): bij hoge spread
     # tussen ECMWF/KNMI/GFS wind-voorspellingen is de wind onzeker en

@@ -54,67 +54,151 @@ class OpenMeteoClient:
 
             raise Exception("Max retries exceeded")
 
+    # Marine velden basis (primary ECMWAM-model)
+    _MARINE_BASE_FIELDS = (
+        'wave_height',
+        'wave_direction',
+        'wave_period',
+        'wind_wave_height',
+        'wind_wave_direction',
+        'wind_wave_period',
+        'wind_wave_peak_period',
+        'swell_wave_height',
+        'swell_wave_direction',
+        'swell_wave_period',
+    )
+
+    # Nieuwe gratis Open-Meteo marine-velden (zee-oppervlakte temperatuur,
+    # echte stroming en sea-level fields). Open-Meteo retourneert null voor
+    # uren waar deze niet beschikbaar zijn — _get() handelt dat af.
+    _MARINE_EXTRA_FIELDS = (
+        'sea_surface_temperature',
+        'ocean_current_velocity',
+        'ocean_current_direction',
+        'sea_level_height_msl',
+        'invert_barometer_height',
+    )
+
     async def fetch_marine_data(
         self,
         lat: float = None,
         lon: float = None,
-        hours: int = 168  # 7 dagen
+        hours: int = 168,  # 7 dagen
+        models: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """
         Haal marine data op (golfhoogtes, periodes, richtingen).
 
+        Args:
+            models: Optionele lijst van extra wave-modellen naast de standaard
+                ECMWAM (de Open-Meteo default). Voorbeeld: ``['ewam']`` voegt
+                DWD EWAM 5km Europese kust-resolutie toe. Bij multi-model
+                retourneert Open-Meteo per veld een suffixed kolom
+                (``wave_height_ewam``) — die wordt als
+                ``wave_height_ewam`` in de output-row meegegeven.
+
+                Default: ``None`` (geen extra models, single-source).
+
         Returns:
-            Lijst van uurlijkse data points
+            Lijst van uurlijkse data points. Per row staan de basis-velden
+            (wave_height, swell_*, etc.) plus de nieuwe extra-velden
+            (sea_surface_temperature, ocean_current_*, sea_level_height_msl,
+            invert_barometer_height). Bij ``models=['ewam']`` worden ook
+            ``wave_height_ewam``, ``wave_period_ewam``, ``wave_direction_ewam``
+            (en gelijksoortige suffixed keys) toegevoegd als optionele keys.
         """
         if lat is None:
             lat = NOORDWIJK.lat
         if lon is None:
             lon = NOORDWIJK.lon
 
+        all_fields = list(self._MARINE_BASE_FIELDS) + list(self._MARINE_EXTRA_FIELDS)
+
         params = {
             'latitude': lat,
             'longitude': lon,
-            'hourly': ','.join([
-                'wave_height',
-                'wave_direction',
-                'wave_period',
-                'wind_wave_height',
-                'wind_wave_direction',
-                'wind_wave_period',
-                'wind_wave_peak_period',
-                'swell_wave_height',
-                'swell_wave_direction',
-                'swell_wave_period'
-            ]),
+            'hourly': ','.join(all_fields),
             'timezone': TIMEZONE,
-            'forecast_days': min(7, hours // 24 + 1)
+            'forecast_days': min(7, hours // 24 + 1),
         }
+        if models:
+            params['models'] = ','.join(models)
 
-        logger.info(f"Fetching marine data from Open-Meteo for {lat}, {lon}")
+        logger.info(
+            f"Fetching marine data from Open-Meteo for {lat}, {lon} "
+            f"(extra_models={models or 'none'})"
+        )
         data = await self._request_with_retry(self.marine_url, params)
 
         # Parse response
         hourly = data.get('hourly', {})
         times = hourly.get('time', [])
 
-        result = []
-        for i, time_str in enumerate(times):
-            result.append({
-                'timestamp': datetime.fromisoformat(time_str.replace('Z', '+00:00')),
-                'wave_height': hourly.get('wave_height', [])[i],
-                'wave_direction': hourly.get('wave_direction', [])[i],
-                'wave_period': hourly.get('wave_period', [])[i],
-                'wind_wave_height': hourly.get('wind_wave_height', [])[i],
-                'wind_wave_direction': hourly.get('wind_wave_direction', [])[i],
-                'wind_wave_period': hourly.get('wind_wave_period', [])[i],
-                'wind_wave_peak_period': hourly.get('wind_wave_peak_period', [])[i],
-                'swell_wave_height': hourly.get('swell_wave_height', [])[i],
-                'swell_wave_direction': hourly.get('swell_wave_direction', [])[i],
-                'swell_wave_period': hourly.get('swell_wave_period', [])[i]
-            })
+        def _get(field: str, i: int):
+            col = hourly.get(field)
+            if not col or i >= len(col):
+                return None
+            return col[i]
 
-        logger.info(f"Retrieved {len(result)} hours of marine data")
+        result: List[Dict[str, Any]] = []
+        for i, time_str in enumerate(times):
+            row: Dict[str, Any] = {
+                'timestamp': datetime.fromisoformat(time_str.replace('Z', '+00:00')),
+                # Basis-velden
+                'wave_height': _get('wave_height', i),
+                'wave_direction': _get('wave_direction', i),
+                'wave_period': _get('wave_period', i),
+                'wind_wave_height': _get('wind_wave_height', i),
+                'wind_wave_direction': _get('wind_wave_direction', i),
+                'wind_wave_period': _get('wind_wave_period', i),
+                'wind_wave_peak_period': _get('wind_wave_peak_period', i),
+                'swell_wave_height': _get('swell_wave_height', i),
+                'swell_wave_direction': _get('swell_wave_direction', i),
+                'swell_wave_period': _get('swell_wave_period', i),
+                # Nieuwe extra-velden (optioneel — kunnen None zijn)
+                'sea_surface_temperature': _get('sea_surface_temperature', i),
+                'ocean_current_velocity': _get('ocean_current_velocity', i),
+                'ocean_current_direction': _get('ocean_current_direction', i),
+                'sea_level_height_msl': _get('sea_level_height_msl', i),
+                'invert_barometer_height': _get('invert_barometer_height', i),
+            }
+
+            # Multi-model suffixed velden (bv. DWD EWAM). Open-Meteo gebruikt
+            # bij multi-model een suffix per kolom: 'wave_height_ewam' etc.
+            # We laten de suffixed keys 1-op-1 doorvloeien zodat downstream
+            # callers eenvoudig kunnen toetsen op spread tussen modellen.
+            if models:
+                for model in models:
+                    for field in self._MARINE_BASE_FIELDS:
+                        suffixed = f"{field}_{model}"
+                        if suffixed in hourly:
+                            row[suffixed] = _get(suffixed, i)
+
+            result.append(row)
+
+        logger.info(
+            f"Retrieved {len(result)} hours of marine data "
+            f"(fields={len(all_fields)}, extra_models={models or 'none'})"
+        )
         return result
+
+    async def fetch_marine_data_ewam(
+        self,
+        lat: float = None,
+        lon: float = None,
+        hours: int = 168,
+    ) -> List[Dict[str, Any]]:
+        """
+        Helper: marine data met DWD EWAM 5km als enige model.
+
+        Levert dezelfde shape als ``fetch_marine_data`` (rows met de basis-
+        en extra-velden), maar met ``wave_height_ewam`` etc. als suffixed
+        keys naast de basis. Handig wanneer alleen de EWAM-bron nodig is
+        (bv. voor backtests of bias-onderzoek).
+        """
+        return await self.fetch_marine_data(
+            lat=lat, lon=lon, hours=hours, models=['ewam']
+        )
 
     async def fetch_forecast_data(
         self,
@@ -142,18 +226,41 @@ class OpenMeteoClient:
         if models is None:
             models = OPEN_METEO_MODELS
 
+        # Per-model meteo fields (each model heeft eigen serie).
+        per_model_fields = [
+            'wind_speed_10m',
+            'wind_direction_10m',
+            'wind_gusts_10m',
+            'temperature_2m',
+            'precipitation',
+            'pressure_msl',
+            'cloud_cover',
+            'apparent_temperature',
+            'relative_humidity_2m',
+            'dew_point_2m',
+            'visibility',
+            'weather_code',
+            'is_day',
+            'uv_index',
+            'sunshine_duration',
+        ]
+
+        # Atmospheric-stability / convectie fields: niet zinvol om per model
+        # te vergelijken (vaak alleen door ICON/GFS geleverd, niet per regional
+        # model). Open-Meteo retourneert deze bij multi-model met suffix van
+        # het PRIMARY model — we accepteren zowel bare als suffixed keys en
+        # vallen terug op wat beschikbaar is (zie _stability_get hieronder).
+        stability_fields = [
+            'cape',
+            'lifted_index',
+            'convective_inhibition',
+            'boundary_layer_height',
+        ]
+
         params = {
             'latitude': lat,
             'longitude': lon,
-            'hourly': ','.join([
-                'wind_speed_10m',
-                'wind_direction_10m',
-                'wind_gusts_10m',
-                'temperature_2m',
-                'precipitation',
-                'pressure_msl',
-                'cloud_cover'
-            ]),
+            'hourly': ','.join(per_model_fields + stability_fields),
             'wind_speed_unit': 'kn',
             'timezone': TIMEZONE,
             'forecast_days': min(16, hours // 24 + 1),
@@ -199,6 +306,33 @@ class OpenMeteoClient:
                 return None
             return field if field in hourly else None
 
+        def _stability_key(field: str) -> Optional[str]:
+            """
+            Vind kolomnaam voor een stability/convectie veld. Open-Meteo
+            kan bij multi-model alleen suffixed kolommen retourneren
+            (cape_knmi_seamless, cape_ecmwf_ifs025, …). We pakken de eerste
+            beschikbare (PRIMARY model preference: knmi → ecmwf → gfs → any).
+            Bij single-model is de bare key prima.
+            """
+            if field in hourly:
+                return field
+            # Probeer modellen in voorkeursvolgorde.
+            for preferred in models:
+                suffixed = f"{field}_{preferred}"
+                if suffixed in hourly:
+                    return suffixed
+            # Laatste redmiddel: scan alle keys op prefix.
+            for k in hourly.keys():
+                if k.startswith(f"{field}_"):
+                    return k
+            return None
+
+        # Pre-resolve stability keys (1x per call — niet per model loop).
+        cape_key = _stability_key('cape')
+        li_key = _stability_key('lifted_index')
+        cin_key = _stability_key('convective_inhibition')
+        pbl_key = _stability_key('boundary_layer_height')
+
         result: Dict[str, List[Dict[str, Any]]] = {}
         for model in models:
             ws_key = _key('wind_speed_10m', model)
@@ -208,6 +342,15 @@ class OpenMeteoClient:
             pr_key = _key('precipitation', model)
             p_key = _key('pressure_msl', model)
             cc_key = _key('cloud_cover', model)
+            # Nieuwe per-model fields
+            at_key = _key('apparent_temperature', model)
+            rh_key = _key('relative_humidity_2m', model)
+            dp_key = _key('dew_point_2m', model)
+            vis_key = _key('visibility', model)
+            wc_key = _key('weather_code', model)
+            isday_key = _key('is_day', model)
+            uv_key = _key('uv_index', model)
+            sun_key = _key('sunshine_duration', model)
 
             # Essentiële velden (wind speed + dir) moeten aanwezig zijn.
             if ws_key is None or wd_key is None:
@@ -234,6 +377,20 @@ class OpenMeteoClient:
                     'precipitation': _get(pr_key),
                     'pressure': _get(p_key),
                     'cloud_cover': _get(cc_key),
+                    # NIEUW: per-model atmospheric / display fields
+                    'apparent_temperature': _get(at_key),
+                    'relative_humidity': _get(rh_key),
+                    'dew_point': _get(dp_key),
+                    'visibility': _get(vis_key),
+                    'weather_code': _get(wc_key),
+                    'is_day': _get(isday_key),
+                    'uv_index': _get(uv_key),
+                    'sunshine_duration': _get(sun_key),
+                    # NIEUW: shared stability fields (zelfde voor elk model)
+                    'cape': _get(cape_key),
+                    'lifted_index': _get(li_key),
+                    'convective_inhibition': _get(cin_key),
+                    'boundary_layer_height': _get(pbl_key),
                 })
             result[model] = model_result
 

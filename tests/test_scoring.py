@@ -843,5 +843,266 @@ class TestSprint2WindSpreadInScoring:
         assert with_spread.golf_score == baseline.golf_score
 
 
+class TestAtmosphericStabilityFactor:
+    """Sprint 4 — atmospheric stability factor (air - sea temperature delta)."""
+
+    def test_stable_warm_air_over_cold_sea_gives_bonus(self):
+        from src.scoring.hourly import atmospheric_stability_factor
+        # Warm voorjaar: lucht 18°C boven 10°C zee → ΔT=+8 → stable bonus
+        assert atmospheric_stability_factor(18.0, 10.0) == 1.05
+
+    def test_neutral_returns_one(self):
+        from src.scoring.hourly import atmospheric_stability_factor
+        # Bijna gelijk → neutraal → 1.00
+        assert atmospheric_stability_factor(15.0, 14.5) == 1.00
+
+    def test_strong_unstable_gives_penalty(self):
+        from src.scoring.hourly import atmospheric_stability_factor
+        # Koude lucht over warmere zee (najaar): lucht 5°C, zee 14°C → ΔT=-9 → 0.93
+        assert atmospheric_stability_factor(5.0, 14.0) == 0.93
+
+    def test_none_inputs_return_one(self):
+        from src.scoring.hourly import atmospheric_stability_factor
+        assert atmospheric_stability_factor(None, 10.0) == 1.0
+        assert atmospheric_stability_factor(10.0, None) == 1.0
+        assert atmospheric_stability_factor(None, None) == 1.0
+
+
+class TestWaveQualitySpreadFactor:
+    """Sprint 4 — wave quality op basis van boei directional spread (SObh)."""
+
+    def test_clean_swell_gets_bonus(self):
+        from src.scoring.hourly import wave_quality_spread_factor
+        assert wave_quality_spread_factor(15.0) == 1.05
+
+    def test_mid_spread_neutral(self):
+        from src.scoring.hourly import wave_quality_spread_factor
+        assert wave_quality_spread_factor(25.0) == 1.00
+
+    def test_high_spread_mild_penalty(self):
+        from src.scoring.hourly import wave_quality_spread_factor
+        assert wave_quality_spread_factor(35.0) == 0.95
+
+    def test_very_high_spread_strong_penalty(self):
+        from src.scoring.hourly import wave_quality_spread_factor
+        assert wave_quality_spread_factor(60.0) == 0.88
+
+    def test_none_returns_one(self):
+        from src.scoring.hourly import wave_quality_spread_factor
+        assert wave_quality_spread_factor(None) == 1.0
+
+
+class TestConvectiveWarning:
+    """Sprint 4 — convectie/onweer flag."""
+
+    def test_high_cape_low_li_triggers_warning(self):
+        from src.scoring.hourly import convective_warning
+        assert convective_warning(800.0, -4.0) is True
+
+    def test_low_cape_no_warning(self):
+        from src.scoring.hourly import convective_warning
+        assert convective_warning(200.0, -4.0) is False
+
+    def test_positive_li_no_warning(self):
+        from src.scoring.hourly import convective_warning
+        assert convective_warning(800.0, 1.0) is False
+
+    def test_none_inputs_return_false(self):
+        from src.scoring.hourly import convective_warning
+        assert convective_warning(None, None) is False
+        assert convective_warning(800.0, None) is False
+        assert convective_warning(None, -4.0) is False
+
+
+class TestVisibilityConcern:
+    """Sprint 4 — zicht-classificatie voor LLM."""
+
+    def test_dichte_mist(self):
+        from src.scoring.hourly import visibility_concern
+        assert visibility_concern(500.0, 8.0, 9.0) == "dichte_mist"
+
+    def test_haarmist_risico_when_humid_and_low_vis(self):
+        from src.scoring.hourly import visibility_concern
+        # Zicht 3km, lucht 10°C, dauwpunt 9°C → delta 1°C → haarmist
+        assert visibility_concern(3000.0, 9.0, 10.0) == "haarmist_risico"
+
+    def test_low_vis_without_humidity_match_is_matig(self):
+        from src.scoring.hourly import visibility_concern
+        # Zicht 3km maar delta 5°C → geen haarmist → toch < 10km dus matig
+        assert visibility_concern(3000.0, 5.0, 10.0) == "matig_zicht"
+
+    def test_goed_zicht(self):
+        from src.scoring.hourly import visibility_concern
+        assert visibility_concern(15000.0, 5.0, 18.0) == "goed"
+
+    def test_none_returns_none(self):
+        from src.scoring.hourly import visibility_concern
+        assert visibility_concern(None, None, None) is None
+
+
+class TestStormSurgeWarning:
+    """Sprint 4 — opzet flag (gemeten - astronomisch)."""
+
+    def test_high_surge_triggers(self):
+        from src.scoring.hourly import storm_surge_warning
+        assert storm_surge_warning(45.0) is True
+
+    def test_negative_high_surge_triggers(self):
+        from src.scoring.hourly import storm_surge_warning
+        assert storm_surge_warning(-40.0) is True
+
+    def test_low_surge_no_warning(self):
+        from src.scoring.hourly import storm_surge_warning
+        assert storm_surge_warning(15.0) is False
+
+    def test_none_returns_false(self):
+        from src.scoring.hourly import storm_surge_warning
+        assert storm_surge_warning(None) is False
+
+
+class TestSprint4ScoringWiring:
+    """Sprint 4 — nieuwe factoren werken via score_hour als multipliers."""
+
+    def _make_state(self, **kwargs):
+        peak = SpectralPeak(
+            frequency_mhz=100, period_s=10.0, height_m=1.2,
+            direction_deg=300, type=SwellType.GROUND_SWELL
+        )
+        defaults = dict(
+            timestamp=_FIXED_TS,
+            location_name="Noordwijk",
+            wave_spectrum=WaveSpectrum(
+                timestamp=_FIXED_TS, significant_height_total=1.2,
+                mean_period=10, mean_direction=300, peaks=[peak]
+            ),
+            wind=WindState(speed_kn=8, direction_deg=105),
+            tide=TideState(level_m=0.5, phase="opgaand",
+                           next_low=_FIXED_TS, next_high=_FIXED_TS),
+        )
+        defaults.update(kwargs)
+        return HourState(**defaults)
+
+    def test_stability_factor_changes_wind_score(self):
+        """ΔT < -5°C → wind_score multiplier 0.93."""
+        from src.scoring.hourly import score_hour
+        baseline = score_hour(self._make_state())
+        # Koude lucht over warme zee → wind_score zou licht moeten dalen
+        with_stab = score_hour(self._make_state(
+            air_temperature_c=5.0, sea_surface_temperature_c=14.0
+        ))
+        assert with_stab.wind_score < baseline.wind_score
+
+    def test_spread_factor_changes_golf_score(self):
+        """Rommelige spread (50°) → golf_score multiplier 0.88."""
+        from src.scoring.hourly import score_hour
+        state_clean = self._make_state()
+        # Inject directional spread observation via WaveSpectrum field
+        state_messy = self._make_state()
+        state_messy.wave_spectrum.directional_spread_deg = 50.0
+        baseline = score_hour(state_clean)
+        with_spread = score_hour(state_messy)
+        assert with_spread.golf_score < baseline.golf_score
+
+    def test_no_extras_unchanged(self):
+        """Zonder nieuwe velden: backwards compatibel — geen score-shift."""
+        from src.scoring.hourly import score_hour
+        sb = score_hour(self._make_state())
+        # Score is een waarde > 0 (zomer-09 daglicht)
+        assert sb.golf_score > 0
+        assert sb.wind_score > 0
+
+
+class TestSprint4GeneratorContext:
+    """Sprint 4 — _hour_state_to_conditions vult nieuwe velden + citaties."""
+
+    def _make_state(self, **kwargs):
+        peak = SpectralPeak(
+            frequency_mhz=100, period_s=10.0, height_m=1.2,
+            direction_deg=300, type=SwellType.GROUND_SWELL
+        )
+        defaults = dict(
+            timestamp=_FIXED_TS,
+            location_name="Noordwijk",
+            wave_spectrum=WaveSpectrum(
+                timestamp=_FIXED_TS, significant_height_total=1.2,
+                mean_period=10, mean_direction=300, peaks=[peak]
+            ),
+            wind=WindState(speed_kn=8, direction_deg=105, gusts_kn=11.0),
+            tide=TideState(level_m=0.5, phase="opgaand",
+                           next_low=_FIXED_TS, next_high=_FIXED_TS),
+            air_temperature_c=18.0,
+            sea_surface_temperature_c=14.0,
+            precipitation_mm=0.5,
+            visibility_m=6000,
+            dew_point_c=12.0,
+            cape_jkg=600.0,
+            lifted_index=-3.0,
+            storm_surge_cm=35.0,
+        )
+        defaults.update(kwargs)
+        return HourState(**defaults)
+
+    def test_conditions_include_new_fields(self):
+        from src.llm.generator import SMSGenerator
+        gen = SMSGenerator()
+        conds = gen._hour_state_to_conditions(self._make_state())
+        assert conds["air_temperature_c"] == 18.0
+        assert conds["sea_surface_temperature_c"] == 14.0
+        assert conds["air_sea_temp_diff_c"] == 4.0
+        assert conds["precipitation_flag"] is True
+        assert conds["convective_warning"] is True
+        assert conds["visibility_m"] == 6000
+        assert conds["storm_surge_warning"] is True
+        assert conds["storm_surge_cm"] == 35.0
+
+    def test_conditions_none_when_missing(self):
+        from src.llm.generator import SMSGenerator
+        gen = SMSGenerator()
+        # Geen extras meegegeven → optionele velden = None / False
+        peak = SpectralPeak(
+            frequency_mhz=100, period_s=10.0, height_m=1.2,
+            direction_deg=300, type=SwellType.GROUND_SWELL
+        )
+        state = HourState(
+            timestamp=_FIXED_TS,
+            location_name="Noordwijk",
+            wave_spectrum=WaveSpectrum(
+                timestamp=_FIXED_TS, significant_height_total=1.2,
+                mean_period=10, mean_direction=300, peaks=[peak]
+            ),
+            wind=WindState(speed_kn=8, direction_deg=105),
+            tide=TideState(level_m=0.5, phase="opgaand",
+                           next_low=_FIXED_TS, next_high=_FIXED_TS),
+        )
+        conds = gen._hour_state_to_conditions(state)
+        assert conds["air_temperature_c"] is None
+        assert conds["sst_c" if False else "sea_surface_temperature_c"] is None
+        assert conds["air_sea_temp_diff_c"] is None
+        assert conds["precipitation_flag"] is False
+        assert conds["convective_warning"] is False
+        assert conds["visibility_concern"] is None
+        assert conds["storm_surge_warning"] is False
+
+    def test_allowed_citations_include_new_keys(self):
+        """_build_allowed_citations exposes nieuwe whitelists."""
+        from src.llm.generator import SMSGenerator
+        gen = SMSGenerator()
+        conds = gen._hour_state_to_conditions(self._make_state())
+        cit = gen._build_allowed_citations(
+            peak_height_conditions=conds,
+            best_window=None,
+            tide_summary={},
+            other_windows=[],
+        )
+        # Nieuwe whitelist-keys aanwezig
+        for k in ("wind_gusts_kn", "air_temperatures_c", "sst_c",
+                  "precipitations_mm", "visibilities_m"):
+            assert k in cit
+        # Inhoud klopt voor peak hour
+        assert 18.0 in cit["air_temperatures_c"]
+        assert 14.0 in cit["sst_c"]
+        assert 11.0 in cit["wind_gusts_kn"]
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

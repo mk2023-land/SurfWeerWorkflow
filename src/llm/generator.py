@@ -314,6 +314,15 @@ EXTRA SIGNALEN
 - `confidence_label="laag"` → mag je voorbehouden formuleren ("modellen nog
   onzeker", "spreiding tussen modellen"). Bij "hoog" of "matig": géén
   voorbehoud, schrijf zoals altijd.
+- `convective_warning=true` op `peak_height_hour` → noem "onweer-risico"
+  (kort, één keer). Anders niet noemen.
+- `visibility_concern="haarmist_risico"` → noem "mist mogelijk in de
+  ochtend"; `="dichte_mist"` → "dichte mist"; anders niet noemen.
+- `precipitation_flag=true` → noem "regen"; `=false` mag eventueel "droog"
+  zeggen wanneer dat de toon dient. Geen mm-getal noemen tenzij in
+  `_allowed_citations.precipitations_mm`.
+- `storm_surge_warning=true` → noem "opzet" of "water staat hoger dan
+  astronomisch tij". Anders niet noemen.
 
 ═══════════════════════════════════════════════════════════════════════
 STRIKTE REGELS — SAMENVATTING
@@ -692,6 +701,12 @@ class SMSGenerator:
         wind_dirs = {peak_height_conditions["wind_direction_compass"]}
         wave_dirs = {peak_height_conditions["wave_direction_compass"]}
         times_hhmm = {peak_height_conditions["time"]}
+        # Uitgebreide whitelist — boei-extras + atmospheric context.
+        gusts_kn = {peak_height_conditions.get("wind_gust_kn")}
+        air_temps_c = {peak_height_conditions.get("air_temperature_c")}
+        ssts_c = {peak_height_conditions.get("sea_surface_temperature_c")}
+        precipitations_mm = {peak_height_conditions.get("precipitation_mm")}
+        visibilities_m = {peak_height_conditions.get("visibility_m")}
 
         # Best_window kan 'surfable' of 'longboard' zijn — beide soorten leveren
         # citeerbare condities (wind/golf/tijd) op voor de LLM en validator.
@@ -710,6 +725,11 @@ class SMSGenerator:
                 wind_speeds_kn.add(pc.get("wind_speed_kn"))
                 wind_dirs.add(pc.get("wind_direction_compass"))
                 wave_dirs.add(pc.get("wave_direction_compass"))
+                gusts_kn.add(pc.get("wind_gust_kn"))
+                air_temps_c.add(pc.get("air_temperature_c"))
+                ssts_c.add(pc.get("sea_surface_temperature_c"))
+                precipitations_mm.add(pc.get("precipitation_mm"))
+                visibilities_m.add(pc.get("visibility_m"))
             times_hhmm.add(win.get("start_time"))
             times_hhmm.add(win.get("end_time"))
             times_hhmm.add(win.get("peak_time"))
@@ -732,11 +752,23 @@ class SMSGenerator:
             "wind_directions_compass": _clean(wind_dirs),
             "wave_directions_compass": _clean(wave_dirs),
             "times_hhmm": _clean(times_hhmm),
+            # Uitbreidingen — gust + atmospheric (Sprint 4):
+            "wind_gusts_kn": _clean(gusts_kn),
+            "air_temperatures_c": _clean(air_temps_c),
+            "sst_c": _clean(ssts_c),
+            "precipitations_mm": _clean(precipitations_mm),
+            "visibilities_m": _clean(visibilities_m),
         }
 
     def _hour_state_to_conditions(self, state: HourState) -> Dict:
         """Pak fysische condities uit HourState. Alles in expliciete eenheden."""
-        from src.scoring.hourly import recommend_boards, tide_velocity_mh
+        from src.scoring.hourly import (
+            recommend_boards,
+            tide_velocity_mh,
+            convective_warning,
+            visibility_concern,
+            storm_surge_warning,
+        )
 
         spectrum = state.wave_spectrum
         dominant = max(spectrum.peaks, key=lambda p: p.height_m) if spectrum.peaks else None
@@ -778,6 +810,28 @@ class SMSGenerator:
             wind_direction_deg=state.wind.direction_deg,
         )
 
+        # Atmospheric / oceaan context velden (nieuw — alle optioneel).
+        # air_sea_temp_diff_c geeft de LLM materiaal voor stabiliteits-context;
+        # precipitation_flag/convective/visibility zijn handelingsvlaggen.
+        air_sea_diff = None
+        if state.air_temperature_c is not None and state.sea_surface_temperature_c is not None:
+            air_sea_diff = round(
+                state.air_temperature_c - state.sea_surface_temperature_c, 1
+            )
+        precipitation_flag = (
+            state.precipitation_mm is not None and state.precipitation_mm > 0.3
+        )
+        conv_warning = convective_warning(state.cape_jkg, state.lifted_index)
+        vis_concern = visibility_concern(
+            state.visibility_m, state.dew_point_c, state.air_temperature_c
+        )
+        surge_flag = storm_surge_warning(state.storm_surge_cm)
+        storm_surge_cm_out = (
+            round(float(state.storm_surge_cm), 0)
+            if state.storm_surge_cm is not None and abs(state.storm_surge_cm) >= 20.0
+            else None
+        )
+
         return {
             "time": state.timestamp.strftime("%H:%M"),
             "wave_height_m": round(spectrum.significant_height_total, 1),
@@ -802,6 +856,37 @@ class SMSGenerator:
             ),
             "boards_suitable": boards_suitable,
             "is_unsurfable": len(boards_suitable) == 0,
+            # ---- Nieuwe atmospheric / oceaan context ----
+            "air_temperature_c": (
+                round(state.air_temperature_c, 1)
+                if state.air_temperature_c is not None else None
+            ),
+            "sea_surface_temperature_c": (
+                round(state.sea_surface_temperature_c, 1)
+                if state.sea_surface_temperature_c is not None else None
+            ),
+            "air_sea_temp_diff_c": air_sea_diff,
+            "precipitation_mm": (
+                round(state.precipitation_mm, 1)
+                if state.precipitation_mm is not None else None
+            ),
+            "precipitation_flag": precipitation_flag,
+            "convective_warning": conv_warning,
+            "visibility_m": (
+                int(state.visibility_m) if state.visibility_m is not None else None
+            ),
+            "visibility_concern": vis_concern,
+            "storm_surge_cm": storm_surge_cm_out,
+            "storm_surge_warning": surge_flag,
+            # Boei-observatie (alleen nowcast t=0..3u, anders None)
+            "directional_spread_deg": (
+                round(spectrum.directional_spread_deg, 1)
+                if spectrum.directional_spread_deg is not None else None
+            ),
+            "peak_period_observed_s": (
+                round(spectrum.peak_period_observed_s, 1)
+                if spectrum.peak_period_observed_s is not None else None
+            ),
         }
 
     def _tide_summary_for_day(self, day_states: List[HourState], peak_state: HourState) -> Dict:

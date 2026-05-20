@@ -42,6 +42,19 @@ GROOTHEID_HM0 = 'Hm0'      # Significante golfhoogte in spectrale domein (cm)
 GROOTHEID_TM02 = 'Tm02'    # Gemiddelde golfperiode uit m0/m2 (s)
 GROOTHEID_TH0 = 'Th0'      # Gemiddelde golfrichting (graden)
 GROOTHEID_WATHTE = 'WATHTE'  # Waterhoogte (cm t.o.v. NAP)
+# Uitgebreide boei-grootheden (RWS DDAPI20).
+GROOTHEID_TP = 'Tp'        # Peak-periode (s) — surfers/pro-forecasters
+GROOTHEID_TP_FALLBACK = 'Tp001'  # Sommige DDAPI20-versies hanteren Tp001 i.p.v. Tp
+GROOTHEID_SOBH = 'SObh'    # Directional spread / golfrichtingspreiding (°)
+GROOTHEID_HMAX = 'Hmax'    # Max individuele golf in meet-interval (cm)
+GROOTHEID_LUCHTDK = 'LUCHTDK'   # Luchtdruk gemeten bij boei (hPa)
+GROOTHEID_LUCHTTPR = 'LUCHTTPR' # Luchttemperatuur bij boei (°C)
+# Tide-uitbreiding voor storm surge residual.
+# Bij sommige RWS-publicaties is het astronomisch tij gepubliceerd onder
+# WATHTBRKD ("berekend"); de actuele/gemeten waterhoogte als WATHTE met
+# ProcesType=metingen. We proberen beide te halen en berekenen
+# `surge_cm = measured - astronomical` als beide beschikbaar zijn.
+GROOTHEID_WATHTBRKD = 'WATHTBRKD'
 
 
 def _parse_rws_timestamp(s: str) -> datetime:
@@ -130,10 +143,47 @@ class RWSClient:
         out.sort(key=lambda x: x['timestamp'])
         return out
 
+    async def _fetch_series_safe(
+        self,
+        location_code: str,
+        grootheid: str,
+        start: datetime,
+        end: datetime,
+        proces_type: Optional[str] = None,
+        hoedanigheid: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Wrapper rond `_fetch_series` die fouten en lege responses opvangt
+        en gestructureerde per-grootheid logging emit (B5-fix-stijl).
+
+        Retourneert altijd een lijst — leeg bij error, zodat een individuele
+        503/404 niet de hele boei kapotmaakt in `asyncio.gather(..., return_exceptions=True)`.
+        """
+        try:
+            rows = await self._fetch_series(
+                location_code, grootheid, start, end,
+                proces_type=proces_type, hoedanigheid=hoedanigheid,
+            )
+        except Exception as e:
+            logger.warning(
+                f"RWS grootheid {grootheid}@{location_code} mislukt: {e}"
+            )
+            return []
+        if not rows:
+            logger.warning(
+                f"RWS grootheid {grootheid}@{location_code} leverde 0 punten"
+            )
+            return rows
+        logger.info(
+            f"RWS grootheid {grootheid}@{location_code}: {len(rows)} punten"
+        )
+        return rows
+
     async def fetch_buoy_data(
         self,
         station_code: str,
         hours_back: int = 24,
+        include_extras: bool = True,
     ) -> List[Dict[str, Any]]:
         """
         Haal recente boei-data op: significante golfhoogte (m), periode (s), richting (°).
@@ -141,6 +191,17 @@ class RWSClient:
         Bevraagt Hm0, Tm02 en Th0 parallel en mergt op tijdstip. Th0 wordt
         op 0 gezet als de boei geen richting publiceert (gebruikelijk bij
         offshore-platforms zonder directionele sensor).
+
+        Wanneer `include_extras=True` (default) worden ook de uitgebreide
+        DDAPI20-grootheden opgehaald en als extra dict-keys toegevoegd aan
+        elk gemerged punt:
+          - `tp_s`     : peak-periode (Tp of Tp001-fallback)
+          - `sobh_deg` : directional spread
+          - `hmax_m`   : maximale individuele golf in interval
+          - `pressure_hpa`, `air_temp_c` : alleen bij IJG1 (LUCHTDK/LUCHTTPR)
+
+        Per-grootheid failures (503, 404, lege response) zijn gracieus — de
+        bijbehorende key ontbreekt of staat op None in het gemergede punt.
         """
         if station_code not in RWS_STATIONS:
             raise ValueError(f"Onbekend station: {station_code}")
@@ -152,25 +213,66 @@ class RWSClient:
 
         logger.info(f"Fetching buoy data for {station['name']} ({rws_code}), {hours_back}h history")
 
-        try:
-            hm0, tm02, th0 = await asyncio.gather(
-                self._fetch_series(rws_code, GROOTHEID_HM0, start, end),
-                self._fetch_series(rws_code, GROOTHEID_TM02, start, end),
-                self._fetch_series(rws_code, GROOTHEID_TH0, start, end),
-                return_exceptions=True,
+        # Basis-grootheden — backwards compatible.
+        base_tasks = [
+            self._fetch_series_safe(rws_code, GROOTHEID_HM0, start, end),
+            self._fetch_series_safe(rws_code, GROOTHEID_TM02, start, end),
+            self._fetch_series_safe(rws_code, GROOTHEID_TH0, start, end),
+        ]
+
+        # Uitgebreide grootheden — alleen wanneer expliciet gevraagd.
+        # LUCHTDK/LUCHTTPR alleen voor IJG1 (primary, lokaal).
+        extra_codes: List[str] = []
+        if include_extras:
+            extra_codes.extend([GROOTHEID_TP, GROOTHEID_SOBH, GROOTHEID_HMAX])
+            if station_code == 'IJG1':
+                extra_codes.extend([GROOTHEID_LUCHTDK, GROOTHEID_LUCHTTPR])
+        extra_tasks = [
+            self._fetch_series_safe(rws_code, code, start, end)
+            for code in extra_codes
+        ]
+
+        results = await asyncio.gather(
+            *base_tasks, *extra_tasks, return_exceptions=True
+        )
+
+        # `_fetch_series_safe` zou nooit moeten raisen, maar gather kan
+        # alsnog een Exception terugkrijgen — degradeer naar [].
+        def _list(x):
+            return x if isinstance(x, list) else []
+
+        hm0 = _list(results[0])
+        tm02 = _list(results[1])
+        th0 = _list(results[2])
+        extras_lists = [_list(r) for r in results[3:]]
+        extras_by_code: Dict[str, List[Dict[str, Any]]] = dict(
+            zip(extra_codes, extras_lists)
+        )
+
+        # Tp/Tp001 fallback: als Tp niets oplevert, probeer Tp001 een keer.
+        if include_extras and not extras_by_code.get(GROOTHEID_TP):
+            logger.info(
+                f"Tp leeg voor {station_code}, fallback naar {GROOTHEID_TP_FALLBACK}"
             )
-        except Exception as e:
-            logger.error(f"Failed to fetch buoy data for {station_code}: {e}")
-            return []
+            tp_fb = await self._fetch_series_safe(
+                rws_code, GROOTHEID_TP_FALLBACK, start, end
+            )
+            if tp_fb:
+                extras_by_code[GROOTHEID_TP] = tp_fb
 
-        # Onderdruk individuele fouten (bv. boei zonder Th0).
-        hm0 = hm0 if isinstance(hm0, list) else []
-        tm02 = tm02 if isinstance(tm02, list) else []
-        th0 = th0 if isinstance(th0, list) else []
-
-        # Th0 indexeren op exact tijdstip, dan binden aan Hm0/Tm02 (10-min raster).
+        # Indexeren op tijdstip voor merge.
         tm02_by_ts = {row['timestamp']: row['value'] for row in tm02}
         th0_by_ts = {row['timestamp']: row['value'] for row in th0}
+        tp_by_ts = {r['timestamp']: r['value']
+                    for r in extras_by_code.get(GROOTHEID_TP, [])}
+        sobh_by_ts = {r['timestamp']: r['value']
+                      for r in extras_by_code.get(GROOTHEID_SOBH, [])}
+        hmax_by_ts = {r['timestamp']: r['value']
+                      for r in extras_by_code.get(GROOTHEID_HMAX, [])}
+        pressure_by_ts = {r['timestamp']: r['value']
+                          for r in extras_by_code.get(GROOTHEID_LUCHTDK, [])}
+        airtemp_by_ts = {r['timestamp']: r['value']
+                         for r in extras_by_code.get(GROOTHEID_LUCHTTPR, [])}
 
         merged: List[Dict[str, Any]] = []
         for row in hm0:
@@ -179,13 +281,31 @@ class RWSClient:
             if period_s is None or period_s <= 0:
                 continue  # zonder periode is een spectrale piek zinloos
             direction = th0_by_ts.get(ts, 0.0)
-            merged.append({
+            point: Dict[str, Any] = {
                 'timestamp': ts,
                 'station': station_code,
                 'height_m': row['value'] / 100.0,  # cm → m
                 'period_s': period_s,
                 'direction_deg': direction,
-            })
+            }
+            # Uitgebreide velden — alleen toevoegen als er data is, zodat
+            # downstream-consumers `dict.get(..., default)` kunnen gebruiken.
+            tp_val = tp_by_ts.get(ts)
+            if tp_val is not None and tp_val > 0:
+                point['tp_s'] = float(tp_val)
+            sobh_val = sobh_by_ts.get(ts)
+            if sobh_val is not None:
+                point['sobh_deg'] = float(sobh_val)
+            hmax_val = hmax_by_ts.get(ts)
+            if hmax_val is not None:
+                point['hmax_m'] = float(hmax_val) / 100.0  # cm → m
+            pressure_val = pressure_by_ts.get(ts)
+            if pressure_val is not None:
+                point['pressure_hpa'] = float(pressure_val)
+            air_temp_val = airtemp_by_ts.get(ts)
+            if air_temp_val is not None:
+                point['air_temp_c'] = float(air_temp_val)
+            merged.append(point)
 
         logger.info(f"Retrieved {len(merged)} merged observations for {station_code}")
         return merged
@@ -198,12 +318,18 @@ class RWSClient:
         """
         Haal astronomische tij-voorspellingen op voor `days_ahead` dagen vooruit.
 
+        Daarnaast worden — best-effort — ook WATHTBRKD (berekend tij) én
+        WATHTE/ProcesType=metingen (gemeten waterhoogte) opgehaald om de
+        storm-surge residual te berekenen: `surge_cm = measured - astronomical`.
+
         Returns:
             {
               'tide_events':  [{timestamp, level_m, phase}, ...]  (10-min raster),
               'high_tides':   [...],
               'low_tides':    [...],
               'location':     code,
+              'surge_residual_cm': [{timestamp, surge_cm}, ...],  # leeg als data ontbreekt
+              'latest_surge_cm':   float | None,                   # meest recente residual
             }
         """
         start = datetime.now(timezone.utc) - timedelta(hours=2)  # iets vroeger ivm. interpolatie
@@ -218,7 +344,11 @@ class RWSClient:
             )
         except Exception as e:
             logger.error(f"Failed to fetch tide predictions for {location_code}: {e}")
-            return {'tide_events': [], 'high_tides': [], 'low_tides': [], 'location': location_code}
+            return {
+                'tide_events': [], 'high_tides': [], 'low_tides': [],
+                'location': location_code,
+                'surge_residual_cm': [], 'latest_surge_cm': None,
+            }
 
         events = [
             {
@@ -252,12 +382,94 @@ class RWSClient:
         logger.info(
             f"Retrieved {len(events)} tide points, {len(high_tides)} high, {len(low_tides)} low"
         )
+
+        # Storm-surge residual: surge = measured - astronomical.
+        # Best-effort: WATHTBRKD (berekend tij) en gemeten WATHTE op een
+        # korter historisch venster (we kennen geen toekomstige metingen).
+        surge_window_start = datetime.now(timezone.utc) - timedelta(hours=12)
+        surge_window_end = datetime.now(timezone.utc)
+        surge_residual, latest_surge = await self._compute_surge_residual(
+            location_code, surge_window_start, surge_window_end, events,
+        )
+
         return {
             'tide_events': events,
             'high_tides': high_tides,
             'low_tides': low_tides,
             'location': location_code,
+            'surge_residual_cm': surge_residual,
+            'latest_surge_cm': latest_surge,
         }
+
+    async def _compute_surge_residual(
+        self,
+        location_code: str,
+        start: datetime,
+        end: datetime,
+        astronomical_events: List[Dict[str, Any]],
+    ) -> tuple[List[Dict[str, Any]], Optional[float]]:
+        """
+        Bereken storm-surge residual = gemeten - astronomisch (in cm).
+
+        Probeert eerst WATHTBRKD voor het astronomische been; bij missing
+        valt terug op de al-opgehaalde `astronomical_events` (cm via *100).
+        Voor het gemeten been gebruikt WATHTE/ProcesType=metingen.
+
+        Per-grootheid failures zijn gracieus: bij missing data wordt een
+        leeg lijstje en None-latest geretourneerd. Combineren we op exact
+        tijdstip (10-min raster); een mismatch op één steekpunt slaan we
+        gewoon over.
+        """
+        measured_task = self._fetch_series_safe(
+            location_code, GROOTHEID_WATHTE, start, end,
+            proces_type='metingen', hoedanigheid='NAP',
+        )
+        brkd_task = self._fetch_series_safe(
+            location_code, GROOTHEID_WATHTBRKD, start, end,
+            hoedanigheid='NAP',
+        )
+        measured, brkd = await asyncio.gather(
+            measured_task, brkd_task, return_exceptions=True,
+        )
+        measured = measured if isinstance(measured, list) else []
+        brkd = brkd if isinstance(brkd, list) else []
+
+        if not measured:
+            logger.warning(
+                f"Surge residual @ {location_code}: geen gemeten WATHTE; residual leeg"
+            )
+            return [], None
+
+        # Astronomisch-by-timestamp: WATHTBRKD heeft voorrang (aparte grootheid
+        # voor BEREKEND tij). Fallback op de astronomical events die we al hebben.
+        astro_by_ts: Dict[datetime, float] = {}
+        if brkd:
+            for r in brkd:
+                astro_by_ts[r['timestamp']] = float(r['value'])  # cm
+        else:
+            for ev in astronomical_events:
+                astro_by_ts[ev['timestamp']] = ev['level_m'] * 100.0  # m → cm
+
+        residuals: List[Dict[str, Any]] = []
+        for row in measured:
+            ts = row['timestamp']
+            astro_cm = astro_by_ts.get(ts)
+            if astro_cm is None:
+                continue
+            surge_cm = float(row['value']) - astro_cm
+            residuals.append({'timestamp': ts, 'surge_cm': surge_cm})
+
+        residuals.sort(key=lambda x: x['timestamp'])
+        latest = residuals[-1]['surge_cm'] if residuals else None
+        if latest is not None:
+            logger.info(
+                f"Surge residual @ {location_code}: {len(residuals)} punten, latest={latest:.1f}cm"
+            )
+        else:
+            logger.warning(
+                f"Surge residual @ {location_code}: geen overlappende timestamps"
+            )
+        return residuals, latest
 
     def buoy_data_to_wave_spectrum(self, buoy_data: Dict[str, Any]) -> WaveSpectrum:
         """

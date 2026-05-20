@@ -64,6 +64,11 @@ class WaveSpectrum:
     mean_direction: float            # Th0
     peaks: List[SpectralPeak] = field(default_factory=list)
 
+    # Optionele boei-observatie velden (RWS IJG1). Alleen aanwezig wanneer een
+    # recente boei-meting deze uren overschrijft (typisch t=0..3u nowcast).
+    peak_period_observed_s: Optional[float] = None    # van boei Tp
+    directional_spread_deg: Optional[float] = None    # van boei SObh
+
     def get_dominant_peak(self) -> Optional[SpectralPeak]:
         """Retourneer de dominante piek (hoogste amplitude)."""
         if not self.peaks:
@@ -200,6 +205,29 @@ class HourState:
     # Forecast metadata
     forecast_source: str = "open-meteo"
     confidence: float = 1.0  # 0.0-1.0, model onzekerheid
+
+    # ---- Atmospheric context (Open-Meteo Forecast) — optioneel, default None ----
+    air_temperature_c: Optional[float] = None
+    precipitation_mm: Optional[float] = None
+    visibility_m: Optional[float] = None
+    weather_code: Optional[int] = None          # WMO code
+    relative_humidity_pct: Optional[float] = None
+    dew_point_c: Optional[float] = None
+    uv_index: Optional[float] = None
+    sunshine_duration_s: Optional[float] = None
+
+    # ---- Atmospheric instability (primary-model shared) — optioneel ----
+    cape_jkg: Optional[float] = None
+    lifted_index: Optional[float] = None
+    convective_inhibition_jkg: Optional[float] = None
+    boundary_layer_height_m: Optional[float] = None
+
+    # ---- Ocean context (Open-Meteo Marine + RWS) — optioneel ----
+    sea_surface_temperature_c: Optional[float] = None
+    ocean_current_velocity_ms: Optional[float] = None
+    ocean_current_direction_deg: Optional[float] = None
+    sea_level_height_msl_m: Optional[float] = None
+    storm_surge_cm: Optional[float] = None      # van RWS (measured − astronomical)
 
 
 @dataclass
