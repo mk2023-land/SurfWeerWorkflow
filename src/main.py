@@ -266,7 +266,13 @@ class SurfAlertSystem:
         return run_log
 
     def _build_hour_states(self, openmeteo_data: dict, rws_data: dict) -> List[HourState]:
-        """Bouw HourStates uit ruwe data."""
+        """Bouw HourStates uit ruwe data.
+
+        Pakt naast de basis-velden (wave/wind/tide) ook de nieuwe atmospheric-
+        en ocean-context velden uit Open-Meteo Marine/Forecast en de storm-surge
+        residual uit RWS. Latest IJG1 boei-sample overschrijft `peak_period_observed_s`
+        en `directional_spread_deg` voor de eerste 3 nowcast-uren (t=0..2).
+        """
         hour_states = []
 
         try:
@@ -283,6 +289,27 @@ class SurfAlertSystem:
             tide_data = (rws_data or {}).get('tide') or {}
             openmeteo_client = OpenMeteoClient()
 
+            # Storm-surge scalar uit RWS — zelfde waarde voor alle uren in deze
+            # run (simpele distributie; kan later granulair per uur).
+            latest_surge_cm = None
+            if tide_data:
+                latest_surge_cm = tide_data.get('latest_surge_cm')
+
+            # Recente IJG1 boei-observatie voor Tp + spread (nowcast-overlay).
+            ijg1_raw_latest = None
+            try:
+                ijg1_raw = ((rws_data or {}).get('primary_buoy') or {}).get('raw_data') or []
+                if ijg1_raw:
+                    ijg1_raw_latest = ijg1_raw[-1]
+            except Exception:
+                ijg1_raw_latest = None
+            if ijg1_raw_latest:
+                logger.info(
+                    f"IJG1 latest sample: tp_s={ijg1_raw_latest.get('tp_s')}, "
+                    f"sobh_deg={ijg1_raw_latest.get('sobh_deg')}, "
+                    f"hmax_m={ijg1_raw_latest.get('hmax_m')}"
+                )
+
             # Merge marine en forecast data per uur
             for i in range(min(len(marine_data), len(primary_model))):
                 marine = marine_data[i]
@@ -293,6 +320,17 @@ class SurfAlertSystem:
                     continue
 
                 wave_spectrum = openmeteo_client.marine_data_to_wave_spectrum(marine)
+
+                # Boei-observatie overlay voor nowcast-uren (eerste 3): geef de
+                # latest IJG1 Tp + directional spread mee als "observed" override.
+                # Daarna blijft het None — alleen forecast-data telt.
+                if ijg1_raw_latest and i < 3:
+                    tp_obs = ijg1_raw_latest.get('tp_s')
+                    sobh_obs = ijg1_raw_latest.get('sobh_deg')
+                    if tp_obs is not None:
+                        wave_spectrum.peak_period_observed_s = float(tp_obs)
+                    if sobh_obs is not None:
+                        wave_spectrum.directional_spread_deg = float(sobh_obs)
 
                 wind_state = WindState(
                     speed_kn=weather['wind_speed'],
@@ -309,7 +347,27 @@ class SurfAlertSystem:
                     wind=wind_state,
                     tide=tide_state,
                     forecast_source="open-meteo",
-                    confidence=1.0
+                    confidence=1.0,
+                    # Atmospheric context (uit primary forecast model)
+                    air_temperature_c=weather.get('temperature'),
+                    precipitation_mm=weather.get('precipitation'),
+                    visibility_m=weather.get('visibility'),
+                    weather_code=weather.get('weather_code'),
+                    relative_humidity_pct=weather.get('relative_humidity'),
+                    dew_point_c=weather.get('dew_point'),
+                    uv_index=weather.get('uv_index'),
+                    sunshine_duration_s=weather.get('sunshine_duration'),
+                    # Atmospheric instability (gedeeld primary)
+                    cape_jkg=weather.get('cape'),
+                    lifted_index=weather.get('lifted_index'),
+                    convective_inhibition_jkg=weather.get('convective_inhibition'),
+                    boundary_layer_height_m=weather.get('boundary_layer_height'),
+                    # Ocean context (marine + RWS surge scalar)
+                    sea_surface_temperature_c=marine.get('sea_surface_temperature'),
+                    ocean_current_velocity_ms=marine.get('ocean_current_velocity'),
+                    ocean_current_direction_deg=marine.get('ocean_current_direction'),
+                    sea_level_height_msl_m=marine.get('sea_level_height_msl'),
+                    storm_surge_cm=latest_surge_cm,
                 )
 
                 hour_states.append(hour_state)
