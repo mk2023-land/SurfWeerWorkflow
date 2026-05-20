@@ -43,6 +43,11 @@ data/bias_log.jsonl
 data/*.json
 data/*.jsonl
 
+# Tobias-archief MOET in git (training-labels voor Sprint 4 XGBoost).
+# Unignore expliciet ondanks data/*.json glob hierboven.
+!data/tobias_archive/
+!data/tobias_archive/**
+
 # IDE
 .vscode/
 .idea/

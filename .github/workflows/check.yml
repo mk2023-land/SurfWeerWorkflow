@@ -26,21 +26,18 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Restore persistent state cache
+      # Persistente data over runs heen. Cache pakt ALLE jsonl + state files
+      # in data/ — kritiek voor Sprint 4 trainingdata (bias_log.jsonl,
+      # buoy_spectra_history.jsonl), digest-state (state.json) en forecasts-log.
+      # GitHub Actions cache: 10 GB max per repo, entries expireren na 7d
+      # zonder hit; daily runs houden alles vers.
+      - name: Restore persistent data cache
         uses: actions/cache@v4
         with:
-          path: data/state.json
-          key: surf-state-${{ github.run_id }}
+          path: data/
+          key: surf-data-${{ github.run_id }}
           restore-keys: |
-            surf-state-
-
-      - name: Restore seasonal baseline cache
-        uses: actions/cache@v4
-        with:
-          path: data/seasonal_baseline.json
-          key: surf-baseline-${{ github.run_id }}
-          restore-keys: |
-            surf-baseline-
+            surf-data-
 
       - name: Run surf alert check
         env:
