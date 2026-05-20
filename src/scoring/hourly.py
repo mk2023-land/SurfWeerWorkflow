@@ -31,6 +31,42 @@ from src.config import (
 )
 
 
+def _combine_golf_modifiers(factors: dict) -> float:
+    """
+    Weighted-sum aggregation van golf-modifiers (anti-collapse).
+
+    Vervangt multiplicatieve stacking van 6 modifiers (we_factor, age_factor,
+    iri_factor, face_quality, wind_trend, wind_spread). Bij borderline
+    conditions worden alle factoren <1 → 0.85⁶ ≈ 0.38 collapse onder
+    surfable-drempel. Met weighted-sum: 1 + 6 * w_avg * dev → milde, subtiele
+    penalty in plaats van compounding decay.
+
+    Weights (som = 1.0):
+        wave_energy : 0.25 — fysisch correcte power-metric
+        wave_age    : 0.25 — chop vs mature
+        iribarren   : 0.15 — breaker-type bonus
+        face_quality: 0.20 — wind op de face (cruciaal)
+        wind_trend  : 0.05 — clean opening detector
+        wind_spread : 0.10 — model-confidence
+
+    Cap: factor ∈ [0.60, 1.25].
+    """
+    weights = {
+        'wave_energy': 0.25,
+        'wave_age': 0.25,
+        'iribarren': 0.15,
+        'face_quality': 0.20,
+        'wind_trend': 0.05,
+        'wind_spread': 0.10,
+    }
+    combined = 1.0
+    for name, w in weights.items():
+        factor = factors.get(name, 1.0)
+        dev = factor - 1.0
+        combined += w * dev
+    return max(0.60, min(1.25, combined))
+
+
 def wave_energy_flux(hs_m: float, te_s: float) -> float:
     """
     Wave energy flux per meter golfkam, in kW/m.
@@ -49,10 +85,21 @@ def wave_energy_flux(hs_m: float, te_s: float) -> float:
     return 0.49 * hs_m * hs_m * te_s
 
 
-def wave_energy_factor(hs_m: float, te_s: float, reference_kw_m: float = 3.43) -> float:
+def wave_energy_factor(hs_m: float, te_s: float, reference_kw_m: Optional[float] = None) -> float:
     """
     Multiplier op golf_score gebaseerd op wave energy flux relatief aan
     referentie-conditie (1.0m @ 7s = NL OK-dag ≈ 3.43 kW/m).
+
+    Bron van reference_kw_m = 3.43:
+        P = 0.49 · Hs² · Te (klassieke deep-water formule)
+        Bij Hs=1.0m, Te=7s → P = 0.49 · 1 · 7 = 3.43 kW/m.
+        Dit is empirisch ≈ NL OK-dag mediaan (Sprint 2 docs: research_pro_
+        forecaster_methods.md) — niet "epic", niet flat, maar de baseline
+        waarrond de meeste surfbare windows in Noordwijk vallen.
+
+    Environment override: zet `WAVE_ENERGY_REF_KWM` env var om experimenteel
+    een andere referentie te kiezen (bv. tegen archief-data calibratie).
+    Default blijft 3.43 voor backward compatibility.
 
     Vermenigvuldigingsfactor in [0.75, 1.20] — bewust mild zodat de
     bestaande period_factor en height-score niet overruled worden, maar
@@ -65,6 +112,16 @@ def wave_energy_factor(hs_m: float, te_s: float, reference_kw_m: float = 3.43) -
     """
     if hs_m <= 0 or te_s <= 0:
         return 1.0
+    if reference_kw_m is None:
+        import os as _os
+        env_ref = _os.environ.get('WAVE_ENERGY_REF_KWM')
+        if env_ref:
+            try:
+                reference_kw_m = float(env_ref)
+            except ValueError:
+                reference_kw_m = 3.43
+        else:
+            reference_kw_m = 3.43
     p = wave_energy_flux(hs_m, te_s)
     # Genormaliseerd t.o.v. referentie. log-schaal werkt rustiger dan lineair
     # voor brede ranges. Reference = 1.0; range capped op realistische uitersten.
@@ -102,32 +159,46 @@ def wave_age(tp_s: float, wind_speed_kn: float) -> float:
 
 def wave_age_factor(tp_s: float, wind_speed_kn: float) -> float:
     """
-    Soft penalty (Q2=(b)) op golf_score gebaseerd op wave-age.
+    Soft penalty op golf_score gebaseerd op wave-age (cp/U10).
 
-    Curve (genuanceerd na benchmark-tuning — Tobias accepteert wave_age ≈ 0.9
-    als longboard, dus penalty bij borderline mag mild zijn; alleen écht
-    jonge wind-zee < 0.6 wordt zwaar gestraft):
-        wave_age < 0.5  : factor 0.50 (zware chop)
-        0.5 - 0.9       : factor 0.50 → 0.92 (opbouwende sea, mild penalty)
-        0.9 - 1.2       : factor 0.92 → 1.00 (mature wind-zee)
-        >= 1.2          : factor 1.00 (swell-domein, geen extra bonus —
-                          groundswell-bonus zit al elders)
+    Curve gebaseerd op Pierson-Moskowitz literatuur — 0.83 = fully-developed
+    sea drempel. Mature wind-zee zit boven 0.83, swell-domein vanaf 1.0+.
 
-    Het effect is asymmetrisch: jong wind-zee wordt gestraft, swell krijgt
-    geen bonus (wordt elders al beloond). Dit voorkomt double-counting van
-    "lange periode is goed".
+    Breakpoints:
+        age < 0.5       : factor 0.55 (pure jonge wind-zee, zware chop)
+        0.5 ≤ age < 0.83: linear ramp 0.55 → 0.80 (opbouwende sea)
+        0.83 ≤ age < 1.0: linear ramp 0.80 → 0.95 (mature, PM-developed)
+        1.0 ≤ age ≤ 1.2 : factor 1.0 (fully developed, neutraal)
+        1.2 < age ≤ 2.0 : 1.0 + 0.025·(age-1.2) capped at 1.05 (over-developed)
+        age > 2.0       : factor 1.05 (oude swell, milde quality-bonus)
+
+    Het effect is asymmetrisch: jong wind-zee wordt gestraft, over-developed
+    swell krijgt zeer milde bonus. Dit voorkomt double-counting van
+    "lange periode is goed" (zit al in period_factor).
     """
     age = wave_age(tp_s, wind_speed_kn)
-    if age >= 1.2:
-        return 1.00
-    if age >= 0.9:
-        return 0.92 + (age - 0.9) * (0.08 / 0.30)
-    if age >= 0.5:
-        return 0.50 + (age - 0.5) * (0.42 / 0.40)
-    return 0.50
+    if age < 0.5:
+        return 0.55
+    if age < 0.83:
+        # 0.5 → 0.83: 0.55 → 0.80
+        return 0.55 + (age - 0.5) * (0.25 / 0.33)
+    if age < 1.0:
+        # 0.83 → 1.0: 0.80 → 0.95
+        return 0.80 + (age - 0.83) * (0.15 / 0.17)
+    if age <= 1.2:
+        return 1.0
+    if age <= 2.0:
+        # 1.2 → 2.0: 1.0 → 1.02 (capped at 1.05 per spec, max bereikt bij 3.2)
+        return min(1.05, 1.0 + 0.025 * (age - 1.2))
+    return 1.05
 
 
-def iribarren_factor(hs_m: float, tp_s: float, beach_slope: float = 0.02) -> float:
+def iribarren_factor(
+    hs_m: float,
+    tp_s: float,
+    beach_slope: float = 0.02,
+    tide_normalized: Optional[float] = None,
+) -> float:
     """
     Iribarren-getal ξ = tan(β) / √(H/L₀) — voorspelt breaker-type.
 
@@ -144,6 +215,11 @@ def iribarren_factor(hs_m: float, tp_s: float, beach_slope: float = 0.02) -> flo
     Effect: kleine wave + lange periode (0.5m@10s groundswell) krijgt
     quality-bonus omdat ξ stijgt; chop (1.4m@4s) blijft "standard NL".
 
+    Tide-dependent slope: Noordwijk heeft outer-bar (~0.015 bij LW) en
+    inner-bar (~0.030 bij HW) geometrie. Bij `tide_normalized` (0=LW, 1=HW):
+        slope = 0.015 + (0.030 - 0.015) * tide_normalized
+    Bij `tide_normalized=None`: backward-compat default 0.02.
+
     Bron: Coastal Wiki surf similarity parameter, Wikipedia Iribarren.
     """
     if hs_m <= 0 or tp_s <= 0:
@@ -152,6 +228,9 @@ def iribarren_factor(hs_m: float, tp_s: float, beach_slope: float = 0.02) -> flo
     if L0 <= 0:
         return 1.00
     import math
+    if tide_normalized is not None:
+        t = max(0.0, min(1.0, tide_normalized))
+        beach_slope = 0.015 + (0.030 - 0.015) * t
     xi = beach_slope / math.sqrt(hs_m / L0)
     if xi < 0.10:
         return 0.93
@@ -181,8 +260,12 @@ def wind_spread_confidence(
     Maximum penalty bereikt bij 12 kn / 60° spread.
 
     Returns multiplier in [0.85, 1.0]. Bij None / geen spread-info: 1.0.
+
+    Belangrijke distinctie: spread=0.0 betekent "modellen zijn het eens, geen
+    onzekerheid" (volle confidence) — NIET hetzelfde als None ("geen data").
+    De oude `not x` test bracht beide samen via falsy-truthy, wat verkeerd is.
     """
-    if not speed_std_kn and not direction_spread_deg:
+    if speed_std_kn is None and direction_spread_deg is None:
         return 1.0
 
     s_warn = WIND_SPREAD_THRESHOLDS['speed_kn_warning']
@@ -322,8 +405,15 @@ def mixed_sea_penalty(
     import math
     if not spectrum.peaks or len(spectrum.peaks) < 2:
         return (False, 0.0)
-    # Sorteer pieken op hoogte; pak top-2
-    sorted_peaks = sorted(spectrum.peaks, key=lambda p: p.height_m, reverse=True)
+    # Sorteer pieken op energy-proxy (H² · T) ipv hoogte alleen.
+    # Reden: 0.5m@12s (E ∝ 3.0) + 0.6m@4s (E ∝ 1.44) → groundswell domineert
+    # qua energy; een hoogte-sort zou de wind-sea als "primary" labelen en
+    # de combinatie als mixed-sea klasseren — onterecht.
+    sorted_peaks = sorted(
+        spectrum.peaks,
+        key=lambda p: (p.height_m ** 2) * p.period_s,
+        reverse=True,
+    )
     p1, p2 = sorted_peaks[0], sorted_peaks[1]
     if p1.height_m < min_height_m or p2.height_m < min_height_m:
         return (False, 0.0)
@@ -354,8 +444,19 @@ def pressure_gradient_factor(pressure_history_hpa: list) -> float:
     """
     if not pressure_history_hpa or len(pressure_history_hpa) < 4:
         return 1.0
-    # Lineaire regressie-vrije derivative: gewoon (nu - 3u_terug) / 3
-    dp_dt = (pressure_history_hpa[-1] - pressure_history_hpa[0]) / 3.0  # hPa/uur
+    # OLS slope: gladder dan 2-punt derivative bij outliers op de randen.
+    # Met 4 punten op uurraster: ts = [0, 1, 2, 3], druk = pressure_history.
+    ts = list(range(len(pressure_history_hpa)))
+    n = len(ts)
+    mean_t = sum(ts) / n
+    mean_p = sum(pressure_history_hpa) / n
+    denom = sum((t - mean_t) ** 2 for t in ts)
+    if denom == 0:
+        return 1.0
+    dp_dt = sum(
+        (t - mean_t) * (p - mean_p)
+        for t, p in zip(ts, pressure_history_hpa)
+    ) / denom
     abs_grad = abs(dp_dt)
     if abs_grad < 1.5:
         return 1.0
@@ -646,16 +747,19 @@ def partition_energy_components(wave_spectrum: WaveSpectrum) -> dict:
     if eff_height < 0.01 and wave_spectrum.significant_height_total > 0:
         eff_height = wave_spectrum.significant_height_total * 0.90
 
-    # Dominante periode: pak de partitie met grootste energy contributie
+    # Dominante periode: pak de partitie met grootste energy contributie.
+    # B6-consistent: fallback bij beide energies 0/None gebruikt mean_period
+    # (Tm02 totaal), NIET max-height-based — die conflicteert met de
+    # partition-aware semantiek (een 1.0m@4s wind-sea zou de 0.9m@12s
+    # groundswell overstemmen op hoogte alleen).
     if swell_energy >= wind_energy and swell_T > 0:
         dominant_T = swell_T
     elif wind_T > 0:
         dominant_T = wind_T
-    elif wave_spectrum.peaks:
-        dominant = max(wave_spectrum.peaks, key=lambda p: p.height_m)
-        dominant_T = dominant.period_s
     else:
-        dominant_T = wave_spectrum.mean_period or 5.0
+        # Beide energies 0 of None: gebruik spectrum.mean_period (Tm02),
+        # met fallback 8.0 als zelfs die ontbreekt. Skip height-based fallback.
+        dominant_T = wave_spectrum.mean_period or 8.0
 
     return {
         'swell_energy_kwm': swell_energy,
@@ -972,38 +1076,49 @@ def pier_transmission_factor(swell_direction_deg: int, period_s: float = 7.0) ->
     return max(t_min, min(1.0, transmission))
 
 
+def _cos_to_beach(direction: float, beach_normal: float = 315.0) -> float:
+    """
+    Cosine van de hoek tussen swell-richting en beach-normal (FROM).
+
+    +1.0 = perfect aan-strand (recht op de kust), -1.0 = onmogelijk (uit
+    land komen). Continue, geen sprongen op 0°/360° of op bucket-grenzen.
+
+    Beach-normal default 315° (NW) als swell-FROM-richting: een swell
+    rechtstreeks uit NW raakt het strand recht en is energetisch optimaal.
+    """
+    diff_rad = math.radians(direction - beach_normal)
+    return math.cos(diff_rad)
+
+
 def score_swell_direction_bonus(swell_direction_deg: int, period_s: float = 7.0) -> float:
     """
     Bereken swell richting bonus voor Noordwijk (max 10 punten).
 
-    Sprint 2 #9 vervangt de oude binaire pier-blockade door een continue
-    pier-transmission-factor. De richting-bonus (klassieke NL voorkeur
-    W/NW/N) wordt vermenigvuldigd met deze factor: bij exact-NNO-swell
-    daalt de bonus naar ~10% van de raw waarde; bij N (0°) met lange
-    periode komt nog ~50-60% door.
+    Continue cosine-based curve: vervangt de oude bucket-based lookup met
+    harde sprongen op 45°/90°/135°/270° boundaries. De cosine geeft een
+    gladde curve relatief aan beach_normal (315° NW): perfect NW = max,
+    pure Z/ZO (135°) = onmogelijk = 0.
+
+    Formule:
+        bonus = 5 + 5 * max(0, cos(direction - beach_normal))
+        bonus ∈ [5, 10] voor on-shore-component, 0 anders? Nee:
+        max(0, cos): clamps tot 0 voor zee-afgerichte directions, dus
+        bonus min = 5 voor recht uit land, bonus max = 10 voor perfect.
+
+    Pier-transmission: bonus × transmission_factor (multiplicatief). Bij
+    shadow-center (10° NNO) wordt de bonus sterk gereduceerd.
 
     `period_s` is de zwaarste swell-periode (default 7s als onbekend);
     bij Tp ≥ 10s krijgt de transmissie een refractie-bonus.
-
-    Behoudt de bestaande directionele preferenties; de pier-factor schaalt
-    ze tot een fractionele bonus.
     """
     direction = swell_direction_deg % 360
 
     # Continue pier-transmission (Sprint 2 #9): vervangt binaire blocked-sector
     transmission = pier_transmission_factor(direction, period_s)
 
-    # Raw richtings-preferentie (continue mapping vergelijkbaar met oude versie)
-    if 270 <= direction <= 360:
-        raw = 10.0
-    elif 45 <= direction <= 90:
-        raw = 8.0
-    elif 0 <= direction <= 45 or 90 <= direction <= 135:
-        raw = 5.0
-    elif 135 <= direction <= 225:
-        raw = 3.0
-    else:
-        raw = 5.0
+    # Continue cosine-based richting-preferentie tegen beach_normal (315° NW)
+    cos = _cos_to_beach(float(direction), beach_normal=315.0)
+    raw = 5.0 + 5.0 * max(0.0, cos)  # ∈ [5, 10]
 
     return raw * transmission
 
@@ -1202,48 +1317,75 @@ def score_hour(state: HourState, context: Optional[dict] = None) -> ScoreBreakdo
     # Golf component — basisscore op Hs/Tp/type + opgewaardeerde T4-bonus
     golf_score = score_golf_component(state.wave_spectrum)
 
-    # Wave energy flux multiplier (Q1=(c)): fysisch correcte size-metric die
-    # periode en hoogte combineert. Mild ±15-25% effect bovenop bestaande
-    # period_factor — beloont echte power (1.0m@10s) boven height-only (1.4m@4s).
+    # ============================================================
+    # Bereken alle golf-modifiers afzonderlijk (voor logging),
+    # en combineer ze via weighted-sum (anti-collapse fix #1).
+    # ============================================================
+
+    # Wave energy flux multiplier: fysisch correcte size-metric die
+    # periode en hoogte combineert. Beloont echte power (1.0m@10s) boven
+    # height-only (1.4m@4s).
     we_factor = wave_energy_factor(Hs, Tp)
-    golf_score *= we_factor
 
-    # Wave-age soft penalty (Q2=(b)): cp/U10 < 0.83 = jonge wind-zee = chop.
-    # Mature wave (>1.2) krijgt geen extra bonus (zit elders al), maar marginal
-    # (0.83-1.0) en jong (<0.83) krijgen schaalbare penalty op golf_score.
+    # Wave-age penalty: cp/U10 < 0.83 = jonge wind-zee = chop.
     age_factor = wave_age_factor(Tp, state.wind.speed_kn)
-    golf_score *= age_factor
 
-    # Iribarren-getal: continue quality-modifier op basis van breaker-type.
-    # NL beachbreaks doen meestal mushy spilling; bij lange periode + matige
-    # hoogte stijgt ξ richting plunging = kwaliteits-bonus.
-    iri_factor = iribarren_factor(Hs, Tp)
-    golf_score *= iri_factor
+    # Iribarren-getal: tide-dependent slope (LW outer-bar 0.015, HW inner-bar
+    # 0.030). Continue quality-modifier op basis van breaker-type.
+    iri_factor = iribarren_factor(
+        Hs, Tp, tide_normalized=state.tide.normalized_level
+    )
 
-    # Mixed-sea detector: twee swell-componenten uit verschillende richtingen
-    # = rommelig, lagere effectieve surfability ondanks dezelfde totaal-Hs.
-    is_mixed_sea, mixed_pen = mixed_sea_penalty(state.wave_spectrum)
-    if is_mixed_sea:
-        golf_score = max(0.0, golf_score + mixed_pen)
-
-    # Wave face quality: wind op de wave-face. Onshore wind degradeert de face
-    # ongeacht hoogte. Toegepast als multiplier op golf_score zodat een 1.5m
-    # wave-veld onder sterke aanlandige wind minder telt dan een 1.0m wave
-    # onder offshore wind — Tobias' "clean beats big" principe.
+    # Wave face quality: wind op de wave-face. Onshore wind degradeert de face.
     cos_offshore = _wind_direction_cosine(
         state.wind.direction_deg, NOORDWIJK.beach_normal_deg
     )
     face_q = wave_face_quality(state.wind.speed_kn, cos_offshore)
-    golf_score *= face_q
 
     # Wind trend: clean opening na wind-decay vs. jonge wind-zee.
-    # Alleen toegepast als context met historie is meegegeven.
+    trend = 1.0
     if context:
         trend = wind_trend_factor(
             context.get('wind_history_kn') or [],
             context.get('wave_history_m') or [],
         )
-        golf_score *= trend
+
+    # Multi-model wind-spread confidence (#8): hoge inter-model spread →
+    # lagere multiplier. Bij geen context: 1.0 (neutraal).
+    conf_mult = 1.0
+    if context:
+        spread = context.get('wind_spread') or {}
+        conf_mult = wind_spread_confidence(
+            spread.get('speed_std_kn'),
+            spread.get('direction_spread_deg'),
+        )
+
+    # Weighted-sum combineer alle 6 modifiers (anti-collapse fix #1).
+    # Vervangt multiplicatieve stacking die bij borderline conditions
+    # (6× 0.85 = 0.38) tot score-collapse leidde.
+    modifier_factors = {
+        'wave_energy': we_factor,
+        'wave_age': age_factor,
+        'iribarren': iri_factor,
+        'face_quality': face_q,
+        'wind_trend': trend,
+        'wind_spread': conf_mult,
+    }
+    combined_factor = _combine_golf_modifiers(modifier_factors)
+    logger.info(
+        "score_hour golf_modifiers combined=%.3f | we=%.3f age=%.3f iri=%.3f "
+        "face=%.3f trend=%.3f spread=%.3f",
+        combined_factor, we_factor, age_factor, iri_factor, face_q, trend, conf_mult,
+    )
+    golf_score *= combined_factor
+
+    # Mixed-sea detector: twee swell-componenten uit verschillende richtingen
+    # = rommelig, lagere effectieve surfability ondanks dezelfde totaal-Hs.
+    # Behoudt zijn aparte additieve penalty (niet in weighted-sum want het
+    # is een conditionele, niet-multiplicatieve flag).
+    is_mixed_sea, mixed_pen = mixed_sea_penalty(state.wave_spectrum)
+    if is_mixed_sea:
+        golf_score = max(0.0, golf_score + mixed_pen)
 
     # Diurnal wind decay (#12): bij lage bewolking + 2u rond sunset valt
     # de thermische sea-breeze-component weg. Aftrek op effectieve wind-
@@ -1284,20 +1426,6 @@ def score_hour(state: HourState, context: Optional[dict] = None) -> ScoreBreakdo
             state.wave_spectrum.directional_spread_deg
         )
         golf_score *= spread_factor
-
-    # Multi-model wind-spread confidence-penalty (#8): bij hoge spread
-    # tussen ECMWF/KNMI/GFS wind-voorspellingen is de wind onzeker en
-    # daalt het vertrouwen in de hele forecast. Dit komt vooral voor bij
-    # frontpassages. Effect: multiplier op golf_score (niet wind_score)
-    # omdat ook de wave-respons indirect onzeker wordt.
-    if context:
-        spread = context.get('wind_spread') or {}
-        conf_mult = wind_spread_confidence(
-            spread.get('speed_std_kn'),
-            spread.get('direction_spread_deg'),
-        )
-        if conf_mult < 1.0:
-            golf_score *= conf_mult
 
     # Drukgradiënt-derivative: synoptische storing detectie. Sterke druk-
     # verandering (>1.5 hPa/uur over 3u) = front/trog-passage = instabiele
@@ -1346,12 +1474,16 @@ def score_hour(state: HourState, context: Optional[dict] = None) -> ScoreBreakdo
 
     swell_dir_bonus = score_swell_direction_bonus(swell_dir_deg, period_s=swell_period_s)
 
+    # Confidence: gebruik wind-spread confidence multiplier (uit weighted-sum
+    # block hierboven). Bij geen context: 1.0 (neutraal). Wordt in
+    # ScoreBreakdown.total_score (max 0.7..1.0) toegepast als finale modulatie.
     return ScoreBreakdown(
         timestamp=state.timestamp,
         golf_score=golf_score,
         wind_score=wind_score,
         tide_score=tide_score,
-        swell_dir_bonus=swell_dir_bonus
+        swell_dir_bonus=swell_dir_bonus,
+        confidence=conf_mult,
     )
 
 

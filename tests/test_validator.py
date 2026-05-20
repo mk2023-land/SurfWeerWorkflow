@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import sys
+from typing import Dict
 
 import pytest
 
@@ -78,3 +79,159 @@ class TestB8CompassExtraction:
         assert not result.passed
         assert any('NWN' in issue for issue in result.issues), \
             f"Issues missen NWN-flag: {result.issues}"
+
+
+def _make_days_input(allowed: Dict) -> Dict:
+    """Helper: bouw structured_input met één day_block + _allowed_citations."""
+    return {
+        'days': [{
+            '_allowed_citations': allowed,
+        }],
+    }
+
+
+class TestRangeExpressions:
+    """Range-uitdrukkingen '15-20kn', '0.8-1.2m', '6-8s' moeten beide getallen checken."""
+
+    def setup_method(self):
+        self.v = SMSValidator()
+
+    def test_wind_range_both_numbers_in_allowed_passes(self):
+        sms = "Nwijk di: ZW 15-20kn. Cam: surfweer.nl/webcams/noordwijk/"
+        allowed = {
+            'wave_heights_m': [],
+            'wave_periods_s': [],
+            'wind_speeds_kn': [15, 20],
+            'wind_directions_compass': ['ZW'],
+            'wave_directions_compass': ['ZW'],
+            'times_hhmm': [],
+        }
+        result = self.v.validate_sms(sms, _make_days_input(allowed))
+        assert result.passed, f"Issues: {result.issues}"
+
+    def test_wind_range_lower_bound_missing_fails(self):
+        """SMS '15-20kn' met allowed_citations={wind_speeds_kn:[20]} (15 ontbreekt) → FAIL."""
+        sms = "Nwijk di: ZW 15-20kn. Cam: surfweer.nl/webcams/noordwijk/"
+        allowed = {
+            'wave_heights_m': [],
+            'wave_periods_s': [],
+            'wind_speeds_kn': [20],  # alleen 20
+            'wind_directions_compass': ['ZW'],
+            'wave_directions_compass': ['ZW'],
+            'times_hhmm': [],
+        }
+        result = self.v.validate_sms(sms, _make_days_input(allowed))
+        assert not result.passed
+        assert any('15' in i and 'Wind speed' in i for i in result.issues), \
+            f"Verwacht een 15kn-issue, kreeg: {result.issues}"
+
+    def test_wave_height_range_both_validated(self):
+        sms = "Nwijk di: 0,8-1,2m WNW. Cam: surfweer.nl/webcams/noordwijk/"
+        allowed = {
+            'wave_heights_m': [1.2],  # 0.8 ontbreekt
+            'wave_periods_s': [],
+            'wind_speeds_kn': [],
+            'wind_directions_compass': [],
+            'wave_directions_compass': ['WNW'],
+            'times_hhmm': [],
+        }
+        result = self.v.validate_sms(sms, _make_days_input(allowed))
+        assert not result.passed
+        assert any('0.8' in i or '0,8' in i for i in result.issues), \
+            f"Verwacht 0.8m-issue, kreeg: {result.issues}"
+
+    def test_wave_period_range_both_validated(self):
+        sms = "Nwijk di: 1,0m 6-8s WNW. Cam: surfweer.nl/webcams/noordwijk/"
+        allowed = {
+            'wave_heights_m': [1.0],
+            'wave_periods_s': [8],  # 6 ontbreekt
+            'wind_speeds_kn': [],
+            'wind_directions_compass': [],
+            'wave_directions_compass': ['WNW'],
+            'times_hhmm': [],
+        }
+        result = self.v.validate_sms(sms, _make_days_input(allowed))
+        assert not result.passed
+        assert any('6' in i and 'period' in i.lower() for i in result.issues), \
+            f"Verwacht period 6s-issue, kreeg: {result.issues}"
+
+
+class TestTideTimeTolerance:
+    """Tide-time tolerance: 15min default, 30min bij rond/omstreeks."""
+
+    def setup_method(self):
+        self.v = SMSValidator()
+
+    def _allowed_with_times(self, times):
+        return {
+            'wave_heights_m': [],
+            'wave_periods_s': [],
+            'wind_speeds_kn': [],
+            'wind_directions_compass': [],
+            'wave_directions_compass': [],
+            'times_hhmm': times,
+        }
+
+    def test_exact_time_30min_off_fails(self):
+        """'hoogwater 14:30u' + allowed 14:00 → FAIL (30min > 15min default)."""
+        sms = "Nwijk di: hoogwater 14:30u. Cam: surfweer.nl/webcams/noordwijk/"
+        allowed = self._allowed_with_times(['14:00'])
+        result = self.v.validate_sms(sms, _make_days_input(allowed))
+        assert not result.passed, f"Verwacht FAIL maar passed; issues: {result.issues}"
+        assert any('14:30' in i for i in result.issues)
+
+    def test_rond_30min_off_passes(self):
+        """'rond 14:30u' + allowed 14:00 → PASS (30min binnen rond-tolerance)."""
+        sms = "Nwijk di: rond 14:30u nog wat lijntjes. Cam: surfweer.nl/webcams/noordwijk/"
+        allowed = self._allowed_with_times(['14:00'])
+        result = self.v.validate_sms(sms, _make_days_input(allowed))
+        # Mag falen op andere issues maar NIET op de tijd zelf.
+        time_issues = [i for i in result.issues if '14:30' in i]
+        assert not time_issues, f"14:30 had moeten passen onder 'rond'; issues: {result.issues}"
+
+    def test_omstreeks_60min_off_fails(self):
+        """'omstreeks 15u' + allowed 14:00 → FAIL (60min > 30min rond-tolerance)."""
+        sms = "Nwijk di: omstreeks 15u nog wat. Cam: surfweer.nl/webcams/noordwijk/"
+        allowed = self._allowed_with_times(['14:00'])
+        result = self.v.validate_sms(sms, _make_days_input(allowed))
+        assert not result.passed
+        assert any('15u' in i for i in result.issues), \
+            f"Verwacht 15u-issue, kreeg: {result.issues}"
+
+
+class TestForbiddenUnits:
+    """bft / km/u moeten altijd flagged worden ongeacht allowed_citations."""
+
+    def setup_method(self):
+        self.v = SMSValidator()
+
+    def test_bft_unit_flagged(self):
+        sms = "Nwijk di: ZW 4bft aflandig. Cam: surfweer.nl/webcams/noordwijk/"
+        # Maximaal vrijgevige allowed-citations
+        allowed = {
+            'wave_heights_m': [],
+            'wave_periods_s': [],
+            'wind_speeds_kn': [4],  # zou matchen als kn, maar bft moet falen
+            'wind_directions_compass': ['ZW'],
+            'wave_directions_compass': ['ZW'],
+            'times_hhmm': [],
+        }
+        result = self.v.validate_sms(sms, _make_days_input(allowed))
+        assert not result.passed
+        assert any('bft' in i for i in result.issues), \
+            f"Verwacht bft-issue, kreeg: {result.issues}"
+
+    def test_kmu_unit_flagged(self):
+        sms = "Nwijk di: ZW 20km/u aflandig. Cam: surfweer.nl/webcams/noordwijk/"
+        allowed = {
+            'wave_heights_m': [],
+            'wave_periods_s': [],
+            'wind_speeds_kn': [20],
+            'wind_directions_compass': ['ZW'],
+            'wave_directions_compass': ['ZW'],
+            'times_hhmm': [],
+        }
+        result = self.v.validate_sms(sms, _make_days_input(allowed))
+        assert not result.passed
+        assert any('km/u' in i for i in result.issues), \
+            f"Verwacht km/u-issue, kreeg: {result.issues}"

@@ -325,6 +325,38 @@ EXTRA SIGNALEN
   astronomisch tij". Anders niet noemen.
 
 ═══════════════════════════════════════════════════════════════════════
+EENHEDEN — HARDE EIS
+═══════════════════════════════════════════════════════════════════════
+Gebruik EXACT zoals in input:
+- wind: knopen (kn) — NOOIT bft, NOOIT km/u, NOOIT m/s
+- golf: meters (m) — niet cm tenzij <0.3m als "20cm windhoogte"
+- periode: seconden (s)
+- temperatuur: °C
+- richting: 16-punts kompas (N/NNO/NO/.../NNW) — NOOIT in graden
+
+Geen "knoop" of "knopen" voluit in cijfer-context: schrijf "12kn", niet
+"12 knopen". (Wel: "harde wind" / "stevige bries" als kwalitatieve term.)
+
+═══════════════════════════════════════════════════════════════════════
+VOORBEELDEN — Tobias-stijl (gebruik dit als kalibratie)
+═══════════════════════════════════════════════════════════════════════
+Voorbeeld 1 (klein windswell-uurtje met longboard):
+  Input: 11-13u: 0,9m WNW, 6,5s, wind 12kn ZW zijaflandig, tij opgaand.
+  Output-fragment: "Rond 11u zit er 0,9m WNW met 6,5s erop, wind 12kn ZW
+  zijaflandig — leuk longboard-uurtje tot 13u."
+
+Voorbeeld 2 (geen swell, alleen rimpel):
+  Input: peak 0,2m, periode 3,5s, wind 18kn N aanlandig.
+  Output-fragment: "Donderdag flat, swell nihil, windhoogte is 20cm en
+  18kn N aanlandig — niet aan beginnen."
+
+Voorbeeld 3 (multi-window: ochtend en avond apart):
+  Input: best_window 14-16u 1,1m WNW 7s, wind 8kn ZW. other_windows
+  19:30-21u 1,0m WNW 7s, wind 5kn ZZW.
+  Output-fragment: "Nwijk/Zvoort 14-16u of na 19:30u, genoeg hoogte rond
+  1m WNW, 7s erop — wind 8kn ZW middag, 's avonds 5kn ZZW."
+
+═══════════════════════════════════════════════════════════════════════
 STRIKTE REGELS — SAMENVATTING
 ═══════════════════════════════════════════════════════════════════════
 1. Gebruik UITSLUITEND getallen die letterlijk in de JSON-input staan.
@@ -335,6 +367,7 @@ STRIKTE REGELS — SAMENVATTING
 5. Geen verzonnen tij-stand of tij-tijdstip.
 6. Geen "springtij" tenzij expliciet zo in input.
 7. Score-getallen (0-100) noem je nooit.
+8. Geen bft, geen km/u — uitsluitend kn voor wind.
 """
 
 
@@ -355,9 +388,15 @@ class SMSGenerator:
             return self._fallback_alert_template(alert)
         try:
             structured_input = self._prepare_alert_input(alert)
-            return self._call_claude(structured_input) or self._fallback_alert_template(alert)
+            max_tokens = ANTHROPIC_CONFIG.get(
+                'max_tokens_alert', ANTHROPIC_CONFIG['max_tokens']
+            )
+            return (
+                self._call_claude(structured_input, max_tokens=max_tokens)
+                or self._fallback_alert_template(alert)
+            )
         except Exception as e:
-            logger.error(f"Failed to generate alert SMS with Claude Haiku: {e}")
+            logger.error(f"Failed to generate alert SMS with Claude: {e}")
             return self._fallback_alert_template(alert)
 
     def generate_digest_sms(
@@ -376,33 +415,61 @@ class SMSGenerator:
                 forecast_summary or {},
                 wind_spread_series=wind_spread_series,
             )
-            return self._call_claude(structured_input) or self._fallback_digest_template(hour_states, scores, windows)
+            max_tokens = ANTHROPIC_CONFIG.get(
+                'max_tokens_digest', ANTHROPIC_CONFIG['max_tokens']
+            )
+            return (
+                self._call_claude(structured_input, max_tokens=max_tokens)
+                or self._fallback_digest_template(hour_states, scores, windows)
+            )
         except Exception as e:
-            logger.error(f"Failed to generate digest SMS with Claude Haiku: {e}")
+            logger.error(f"Failed to generate digest SMS with Claude: {e}")
             return self._fallback_digest_template(hour_states, scores, windows)
 
     # ---------- LLM call ----------
 
-    def _call_claude(self, structured_input: Dict) -> Optional[str]:
+    def _call_claude(
+        self,
+        structured_input: Dict,
+        max_tokens: Optional[int] = None,
+    ) -> Optional[str]:
         """
         Anthropic Messages API call met retry voor transient overload + model fallback.
 
         Strategie:
-          1. Probeer primair model (haiku-4-5) — tot 2x retry bij 529/429.
-          2. Bij aanhoudende overload: schakel naar fallback_model (sonnet-4-5).
+          1. Probeer primair model (sonnet-4-5) — tot 2x retry bij 529/429.
+          2. Bij aanhoudende overload: schakel naar fallback_model (haiku-4-5).
           3. Pas dáárna geef op en laat caller fallback-template gebruiken.
 
-        Haiku is goedkoop én populair → krijgt het eerst peak-load. Sonnet
-        is duurder (~3x) maar fungeert als verzekering: pipeline blijft up
-        bij Anthropic-side haiku-specifieke outage.
+        Sonnet is duurder (~3x Haiku) maar fungeert als primair model voor
+        rijkere Tobias-stijl prose. Haiku is fallback bij overload.
+
+        Backoff respecteert Anthropic's `retry-after` header indien aanwezig
+        (RFC 6585): bij 429/529 antwoorden geeft Anthropic vaak een hint over
+        hoe lang te wachten. Blinde 2**attempt kan te kort OF onnodig lang zijn.
         """
         import time
         from anthropic._exceptions import OverloadedError, RateLimitError
 
+        effective_max_tokens = max_tokens or ANTHROPIC_CONFIG['max_tokens']
+
+        def _retry_after_seconds(err: Exception, fallback_s: float) -> float:
+            """Lees retry-after uit response-headers; val terug op exponential backoff."""
+            try:
+                resp = getattr(err, 'response', None)
+                headers = getattr(resp, 'headers', None) or {}
+                # httpx Headers is dict-like; .get() werkt voor beide.
+                ra = headers.get('retry-after') if hasattr(headers, 'get') else None
+                if ra is not None:
+                    return float(int(ra))
+            except (TypeError, ValueError, AttributeError):
+                pass
+            return fallback_s
+
         def _attempt(model_name: str, retries: int) -> Optional[str]:
             body = {
                 "model": model_name,
-                "max_tokens": ANTHROPIC_CONFIG['max_tokens'],
+                "max_tokens": effective_max_tokens,
                 "temperature": ANTHROPIC_CONFIG['temperature'],
                 "system": SYSTEM_PROMPT,
                 "messages": [{
@@ -415,14 +482,17 @@ class SMSGenerator:
                     message = self.client.messages.create(**body)
                     sms_text = message.content[0].text.strip()
                     logger.info(
-                        f"Generated SMS via {model_name}: {sms_text[:80]}..."
+                        f"Generated SMS via {model_name} "
+                        f"(max_tokens={effective_max_tokens}): {sms_text[:80]}..."
                     )
                     return sms_text
                 except (OverloadedError, RateLimitError) as e:
-                    wait_s = 2 ** (attempt + 1)
+                    backoff_s = 2 ** (attempt + 1)
+                    wait_s = _retry_after_seconds(e, fallback_s=backoff_s)
                     logger.warning(
                         f"{model_name} {type(e).__name__} "
-                        f"(retry {attempt + 1}/{retries} na {wait_s}s)"
+                        f"(retry {attempt + 1}/{retries} na {wait_s}s "
+                        f"{'[retry-after]' if wait_s != backoff_s else '[backoff]'})"
                     )
                     if attempt < retries - 1:
                         time.sleep(wait_s)
@@ -446,7 +516,7 @@ class SMSGenerator:
                 return result
 
         logger.error(
-            f"Anthropic API niet beschikbaar — beide modellen overloaded"
+            "Anthropic API niet beschikbaar — beide modellen overloaded"
         )
         return None
 
@@ -928,50 +998,173 @@ class SMSGenerator:
         scores: List[ScoreBreakdown],
         windows: List[SurfWindow],
     ) -> str:
-        """Deterministische 4-daagse digest in surfweer-stijl."""
+        """
+        Deterministische 4-daagse digest met rijke context — fallback bij LLM-faal.
+
+        Per dag wordt opgenomen:
+          - peak_hour conditions (golf, periode, windrichting+snelheid)
+          - board-suitability (via recommend_boards; fallback: heuristiek)
+          - venster-grenzen indien aanwezig + multi-window join met "ook"
+          - springtij-flag per dag (daily_range_m >= 2.0)
+          - visibility-concern (mist) en convective_warning (onweer)
+          - "flat" wanneer hele dag < 0.5m
+        """
         if not hour_states or not scores:
-            return "Nwijk: geen data beschikbaar. Cam: surfweer.nl/webcams/noordwijk/"
+            return (
+                "Surfweerbericht: geen data beschikbaar. "
+                "Cam: surfweer.nl/webcams/noordwijk/"
+            )
+
+        # Lazy import: scoring.recommend_boards en visibility/convective helpers
+        # zijn niet altijd aanwezig in unit-test contexts met mocked scoring.
+        try:
+            from src.scoring.hourly import (
+                recommend_boards,
+                visibility_concern,
+                convective_warning,
+            )
+        except ImportError:
+            recommend_boards = None
+            visibility_concern = None
+            convective_warning = None
 
         days = self._group_by_day(hour_states, scores)
         now = datetime.now()
-        day_label = _DAY_NL_SHORT[now.weekday()]
-        _, _, is_spring = moon_phase_info(now)
+        date_today = now.strftime("%-d-%-m-%Y")
 
-        labels = ["vandaag", "morgen", "overmorgen", None]
+        labels = ["Vandaag", "Morgen", "Overmorgen", "+3"]
         parts: List[str] = []
+
         for i, (date_obj, day_states, day_scores) in enumerate(days[:4]):
             if not day_states:
                 continue
-            label = labels[i] or date_obj.strftime("%a %d/%m")
-            # Gebruik wave-height-peak, niet score-peak — surfers bedoelen
-            # met "piek" de moment van hoogste golf, niet hoogste score.
-            peak_idx = max(
-                range(len(day_states)),
-                key=lambda i: day_states[i].wave_spectrum.significant_height_total,
+            label = labels[i] if i < len(labels) else date_obj.strftime("%a %d/%m")
+
+            # "Flat" check: hele dag onder 0.5m → korte regel.
+            max_height_day = max(
+                s.wave_spectrum.significant_height_total for s in day_states
             )
+            if max_height_day < 0.5:
+                parts.append(f"{label} flat.")
+                continue
+
+            # Peak-hour (= hoogste-golf-uur in daglicht, score > 0)
+            daylight = [j for j, sc in enumerate(day_scores) if sc.total_score > 0]
+            if daylight:
+                peak_idx = max(
+                    daylight,
+                    key=lambda j: day_states[j].wave_spectrum.significant_height_total,
+                )
+            else:
+                peak_idx = max(
+                    range(len(day_states)),
+                    key=lambda j: day_states[j].wave_spectrum.significant_height_total,
+                )
             ps = day_states[peak_idx]
             spectrum = ps.wave_spectrum
             dom = max(spectrum.peaks, key=lambda p: p.height_m) if spectrum.peaks else None
             h = round(spectrum.significant_height_total, 1)
-            p = round(dom.period_s if dom else spectrum.mean_period, 1)
-            wave_dir = degrees_to_compass(dom.direction_deg if dom else spectrum.mean_direction)
+            p_s = round(dom.period_s if dom else spectrum.mean_period, 1)
+            wave_dir = degrees_to_compass(
+                dom.direction_deg if dom else spectrum.mean_direction
+            )
             wind_dir = degrees_to_compass(ps.wind.direction_deg)
             wind_kn = round(ps.wind.speed_kn)
-            tide_dir = ps.tide.phase if ps.tide.phase in ('opgaand', 'afgaand') else '–'
+            wind_label = wind_label_for_noordwijk(ps.wind.direction_deg)
+            peak_hour_str = ps.timestamp.strftime("%-Hu")
 
-            day_windows = [w for w in windows
-                           if day_states[0].timestamp <= w.peak_hour <= day_states[-1].timestamp]
-            if day_windows:
-                w = max(day_windows, key=lambda w: w.peak_score)
-                window_str = f" {w.start.strftime('%H:%M')}-{w.end.strftime('%H:%M')}"
+            # Board-suitability (uit scoring) of fallback-heuristiek.
+            if recommend_boards is not None:
+                boards = recommend_boards(
+                    hs_m=spectrum.significant_height_total,
+                    tp_s=(dom.period_s if dom else spectrum.mean_period) or 0.0,
+                    wind_speed_kn=ps.wind.speed_kn,
+                    wind_direction_deg=ps.wind.direction_deg,
+                )
             else:
-                window_str = " (geen venster)"
+                # Simpele heuristiek: shortboard alleen bij Hs > 1.0 en Tp > 6.
+                boards = []
+                if spectrum.significant_height_total >= 0.3:
+                    boards.append('longboard')
+                if spectrum.significant_height_total >= 0.4:
+                    boards.append('midlength')
+                if spectrum.significant_height_total >= 0.5:
+                    boards.append('fish')
+                if spectrum.significant_height_total >= 1.0 and (
+                    (dom.period_s if dom else spectrum.mean_period) >= 6
+                ):
+                    boards.append('shortboard')
 
-            parts.append(
-                f"{label}: {h}m {p}s {wave_dir}, {wind_dir}{wind_kn}kn, "
-                f"tij {tide_dir}{window_str}"
+            if not boards:
+                board_str = "niet aan beginnen"
+            elif 'shortboard' in boards:
+                board_str = "alles werkt"
+            elif 'fish' in boards:
+                board_str = "long, mid en fish"
+            elif 'midlength' in boards:
+                board_str = "long en mid"
+            else:
+                board_str = "alleen longboard"
+
+            # Windows op deze dag (chosen + others).
+            day_windows = [
+                w for w in windows
+                if day_states[0].timestamp <= w.peak_hour <= day_states[-1].timestamp
+            ]
+            window_strs: List[str] = []
+            if day_windows:
+                # Sort op start_time voor logische volgorde
+                sorted_w = sorted(day_windows, key=lambda w: w.start)
+                for w in sorted_w[:3]:  # max 3 vensters benoemen
+                    window_strs.append(
+                        f"{w.start.strftime('%H:%M')}-{w.end.strftime('%H:%M')}"
+                    )
+                # Multi-window join: "14-16u ook 19:30-21u"
+                if len(window_strs) >= 2:
+                    venster = window_strs[0] + " ook " + " ook ".join(window_strs[1:])
+                else:
+                    venster = window_strs[0]
+            else:
+                venster = None
+
+            # Springtij-flag per dag.
+            spring_suffix = ""
+            if ps.tide.daily_range_m is not None and ps.tide.daily_range_m >= 2.0:
+                spring_suffix = " (springtij)"
+
+            # Visibility-concern flag.
+            vis_suffix = ""
+            if visibility_concern is not None:
+                vc = visibility_concern(
+                    ps.visibility_m, ps.dew_point_c, ps.air_temperature_c
+                )
+                if vc == 'haarmist_risico':
+                    vis_suffix = " (! mist mogelijk)"
+                elif vc == 'dichte_mist':
+                    vis_suffix = " (! dichte mist)"
+
+            # Convective warning.
+            conv_suffix = ""
+            if convective_warning is not None:
+                if convective_warning(ps.cape_jkg, ps.lifted_index):
+                    conv_suffix = " (! onweer-risico)"
+
+            # Wind sterk-marker bij ≥18kn.
+            wind_strength_marker = " (sterk)" if wind_kn >= 18 else ""
+
+            base = (
+                f"{label} rond {peak_hour_str}: {h}m, {p_s}s {wave_dir}, "
+                f"wind {wind_kn}kn {wind_dir}{wind_strength_marker}"
             )
+            if venster:
+                base += f" — {board_str}, venster {venster}"
+            else:
+                base += f" — {board_str}"
+            base += spring_suffix + vis_suffix + conv_suffix + "."
+            parts.append(base)
 
-        body = "; ".join(parts)
-        spring_note = " Springtij." if is_spring else ""
-        return f"Nwijk {day_label}: {body}.{spring_note} Cam: surfweer.nl/webcams/noordwijk/"
+        body = "\n".join(parts) if parts else "geen data."
+        return (
+            f"Surfweerbericht van {date_today}:\n{body}\n"
+            f"Cam: surfweer.nl/webcams/noordwijk/"
+        )

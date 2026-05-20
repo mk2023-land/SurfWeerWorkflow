@@ -21,13 +21,24 @@ def cluster_consecutive_hours(
     scores: List[ScoreBreakdown],
     min_score: int = None,
     min_golf: float = 0.0,
+    max_dip_hours: int = 1,
+    max_dip_depth: float = 5.0,
 ) -> List[List[ScoreBreakdown]]:
     """
-    Cluster aaneengesloten uren met score boven minimum.
+    Cluster aaneengesloten uren met score boven minimum, met tolerantie
+    voor korte dips (max_dip_hours uren tot max_dip_depth onder threshold)
+    als zowel het uur ervoor als erna boven de threshold zit.
+
+    Voorbeeld: scores [62, 63, 58, 61, 62] met threshold 60 →
+    de 58 is een 1-uurs dip van 2pt onder threshold, met buren 63 en 61 →
+    één cluster van 5 uur i.p.v. 2 clusters van 2 uur.
 
     Args:
         scores: Lijst van uurlijkse scores (chronologisch gesorteerd)
         min_score: Minimum score om als surfbaar te beschouwen
+        min_golf: Minimum golf_score (anti-wind-only-cluster)
+        max_dip_hours: Max aantal opeenvolgende uren onder drempel
+        max_dip_depth: Max diepte onder min_score (in pt) die nog dip-tolerantie krijgt
 
     Returns:
         Lijst van clusters, elk cluster is een lijst van opeenvolgende uren
@@ -37,20 +48,42 @@ def cluster_consecutive_hours(
     if min_score is None:
         min_score = SURF_THRESHOLDS['surfable']
 
+    def _qualifies(s):
+        return s.total_score >= min_score and s.golf_score >= min_golf
+
+    def _within_dip(s):
+        # Een uur kan een dip zijn als:
+        # - golf_score nog redelijk is (boven min_golf) en
+        # - total_score niet meer dan max_dip_depth onder threshold zit
+        return (
+            s.golf_score >= min_golf
+            and (min_score - s.total_score) <= max_dip_depth
+            and s.total_score < min_score
+        )
+
     clusters = []
     current_cluster = []
+    pending_dip = []  # Lijst van dip-uren in afwachting van een "qualifies" terug
 
-    for score in scores:
-        # Beide voorwaarden moeten gelden: total-score boven combo-drempel
-        # ÉN golf_score boven wave-energy drempel. Dit voorkomt dat een uur
-        # met "alleen perfect tij/wind" maar zonder echte golven als
-        # surfbaar wordt geclusterd.
-        if score.total_score >= min_score and score.golf_score >= min_golf:
+    for i, score in enumerate(scores):
+        if _qualifies(score):
+            # Eerst eventuele pending dip absorberen (we hebben nu een 'na'-buur).
+            if current_cluster and pending_dip and len(pending_dip) <= max_dip_hours:
+                current_cluster.extend(pending_dip)
+            elif pending_dip and not current_cluster:
+                # Dip zonder voorgaande cluster — gewoon verwerpen
+                pass
+            pending_dip = []
             current_cluster.append(score)
+        elif current_cluster and _within_dip(score) and len(pending_dip) < max_dip_hours:
+            # Mogelijke dip; in afwachting van bevestiging via volgende "qualifies"-uur
+            pending_dip.append(score)
         else:
+            # Echte break: sluit current cluster, vergeet pending dip
             if current_cluster:
                 clusters.append(current_cluster)
                 current_cluster = []
+            pending_dip = []
 
     if current_cluster:
         clusters.append(current_cluster)

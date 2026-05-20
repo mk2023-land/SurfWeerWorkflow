@@ -11,6 +11,7 @@ import asyncio
 import logging
 import os
 import sys
+from datetime import datetime
 
 import pytest
 
@@ -394,3 +395,157 @@ class TestMarineExtendedFields:
         row = result[0]
         assert 'wave_height_ewam' in row
         assert row['wave_height_ewam'] == 1.2
+
+
+# ---------------------------------------------------------------------------
+# Tests voor DATA-RESILIENCE fixes:
+# - Sanity checks (out-of-range → None + WARNING)
+# - IndexError protection (kortere kolom dan time[])
+# - None vs legitimate zero in marine_data_to_wave_spectrum
+# ---------------------------------------------------------------------------
+
+
+class TestSanityChecks:
+    def test_negative_wave_height_to_none(self, monkeypatch, caplog):
+        """wave_height < 0 wordt None + WARNING gelogd."""
+        bad = {
+            "hourly": {
+                "time": ["2026-05-20T00:00", "2026-05-20T01:00"],
+                "wave_height":      [-1.0, 1.2],
+                "wave_direction":   [270, 275],
+                "wave_period":      [6.0, 6.5],
+                "wind_wave_height": [0.5, 0.6],
+                "wind_wave_direction": [270, 275],
+                "wind_wave_period": [4.0, 4.2],
+                "wind_wave_peak_period": [4.5, 4.7],
+                "swell_wave_height": [0.8, 0.9],
+                "swell_wave_direction": [280, 285],
+                "swell_wave_period": [9.0, 9.5],
+            }
+        }
+        client = _patch_client(monkeypatch, bad)
+        with caplog.at_level(logging.WARNING):
+            result = _run(client.fetch_marine_data(lat=52.24, lon=4.42))
+        # Negatieve waarde -> None, geldige blijft.
+        assert result[0]['wave_height'] is None
+        assert result[1]['wave_height'] == 1.2
+        msgs = ' '.join(rec.message for rec in caplog.records)
+        assert 'wave_height' in msgs
+
+    def test_unrealistic_wind_speed_to_none(self, monkeypatch, caplog):
+        """wind_speed > 100kn wordt None + WARNING."""
+        resp = {
+            "hourly": {
+                "time": ["2026-05-20T00:00", "2026-05-20T01:00"],
+                "wind_speed_10m_knmi_seamless":   [200, 15],
+                "wind_direction_10m_knmi_seamless": [270, 275],
+            }
+        }
+        client = _patch_client(monkeypatch, resp)
+        with caplog.at_level(logging.WARNING):
+            result = _run(client.fetch_forecast_data(
+                lat=52.24, lon=4.42, models=['knmi_seamless']
+            ))
+        rows = result['knmi_seamless']
+        assert rows[0]['wind_speed'] is None
+        assert rows[1]['wind_speed'] == 15
+
+    def test_unrealistic_pressure_to_none(self, monkeypatch, caplog):
+        """pressure < 900 of > 1080 wordt None + WARNING."""
+        resp = {
+            "hourly": {
+                "time": ["2026-05-20T00:00", "2026-05-20T01:00"],
+                "wind_speed_10m_knmi_seamless":   [10, 12],
+                "wind_direction_10m_knmi_seamless": [270, 275],
+                "pressure_msl_knmi_seamless":     [500, 1015],
+            }
+        }
+        client = _patch_client(monkeypatch, resp)
+        with caplog.at_level(logging.WARNING):
+            result = _run(client.fetch_forecast_data(
+                lat=52.24, lon=4.42, models=['knmi_seamless']
+            ))
+        rows = result['knmi_seamless']
+        assert rows[0]['pressure'] is None
+        assert rows[1]['pressure'] == 1015
+
+
+class TestIndexErrorProtection:
+    def test_shorter_column_does_not_crash(self, monkeypatch):
+        """
+        Eén kolom korter dan time[] mag geen IndexError opleveren.
+        wave_period heeft hier 1 entry, time[] heeft er 2.
+        """
+        resp = {
+            "hourly": {
+                "time": ["2026-05-20T00:00", "2026-05-20T01:00"],
+                "wave_height":      [1.2, 1.3],
+                "wave_period":      [6.0],  # KORTER
+                "wave_direction":   [270, 275],
+                "wind_wave_height": [0.5, 0.6],
+                "wind_wave_direction": [270, 275],
+                "wind_wave_period": [4.0, 4.2],
+                "wind_wave_peak_period": [4.5, 4.7],
+                "swell_wave_height": [0.8, 0.9],
+                "swell_wave_direction": [280, 285],
+                "swell_wave_period": [9.0, 9.5],
+            }
+        }
+        client = _patch_client(monkeypatch, resp)
+        # Geen crash → succes
+        result = _run(client.fetch_marine_data(lat=52.24, lon=4.42))
+        assert len(result) == 2
+        # Eerste row krijgt periode 6.0, tweede row krijgt None (out-of-bounds).
+        assert result[0]['wave_period'] == 6.0
+        assert result[1]['wave_period'] is None
+
+
+class TestNoneVsLegitimateZero:
+    def test_period_none_does_not_become_zero(self):
+        """
+        marine_data_to_wave_spectrum: None periode (geen meting) mag geen
+        valse 0.0 worden waar downstream "geldig flat" zou denken.
+        """
+        client = OpenMeteoClient()
+        marine_data = {
+            'timestamp': datetime(2026, 5, 20, 12, 0),
+            'wave_height': 0.5,
+            'wave_period': None,        # GEEN meting
+            'wave_direction': None,
+            'wind_wave_height': 0.5,
+            'wind_wave_period': None,
+            'wind_wave_peak_period': None,
+            'wind_wave_direction': None,
+            'swell_wave_height': 0.0,
+            'swell_wave_period': None,
+            'swell_wave_direction': None,
+        }
+        spectrum = client.marine_data_to_wave_spectrum(marine_data)
+        # Geen peaks omdat alle periodes None waren — geen valse 0.0.
+        assert spectrum.peaks == []
+        # En de spectrum-defaults blijven veilig (0.0 / 0).
+        assert spectrum.mean_period == 0.0
+
+    def test_zero_height_legitimate_flat_water(self):
+        """
+        Hs = 0.0 (echte flat-water condities) blijft als 0.0 — niet als None
+        verkeerd geïnterpreteerd. Geen peak, maar significant_height blijft 0.
+        """
+        client = OpenMeteoClient()
+        marine_data = {
+            'timestamp': datetime(2026, 5, 20, 12, 0),
+            'wave_height': 0.0,
+            'wave_period': 5.0,
+            'wave_direction': 270,
+            'wind_wave_height': 0.0,
+            'wind_wave_period': 4.0,
+            'wind_wave_peak_period': 4.5,
+            'wind_wave_direction': 270,
+            'swell_wave_height': 0.0,
+            'swell_wave_period': 8.0,
+            'swell_wave_direction': 280,
+        }
+        spectrum = client.marine_data_to_wave_spectrum(marine_data)
+        # Geen peaks bij 0 height (drempel 0.1)
+        assert spectrum.peaks == []
+        assert spectrum.significant_height_total == 0.0
