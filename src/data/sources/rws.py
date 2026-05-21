@@ -85,24 +85,35 @@ _RWS_PRESSURE_MAX_HPA = 1080.0
 _RWS_AIR_TEMP_MIN_C = -30.0
 _RWS_AIR_TEMP_MAX_C = 50.0
 
-# Aquo-codes voor de quantities die we opvragen.
-GROOTHEID_HM0 = 'Hm0'      # Significante golfhoogte in spectrale domein (cm)
-GROOTHEID_TM02 = 'Tm02'    # Gemiddelde golfperiode uit m0/m2 (s)
-GROOTHEID_TH0 = 'Th0'      # Gemiddelde golfrichting (graden)
-GROOTHEID_WATHTE = 'WATHTE'  # Waterhoogte (cm t.o.v. NAP)
-# Uitgebreide boei-grootheden (RWS DDAPI20).
-GROOTHEID_TP = 'Tp'        # Peak-periode (s) — surfers/pro-forecasters
-GROOTHEID_TP_FALLBACK = 'Tp001'  # Sommige DDAPI20-versies hanteren Tp001 i.p.v. Tp
-GROOTHEID_SOBH = 'SObh'    # Directional spread / golfrichtingspreiding (°)
-GROOTHEID_HMAX = 'Hmax'    # Max individuele golf in meet-interval (cm)
-GROOTHEID_LUCHTDK = 'LUCHTDK'   # Luchtdruk gemeten bij boei (hPa)
-GROOTHEID_LUCHTTPR = 'LUCHTTPR' # Luchttemperatuur bij boei (°C)
-# Tide-uitbreiding voor storm surge residual.
-# Bij sommige RWS-publicaties is het astronomisch tij gepubliceerd onder
-# WATHTBRKD ("berekend"); de actuele/gemeten waterhoogte als WATHTE met
-# ProcesType=metingen. We proberen beide te halen en berekenen
-# `surge_cm = measured - astronomical` als beide beschikbaar zijn.
-GROOTHEID_WATHTBRKD = 'WATHTBRKD'
+# Aquo-codes voor de quantities die we opvragen. Geverifieerd tegen
+# OphalenCatalogus (mei 2026) en live 24h/48h probes — alleen codes die
+# RWS DDAPI20 daadwerkelijk publiceert.
+GROOTHEID_HM0 = 'Hm0'        # Significante golfhoogte in spectrale domein (cm)
+GROOTHEID_TM02 = 'Tm02'      # Gemiddelde golfperiode uit m0/m2 (s)
+GROOTHEID_TM_M10 = 'Tm-10'   # Peak-periode proxy uit m-1/m0 (s) — vervangt Tp
+GROOTHEID_TH0 = 'Th0'        # Gemiddelde golfrichting spectraal (°)
+GROOTHEID_TH3 = 'Th3'        # Deining-richting t.o.v. ware noorden (°) — Th0 fallback
+GROOTHEID_HMAX = 'Hmax'      # Max individuele golf in meet-interval (cm)
+GROOTHEID_H13 = 'H1/3'       # Gem. hoogte hoogste 1/3 deel (cm) — extra-validatie
+GROOTHEID_T13 = 'T1/3'       # Periode bij H1/3 (s) — extra periode-proxy
+GROOTHEID_T_WATER = 'T'      # Watertemperatuur bij boei (°C) — alleen MUN1/K13
+GROOTHEID_WATHTE = 'WATHTE'  # Waterhoogte (cm)
+
+# DEPRECATED in DDAPI20 — RWS publiceert deze grootheden niet (meer) voor
+# onze stations. Behouden als constants voor backwards-compat; niet meer
+# proactief bevraagd (zorgt voor 204 No Content + onnodige API-calls).
+GROOTHEID_SOBH = 'S0BH'      # Directional spread — wel in catalog, geen actieve data
+GROOTHEID_LUCHTDK = 'LUCHTDK'   # Luchtdruk bij boei — niet beschikbaar
+GROOTHEID_LUCHTTPR = 'LUCHTTPR' # Luchttemperatuur bij boei — niet beschikbaar
+GROOTHEID_TP = 'Tp'          # Niet gepubliceerd; vervangen door Tm-10
+GROOTHEID_TP_FALLBACK = 'Tp001'  # Niet gepubliceerd; vervangen door Tm-10
+GROOTHEID_WATHTBRKD = 'WATHTBRKD'  # Niet beschikbaar voor ijmuiden.buitenhaven
+
+# Welke ruwe Aquo-code in welke per-merge-key terechtkomt. Per locatie kunnen
+# verschillende codes hetzelfde "kanaal" vullen (bv. Th3 voor K13 i.p.v. Th0).
+# Mapping verwerkt in merge-stap (`_aquo_to_field`).
+_PERIOD_FIELDS = {GROOTHEID_TM02: 'period_s', GROOTHEID_TM_M10: 'tp_s'}
+_DIRECTION_FIELDS = {GROOTHEID_TH0: 'direction_deg', GROOTHEID_TH3: 'direction_deg'}
 
 
 def _parse_rws_timestamp(s: str) -> datetime:
@@ -327,137 +338,150 @@ class RWSClient:
         """
         Haal recente boei-data op: significante golfhoogte (m), periode (s), richting (°).
 
-        Bevraagt Hm0, Tm02 en Th0 parallel en mergt op tijdstip. Th0 wordt
-        op 0 gezet als de boei geen richting publiceert (gebruikelijk bij
-        offshore-platforms zonder directionele sensor).
+        Bevraagt per-station alleen de Aquo-grootheden die deze sensor
+        daadwerkelijk publiceert (zie `RWS_STATIONS[code]['quantities']`).
+        Dat voorkomt onnodige 204-calls die voorheen het retry-mechanisme
+        triggerden. Default (geen `quantities`-key) is een full-set probe.
 
-        Wanneer `include_extras=True` (default) worden ook de uitgebreide
-        DDAPI20-grootheden opgehaald en als extra dict-keys toegevoegd aan
-        elk gemerged punt:
-          - `tp_s`     : peak-periode (Tp of Tp001-fallback)
-          - `sobh_deg` : directional spread
-          - `hmax_m`   : maximale individuele golf in interval
-          - `pressure_hpa`, `air_temp_c` : alleen bij IJG1 (LUCHTDK/LUCHTTPR)
+        Merge-strategie: index alle reeksen op timestamp en plak ze aan
+        elkaar. Hm0 + één periode (Tm02 of Tm-10 als Tm02 leeg) zijn vereist
+        om een merged-punt op te leveren — zonder periode is een wave-amplitude
+        nutteloos voor scoring. Richting (Th0 of Th3-fallback) is optioneel
+        en valt terug op 0° als geen sensor publiceert.
 
-        Per-grootheid failures (503, 404, lege response) zijn gracieus — de
-        bijbehorende key ontbreekt of staat op None in het gemergede punt.
+        Extra dict-keys op merged-punten (alleen aanwezig bij actieve sensor):
+          - `tp_s`           : peak-periode-proxy (Tm-10 spectraal moment m-1/m0)
+          - `hmax_m`         : maximale individuele golf in interval
+          - `h13_m`          : H1/3 — gem hoogte hoogste 1/3 (extra validatie)
+          - `water_temp_c`   : Aquo `T`, alleen MUN1/K13
+
+        Per-grootheid failures (203, 503, lege response) zijn gracieus — de
+        bijbehorende key ontbreekt in het gemergede punt.
+
+        `include_extras` is bewaard voor backward-compat; nu een no-op omdat
+        de per-station `quantities` lijst exact bepaalt wat we vragen.
         """
         if station_code not in RWS_STATIONS:
             raise ValueError(f"Onbekend station: {station_code}")
 
         station = RWS_STATIONS[station_code]
         rws_code = station['rws_code']
+        # Default-set wanneer een station geen expliciete quantities heeft;
+        # dat is de oude full-set behavior — backward compatible.
+        quantities: List[str] = list(station.get('quantities') or [
+            GROOTHEID_HM0, GROOTHEID_TM02, GROOTHEID_TH0,
+            GROOTHEID_TM_M10, GROOTHEID_HMAX,
+        ])
+        # Hm0 is non-negotiable basis voor merge.
+        if GROOTHEID_HM0 not in quantities:
+            quantities.insert(0, GROOTHEID_HM0)
+
         end = datetime.now(timezone.utc)
         start = end - timedelta(hours=hours_back)
 
-        logger.info(f"Fetching buoy data for {station['name']} ({rws_code}), {hours_back}h history")
-
-        # Basis-grootheden — backwards compatible.
-        base_tasks = [
-            self._fetch_series_safe(rws_code, GROOTHEID_HM0, start, end),
-            self._fetch_series_safe(rws_code, GROOTHEID_TM02, start, end),
-            self._fetch_series_safe(rws_code, GROOTHEID_TH0, start, end),
-        ]
-
-        # Uitgebreide grootheden — alleen wanneer expliciet gevraagd.
-        # LUCHTDK/LUCHTTPR alleen voor IJG1 (primary, lokaal).
-        extra_codes: List[str] = []
-        if include_extras:
-            extra_codes.extend([GROOTHEID_TP, GROOTHEID_SOBH, GROOTHEID_HMAX])
-            if station_code == 'IJG1':
-                extra_codes.extend([GROOTHEID_LUCHTDK, GROOTHEID_LUCHTTPR])
-        extra_tasks = [
-            self._fetch_series_safe(rws_code, code, start, end)
-            for code in extra_codes
-        ]
-
-        results = await asyncio.gather(
-            *base_tasks, *extra_tasks, return_exceptions=True
+        logger.info(
+            f"Fetching buoy data for {station['name']} ({rws_code}), {hours_back}h history, "
+            f"grootheden={quantities}"
         )
 
-        # `_fetch_series_safe` zou nooit moeten raisen, maar gather kan
-        # alsnog een Exception terugkrijgen — degradeer naar [].
+        tasks = [
+            self._fetch_series_safe(rws_code, code, start, end)
+            for code in quantities
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
         def _list(x):
             return x if isinstance(x, list) else []
 
-        hm0 = _list(results[0])
-        tm02 = _list(results[1])
-        th0 = _list(results[2])
-        extras_lists = [_list(r) for r in results[3:]]
-        extras_by_code: Dict[str, List[Dict[str, Any]]] = dict(
-            zip(extra_codes, extras_lists)
-        )
+        # rows_by_code: code → list[{'timestamp','value','unit'}]
+        rows_by_code: Dict[str, List[Dict[str, Any]]] = {
+            code: _list(r) for code, r in zip(quantities, results)
+        }
+        hm0_rows = rows_by_code.get(GROOTHEID_HM0, [])
+        if not hm0_rows:
+            logger.warning(f"Geen Hm0 voor {station_code}; geen merged punten")
+            return []
 
-        # Tp/Tp001 fallback: als Tp niets oplevert, probeer Tp001 een keer.
-        if include_extras and not extras_by_code.get(GROOTHEID_TP):
-            logger.info(
-                f"Tp leeg voor {station_code}, fallback naar {GROOTHEID_TP_FALLBACK}"
-            )
-            tp_fb = await self._fetch_series_safe(
-                rws_code, GROOTHEID_TP_FALLBACK, start, end
-            )
-            if tp_fb:
-                extras_by_code[GROOTHEID_TP] = tp_fb
+        # Per-timestamp lookups voor elke beschikbare grootheid.
+        def _by_ts(code: str) -> Dict[datetime, float]:
+            return {r['timestamp']: r['value'] for r in rows_by_code.get(code, [])}
 
-        # Indexeren op tijdstip voor merge.
-        tm02_by_ts = {row['timestamp']: row['value'] for row in tm02}
-        th0_by_ts = {row['timestamp']: row['value'] for row in th0}
-        tp_by_ts = {r['timestamp']: r['value']
-                    for r in extras_by_code.get(GROOTHEID_TP, [])}
-        sobh_by_ts = {r['timestamp']: r['value']
-                      for r in extras_by_code.get(GROOTHEID_SOBH, [])}
-        hmax_by_ts = {r['timestamp']: r['value']
-                      for r in extras_by_code.get(GROOTHEID_HMAX, [])}
-        pressure_by_ts = {r['timestamp']: r['value']
-                          for r in extras_by_code.get(GROOTHEID_LUCHTDK, [])}
-        airtemp_by_ts = {r['timestamp']: r['value']
-                         for r in extras_by_code.get(GROOTHEID_LUCHTTPR, [])}
+        tm02_by_ts = _by_ts(GROOTHEID_TM02)
+        tm_m10_by_ts = _by_ts(GROOTHEID_TM_M10)
+        # Direction: Th0 heeft voorrang, Th3 (deining-richting) is fallback.
+        th0_by_ts = _by_ts(GROOTHEID_TH0)
+        th3_by_ts = _by_ts(GROOTHEID_TH3)
+        hmax_by_ts = _by_ts(GROOTHEID_HMAX)
+        h13_by_ts = _by_ts(GROOTHEID_H13)
+        t13_by_ts = _by_ts(GROOTHEID_T13)
+        water_temp_by_ts = _by_ts(GROOTHEID_T_WATER)
 
-        # Unit-aware height conversie: RWS publiceert Hm0/Hmax meestal in cm
-        # maar mogelijk in m. Lees `unit` uit de eerste record en kies de factor.
-        hm0_factor = _height_factor_to_m(hm0, GROOTHEID_HM0)
+        # Unit-aware height conversie: factor uit eerste record (cm vs m).
+        hm0_factor = _height_factor_to_m(hm0_rows, GROOTHEID_HM0)
         hmax_factor = _height_factor_to_m(
-            extras_by_code.get(GROOTHEID_HMAX, []), GROOTHEID_HMAX
+            rows_by_code.get(GROOTHEID_HMAX, []), GROOTHEID_HMAX
+        )
+        h13_factor = _height_factor_to_m(
+            rows_by_code.get(GROOTHEID_H13, []), GROOTHEID_H13
         )
 
-        # Sanity-bepaling Hm0: bouw eerst een filtered list zodat een
-        # negatieve / absurd hoge waarde de hele timestamp dropt (Tm02/Th0
-        # zouden anders aan een glitch-Hm0 hangen).
+        # Bepaal of dit station überhaupt periode-grootheden publiceert.
+        # K13 doet dat niet (alleen Hm0+Th3+T) — daar willen we de Hs-data
+        # toch behouden voor early-warning (Hs trend telt zonder periode).
+        # Stations met periode-quantities in `quantities` blijven strict.
+        period_quantities = {GROOTHEID_TM02, GROOTHEID_TM_M10, GROOTHEID_T13}
+        station_has_period = bool(set(quantities) & period_quantities)
+        if not station_has_period:
+            logger.info(
+                f"{station_code}: geen periode-grootheden geconfigureerd; "
+                f"merged punten krijgen period_s=0 (Hs-only early-warning)"
+            )
+
         merged: List[Dict[str, Any]] = []
-        for row in hm0:
+        period_missing_warned = False
+        for row in hm0_rows:
             ts = row['timestamp']
             height_m = row['value'] * hm0_factor
             if not _sane_hm0_m(height_m, station_code):
                 continue
-            period_s = tm02_by_ts.get(ts)
+            # Periode: Tm02 met fallback naar Tm-10 of T_H1/3.
+            period_s = tm02_by_ts.get(ts) or tm_m10_by_ts.get(ts) or t13_by_ts.get(ts)
             if period_s is None or period_s <= 0:
-                continue  # zonder periode is een spectrale piek zinloos
-            if period_s > _RWS_PERIOD_MAX_S:
+                if station_has_period:
+                    # Station HOORT periode te leveren maar deze timestamp
+                    # niet — skip. Eénmalig warning per station.
+                    if not period_missing_warned:
+                        logger.warning(
+                            f"RWS {station_code}: periode ontbreekt op {ts}; "
+                            f"timestamp overgeslagen (verdere skips niet gelogd)"
+                        )
+                        period_missing_warned = True
+                    continue
+                # Geen periode-grootheid uit het station: 0 i.p.v. drop —
+                # zodat Hs-only early-warning werkt voor K13.
+                period_s = 0.0
+            elif period_s > _RWS_PERIOD_MAX_S:
                 logger.warning(
-                    f"RWS Tm02 {period_s}s buiten range @{station_code}; sla over"
+                    f"RWS periode {period_s}s buiten range @{station_code}; sla over"
                 )
                 continue
-            direction = th0_by_ts.get(ts, 0.0)
+            # Richting: Th0 > Th3 > 0 (geen sensor)
+            direction = th0_by_ts.get(ts)
+            if direction is None:
+                direction = th3_by_ts.get(ts, 0.0)
             point: Dict[str, Any] = {
                 'timestamp': ts,
                 'station': station_code,
                 'height_m': height_m,
-                'period_s': period_s,
-                'direction_deg': direction,
+                'period_s': float(period_s),
+                'direction_deg': float(direction),
             }
-            # Uitgebreide velden — alleen toevoegen als er data is, zodat
-            # downstream-consumers `dict.get(..., default)` kunnen gebruiken.
-            tp_val = tp_by_ts.get(ts)
-            if tp_val is not None and tp_val > 0:
-                if tp_val <= _RWS_PERIOD_MAX_S:
-                    point['tp_s'] = float(tp_val)
-                else:
-                    logger.warning(
-                        f"RWS Tp {tp_val}s buiten range @{station_code}; drop"
-                    )
-            sobh_val = sobh_by_ts.get(ts)
-            if sobh_val is not None and 0 <= sobh_val <= 180:
-                point['sobh_deg'] = float(sobh_val)
+            # Tm-10 als peak-period proxy (`tp_s`-kanaal voor downstream
+            # scoring — wave_age en surf_steepness verwachten een peak-achtige
+            # periode, geen mean Tm02).
+            tp_val = tm_m10_by_ts.get(ts)
+            if tp_val is not None and 0 < tp_val <= _RWS_PERIOD_MAX_S:
+                point['tp_s'] = float(tp_val)
             hmax_val = hmax_by_ts.get(ts)
             if hmax_val is not None:
                 hmax_m = float(hmax_val) * hmax_factor
@@ -467,25 +491,19 @@ class RWSClient:
                     logger.warning(
                         f"RWS Hmax {hmax_m:.2f}m buiten range @{station_code}; drop"
                     )
-            pressure_val = pressure_by_ts.get(ts)
-            if pressure_val is not None:
-                if _RWS_PRESSURE_MIN_HPA <= pressure_val <= _RWS_PRESSURE_MAX_HPA:
-                    point['pressure_hpa'] = float(pressure_val)
-                else:
-                    logger.warning(
-                        f"RWS LUCHTDK {pressure_val}hPa buiten range @{station_code}; drop"
-                    )
-            air_temp_val = airtemp_by_ts.get(ts)
-            if air_temp_val is not None:
-                if _RWS_AIR_TEMP_MIN_C <= air_temp_val <= _RWS_AIR_TEMP_MAX_C:
-                    point['air_temp_c'] = float(air_temp_val)
-                else:
-                    logger.warning(
-                        f"RWS LUCHTTPR {air_temp_val}°C buiten range @{station_code}; drop"
-                    )
+            h13_val = h13_by_ts.get(ts)
+            if h13_val is not None:
+                h13_m = float(h13_val) * h13_factor
+                if 0 <= h13_m <= _RWS_HMAX_MAX_M:
+                    point['h13_m'] = h13_m
+            water_temp_val = water_temp_by_ts.get(ts)
+            if water_temp_val is not None and -2 <= water_temp_val <= 35:
+                point['water_temp_c'] = float(water_temp_val)
             merged.append(point)
 
-        logger.info(f"Retrieved {len(merged)} merged observations for {station_code}")
+        logger.info(
+            f"Retrieved {len(merged)} merged observations for {station_code}"
+        )
         return merged
 
     async def fetch_tide_predictions(
@@ -600,19 +618,33 @@ class RWSClient:
         tijdstip (10-min raster); een mismatch op één steekpunt slaan we
         gewoon over.
         """
+        # WATHTBRKD bestaat niet voor `ijmuiden.buitenhaven` (geverifieerd
+        # tegen OphalenCatalogus mei 2026). Voor stations zonder berekend-tij
+        # vallen we direct terug op de in `astronomical_events` doorgegeven
+        # set (uit dezelfde WATHTE-astronomisch call). Voor andere stations
+        # (bv. scheveningen) blijft de WATHTBRKD-poging staan.
+        STATIONS_WITHOUT_WATHTBRKD = {'ijmuiden.buitenhaven'}
+        # `ProcesType='meting'` (enkelvoud) — RWS DDAPI20 retourneerde 400
+        # met "Geldige waarden zijn 'meting, verwachting, astronomisch'"
+        # bij de oude 'metingen'-waarde.
         measured_task = self._fetch_series_safe(
             location_code, GROOTHEID_WATHTE, start, end,
-            proces_type='metingen', hoedanigheid='NAP',
+            proces_type='meting', hoedanigheid='NAP',
         )
-        brkd_task = self._fetch_series_safe(
-            location_code, GROOTHEID_WATHTBRKD, start, end,
-            hoedanigheid='NAP',
-        )
-        measured, brkd = await asyncio.gather(
-            measured_task, brkd_task, return_exceptions=True,
-        )
-        measured = measured if isinstance(measured, list) else []
-        brkd = brkd if isinstance(brkd, list) else []
+        if location_code in STATIONS_WITHOUT_WATHTBRKD:
+            measured = await measured_task
+            measured = measured if isinstance(measured, list) else []
+            brkd = []
+        else:
+            brkd_task = self._fetch_series_safe(
+                location_code, GROOTHEID_WATHTBRKD, start, end,
+                hoedanigheid='NAP',
+            )
+            measured, brkd = await asyncio.gather(
+                measured_task, brkd_task, return_exceptions=True,
+            )
+            measured = measured if isinstance(measured, list) else []
+            brkd = brkd if isinstance(brkd, list) else []
 
         if not measured:
             logger.warning(

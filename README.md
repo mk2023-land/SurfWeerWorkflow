@@ -106,14 +106,22 @@ src/
     └── seasonal.py        # Seizoensbaseline builder
 
 tests/
-├── test_scoring.py        # Unit tests (scoring + windows)
-├── test_bias_correction.py# Bias-correctie tests
-├── test_trigger_T1.py     # T1 detector tests
-└── test_validation.py     # Backtest validatie
+├── test_scoring.py          # Unit tests (scoring + windows)
+├── test_bias_correction.py  # Bias-correctie tests
+├── test_trigger_T1.py       # T1 detector tests
+├── test_detectors.py        # T1-T5 alert detector tests
+├── test_engine_state.py     # AlertEngine cooldown/budget tests
+├── test_open_meteo.py       # Open-Meteo client tests
+├── test_rws.py              # Rijkswaterstaat DDAPI20 tests
+├── test_validator.py        # LLM output-validator tests
+├── test_generator.py        # LLM SMS-generator tests
+├── test_notify.py           # Notifier (ntfy/mail/twilio) tests
+└── test_orchestration.py    # Main-pipeline wiring tests
 
 scripts/
-├── send_test_notification.py # End-to-end test van notifier-pipeline
-└── ingest_reference_message.py  # referentie-forecaster-SMS archiveren als training-labels
+├── send_test_notification.py   # End-to-end test van notifier-pipeline
+├── ingest_reference_message.py    # referentie-forecaster-SMS archiveren als training-labels
+└── run_validation_backtest.py  # Backtest validatie tegen historische SMS dataset
 
 research/                  # 9 onderzoeksrapporten + master plan
 data/
@@ -156,7 +164,8 @@ Andere kanalen (SMTP-mail of Twilio-SMS) staan beschreven in `.env.example`.
 ### Unit tests
 
 ```bash
-# Run alle tests (77 tests in totaal: scoring + bias correction + T1 + validation)
+# Run alle tests (250 tests in totaal: scoring + bias correction + T1 + detectors +
+# engine + open-meteo + rws + LLM validator + LLM generator + notify + orchestration)
 pytest tests/ -v
 
 # Run alleen scoring tests
@@ -171,8 +180,7 @@ pytest tests/test_trigger_T1.py -v
 
 ```bash
 # Run validatie tegen historische SMS dataset
-cd tests
-python test_validation.py
+python scripts/run_validation_backtest.py
 
 # Verwacht: ≥70% accuracy
 ```
@@ -318,7 +326,7 @@ de wind weg. Vrijdag rond 05:00 nog klein (0,2m). Cam: surfweer.nl/webcams/noord
 
 1. Run `pytest tests/test_scoring.py -v` voor unit tests
 2. Check scoring parameters in `config.py`
-3. Draai validation script: `python tests/test_validation.py`
+3. Draai validation script: `python scripts/run_validation_backtest.py`
 
 ## 📊 Kosten
 
@@ -345,7 +353,7 @@ Als je naar Twilio SMS terugschakelt (`NOTIFIER=twilio`), komt daar ~€0.08/SMS
 
 Bij code changes:
 - Run `pytest tests/ -v`
-- Run `python tests/test_validation.py`
+- Run `python scripts/run_validation_backtest.py`
 - Check dat accuracy ≥70%
 
 ## 📝 License

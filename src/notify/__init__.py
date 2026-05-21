@@ -11,7 +11,8 @@ Default is email.
 import logging
 import os
 from datetime import datetime
-from typing import Protocol
+from typing import Optional, Protocol
+from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
@@ -20,9 +21,25 @@ _NL_DAYS_SHORT = ['ma', 'di', 'wo', 'do', 'vr', 'za', 'zo']
 _NL_MONTHS = ['januari', 'februari', 'maart', 'april', 'mei', 'juni',
               'juli', 'augustus', 'september', 'oktober', 'november', 'december']
 
+_AMSTERDAM_TZ = ZoneInfo("Europe/Amsterdam")
 
-def format_nl_date(dt: datetime) -> str:
-    """Format datum als 'ma 19 mei' — voor titels in notificaties."""
+
+def format_nl_date(dt: Optional[datetime] = None) -> str:
+    """Format datum als 'ma 19 mei' — voor titels in notificaties.
+
+    Timezone-bewust: GitHub Actions runners draaien in UTC, maar de
+    digest-titel moet de NL-lokale dag tonen. Bij 23:30 UTC vrijdag is
+    het in Amsterdam (CEST, +02:00) al 01:30 zaterdag — dan willen we
+    "za", niet "vr".
+
+    - `dt is None` → gebruik `datetime.now(Europe/Amsterdam)`.
+    - `dt` met tzinfo → converteer naar Amsterdam.
+    - `dt` naive → behandel als reeds Amsterdam-local (geen conversie).
+    """
+    if dt is None:
+        dt = datetime.now(_AMSTERDAM_TZ)
+    elif dt.tzinfo is not None:
+        dt = dt.astimezone(_AMSTERDAM_TZ)
     return f"{_NL_DAYS_SHORT[dt.weekday()]} {dt.day} {_NL_MONTHS[dt.month - 1]}"
 
 

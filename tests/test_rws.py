@@ -7,11 +7,12 @@ in de parser (verkeerde Aquo-code mapping, lege MetingenLijst, etc.) wordt
 zo gevangen.
 
 Dekt:
-  - Nieuwe grootheden komen binnen op IJG1 (Tp, SObh, Hmax, LUCHTDK, LUCHTTPR).
-  - Tp/Tp001 fallback wanneer Tp leeg is.
+  - Nieuwe grootheden komen binnen op IJG1 (Hm0, Tm02, Tm-10, Hmax, H1/3).
+  - Tm-10 vervangt Tp/Tp001 (DDAPI20 publiceert geen Tp meer).
   - Graceful degradation: één grootheid 503 breekt de boei niet.
-  - LUCHTDK/LUCHTTPR alleen voor IJG1, niet voor A12/K13.
-  - Surge residual = measured - astronomical, en degradeert gracieus.
+  - Per-station `quantities` lijst — A12 vraagt geen Th0/Hmax/lucht-data.
+  - `include_extras=False` is een no-op (per-station quantities bepaalt scope).
+  - Surge residual = measured - astronomical (ProcesType='meting', enkelvoud).
 """
 from __future__ import annotations
 
@@ -29,6 +30,7 @@ import pytest
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.data.sources.rws import (  # noqa: E402
+    GROOTHEID_H13,
     GROOTHEID_HM0,
     GROOTHEID_HMAX,
     GROOTHEID_LUCHTDK,
@@ -36,6 +38,7 @@ from src.data.sources.rws import (  # noqa: E402
     GROOTHEID_SOBH,
     GROOTHEID_TH0,
     GROOTHEID_TM02,
+    GROOTHEID_TM_M10,
     GROOTHEID_TP,
     GROOTHEID_TP_FALLBACK,
     GROOTHEID_WATHTBRKD,
@@ -46,6 +49,15 @@ import src.data.sources.rws as rws_mod  # noqa: E402
 
 
 def _run(coro):
+    """Run een coroutine op de current event loop voor deze test.
+
+    De `_fresh_event_loop` autouse fixture in tests/conftest.py installeert
+    voor elke test een verse event loop. We gebruiken die loop hier zodat
+    primitives die in de test-body worden aangemaakt (asyncio.Lock(),
+    asyncio.Semaphore(), asyncio.gather(...)) en de loop die _run gebruikt
+    altijd consistent zijn. Geen `asyncio.run()` — dat zou onze fixture-loop
+    sluiten en cross-test pollution veroorzaken.
+    """
     return asyncio.get_event_loop().run_until_complete(coro)
 
 
@@ -117,22 +129,29 @@ def _patch_client(monkeypatch, router: _FakeRouter) -> RWSClient:
 
 
 def _ijg1_full_router() -> _FakeRouter:
-    """Router met realistische data voor alle IJG1-grootheden."""
+    """
+    Router met realistische data voor alle IJG1-grootheden zoals DDAPI20
+    die publiceert (mei 2026). IJG1 levert Hm0, Tm02, Hmax, Tm-10 en H1/3 —
+    geen Th0/Th3 (richting ontbreekt) en geen S0BH/LUCHTDK/LUCHTTPR.
+    """
     r = _FakeRouter()
     r.add(GROOTHEID_HM0, _series(GROOTHEID_HM0, 'cm', [120.0, 130.0, 140.0]))
     r.add(GROOTHEID_TM02, _series(GROOTHEID_TM02, 's', [5.8, 6.0, 6.2]))
-    r.add(GROOTHEID_TH0, _series(GROOTHEID_TH0, 'graad', [280.0, 282.0, 285.0]))
-    r.add(GROOTHEID_TP, _series(GROOTHEID_TP, 's', [6.4, 6.6, 6.8]))
-    r.add(GROOTHEID_SOBH, _series(GROOTHEID_SOBH, 'graad', [22.0, 24.0, 26.0]))
     r.add(GROOTHEID_HMAX, _series(GROOTHEID_HMAX, 'cm', [190.0, 200.0, 220.0]))
-    r.add(GROOTHEID_LUCHTDK, _series(GROOTHEID_LUCHTDK, 'hPa', [1015.0, 1015.2, 1015.4]))
-    r.add(GROOTHEID_LUCHTTPR, _series(GROOTHEID_LUCHTTPR, 'oC', [12.0, 12.2, 12.4]))
+    r.add(GROOTHEID_TM_M10, _series(GROOTHEID_TM_M10, 's', [6.4, 6.6, 6.8]))
+    r.add(GROOTHEID_H13, _series(GROOTHEID_H13, 'cm', [150.0, 160.0, 170.0]))
     return r
 
 
 class TestExtendedBuoyData:
     def test_ijg1_returns_all_new_grootheden(self, monkeypatch):
-        """Alle 5 extra grootheden moeten als dict-keys verschijnen op elk punt."""
+        """
+        Alle door RWS DDAPI20 gepubliceerde IJG1-grootheden moeten als
+        dict-keys verschijnen op elk merged punt: Hm0 (basis), Tm02 (period_s),
+        Tm-10 (tp_s peak-proxy), Hmax, H1/3. IJG1 publiceert geen Th0/Th3,
+        dus direction_deg valt terug op 0. S0BH/LUCHTDK/LUCHTTPR zijn
+        verwijderd uit DDAPI20 voor deze sensor.
+        """
         client = _patch_client(monkeypatch, _ijg1_full_router())
         data = _run(client.fetch_buoy_data('IJG1', hours_back=1))
 
@@ -142,32 +161,44 @@ class TestExtendedBuoyData:
         assert 'timestamp' in first
         assert first['height_m'] == pytest.approx(1.20)
         assert first['period_s'] == pytest.approx(5.8)
-        assert first['direction_deg'] == pytest.approx(280.0)
-        # Nieuwe velden.
-        assert first['tp_s'] == pytest.approx(6.4)
-        assert first['sobh_deg'] == pytest.approx(22.0)
-        assert first['hmax_m'] == pytest.approx(1.90)  # 190 cm → 1.9 m
-        assert first['pressure_hpa'] == pytest.approx(1015.0)
-        assert first['air_temp_c'] == pytest.approx(12.0)
+        # IJG1 publiceert geen richting → fallback op 0.
+        assert first['direction_deg'] == pytest.approx(0.0)
+        # Nieuwe velden gezet uit DDAPI20-publicaties.
+        assert first['tp_s'] == pytest.approx(6.4)         # Tm-10 → tp_s
+        assert first['hmax_m'] == pytest.approx(1.90)      # 190 cm → 1.9 m
+        assert first['h13_m'] == pytest.approx(1.50)       # 150 cm → 1.5 m
+        # Geen lucht-data / spread meer: DDAPI20 publiceert deze niet voor IJG1.
+        assert 'sobh_deg' not in first
+        assert 'pressure_hpa' not in first
+        assert 'air_temp_c' not in first
 
-    def test_tp_fallback_to_tp001(self, monkeypatch):
-        """Als Tp leeg is, moet de client Tp001 als fallback proberen."""
+    def test_tm10_replaces_tp(self, monkeypatch):
+        """
+        Tp/Tp001 zijn vervangen door Tm-10 in DDAPI20 (Tp wordt niet meer
+        gepubliceerd). De client moet de Tm-10 reeks oppakken en in `tp_s`
+        stoppen (peak-periode proxy via m-1/m0). De oude Tp/Tp001 mogen
+        nooit bevraagd worden.
+        """
         r = _ijg1_full_router()
-        # Tp niets, Tp001 wel.
-        r.add(GROOTHEID_TP, _empty_response())
-        r.add(GROOTHEID_TP_FALLBACK, _series(GROOTHEID_TP_FALLBACK, 's',
-                                             [7.4, 7.6, 7.8]))
         client = _patch_client(monkeypatch, r)
         data = _run(client.fetch_buoy_data('IJG1', hours_back=1))
 
+        # Tm-10 → tp_s pijp werkt.
         assert all('tp_s' in p for p in data)
-        assert data[0]['tp_s'] == pytest.approx(7.4)
-        assert GROOTHEID_TP_FALLBACK in r.calls
+        assert data[0]['tp_s'] == pytest.approx(6.4)
+        assert GROOTHEID_TM_M10 in r.calls
+        # Tp / Tp001 mogen niet meer bevraagd worden.
+        assert GROOTHEID_TP not in r.calls
+        assert GROOTHEID_TP_FALLBACK not in r.calls
 
     def test_graceful_degradation_one_grootheid_503(self, monkeypatch, caplog):
-        """503 op SObh mag de rest niet kapotmaken; SObh-key ontbreekt simpelweg."""
+        """
+        503 op één optionele grootheid (Hmax) mag de andere niet kapotmaken;
+        de bijbehorende key (hmax_m) ontbreekt simpelweg op het merged punt
+        terwijl Hm0/Tm02/Tm-10/H1/3 normaal doorlopen.
+        """
         r = _ijg1_full_router()
-        r.fail(GROOTHEID_SOBH, httpx.HTTPError("503 Service Unavailable"))
+        r.fail(GROOTHEID_HMAX, httpx.HTTPError("503 Service Unavailable"))
         client = _patch_client(monkeypatch, r)
 
         with caplog.at_level(logging.WARNING):
@@ -175,57 +206,86 @@ class TestExtendedBuoyData:
 
         assert len(data) == 3
         for p in data:
-            assert 'sobh_deg' not in p
+            assert 'hmax_m' not in p
             # andere extras blijven aanwezig
             assert 'tp_s' in p
-            assert 'hmax_m' in p
-            assert 'pressure_hpa' in p
+            assert 'h13_m' in p
+            assert 'period_s' in p
         # Per-grootheid warning gelogd.
-        assert any(GROOTHEID_SOBH in rec.message for rec in caplog.records)
+        assert any(GROOTHEID_HMAX in rec.message for rec in caplog.records)
 
     def test_a12_no_air_pressure(self, monkeypatch):
-        """LUCHTDK/LUCHTTPR mogen niet bevraagd worden voor A12."""
+        """
+        A12's per-station `quantities` lijst bevat geen LUCHTDK/LUCHTTPR
+        (en geen S0BH/Th0/Hmax) — RWS publiceert die niet voor dit platform.
+        De client mag deze codes NIET bevragen, en pressure_hpa/air_temp_c
+        mogen niet op de output verschijnen. Tm-10 en T1/3 staan wél in
+        A12's quantities.
+        """
         r = _FakeRouter()
+        # A12 quantities = ['Hm0', 'Tm02', 'Tm-10', 'H1/3', 'T1/3'].
         r.add(GROOTHEID_HM0, _series(GROOTHEID_HM0, 'cm', [180.0, 190.0]))
         r.add(GROOTHEID_TM02, _series(GROOTHEID_TM02, 's', [7.0, 7.2]))
-        r.add(GROOTHEID_TH0, _series(GROOTHEID_TH0, 'graad', [290.0, 295.0]))
-        r.add(GROOTHEID_TP, _series(GROOTHEID_TP, 's', [8.0, 8.2]))
-        r.add(GROOTHEID_SOBH, _series(GROOTHEID_SOBH, 'graad', [30.0, 32.0]))
-        r.add(GROOTHEID_HMAX, _series(GROOTHEID_HMAX, 'cm', [260.0, 270.0]))
+        r.add(GROOTHEID_TM_M10, _series(GROOTHEID_TM_M10, 's', [8.0, 8.2]))
+        r.add(GROOTHEID_H13, _series(GROOTHEID_H13, 'cm', [200.0, 210.0]))
+        # T1/3 maakt geen aparte field, gewoon present zodat de call niet leeg is.
+        r.add('T1/3', _series('T1/3', 's', [7.5, 7.7]))
         client = _patch_client(monkeypatch, r)
 
         data = _run(client.fetch_buoy_data('A12', hours_back=1))
 
         assert len(data) == 2
+        # Onbevraagd: lucht-data, S0BH, Th0, Hmax.
         assert GROOTHEID_LUCHTDK not in r.calls
         assert GROOTHEID_LUCHTTPR not in r.calls
+        assert GROOTHEID_SOBH not in r.calls
+        assert GROOTHEID_TH0 not in r.calls
+        assert GROOTHEID_HMAX not in r.calls
+        # Wel bevraagd: Tm-10 (verving Tp) en H1/3.
+        assert GROOTHEID_TM_M10 in r.calls
+        assert GROOTHEID_H13 in r.calls
         for p in data:
             assert 'pressure_hpa' not in p
             assert 'air_temp_c' not in p
+            assert 'sobh_deg' not in p
+            assert 'hmax_m' not in p
+            # Tm-10 vult tp_s; H1/3 vult h13_m.
             assert 'tp_s' in p
-            assert 'sobh_deg' in p
+            assert 'h13_m' in p
 
     def test_backward_compat_with_include_extras_false(self, monkeypatch):
-        """`include_extras=False` moet alleen de basis-3 grootheden bevragen."""
+        """
+        `include_extras=False` is in DDAPI20 een no-op geworden — de
+        per-station `quantities` lijst bepaalt exact wat we vragen, niet
+        meer een runtime-toggle. Deze test verifieert dat de aanroep niet
+        crasht en dezelfde IJG1-grootheden binnenkomen als de default-call.
+        Backward compat: callers die `include_extras=False` doorgeven blijven
+        werken zonder exceptie en krijgen normale output.
+        """
         r = _ijg1_full_router()
         client = _patch_client(monkeypatch, r)
         data = _run(client.fetch_buoy_data(
             'IJG1', hours_back=1, include_extras=False))
 
+        # Zelfde resultaat als default-call: de quantities-lijst dicteert
+        # de scope, niet de include_extras-vlag.
         assert len(data) == 3
-        # Geen van de extra velden mag worden gezet.
+        # IJG1 publiceert deze grootheden NIET — moeten absent zijn.
         for p in data:
-            assert 'tp_s' not in p
             assert 'sobh_deg' not in p
-            assert 'hmax_m' not in p
             assert 'pressure_hpa' not in p
             assert 'air_temp_c' not in p
-        # En geen extra-grootheid moet daadwerkelijk zijn aangevraagd.
+        # Niet-meer-gepubliceerde codes mogen nooit bevraagd worden,
+        # ongeacht include_extras-waarde.
         assert GROOTHEID_TP not in r.calls
+        assert GROOTHEID_TP_FALLBACK not in r.calls
         assert GROOTHEID_SOBH not in r.calls
-        assert GROOTHEID_HMAX not in r.calls
         assert GROOTHEID_LUCHTDK not in r.calls
         assert GROOTHEID_LUCHTTPR not in r.calls
+        # Tm-10 / Hmax / H1/3 zitten in IJG1's quantities → wel bevraagd.
+        assert GROOTHEID_TM_M10 in r.calls
+        assert GROOTHEID_HMAX in r.calls
+        assert GROOTHEID_H13 in r.calls
 
 
 class TestSurgeResidual:
@@ -252,19 +312,26 @@ class TestSurgeResidual:
         measured_cm: List[float],
     ) -> RWSClient:
         """
-        WATHTE wordt twee keer aangevraagd: één keer met proces_type=astronomisch
-        en één keer met proces_type=metingen. We routeren op basis van de
-        ProcesType in de body, niet alleen op grootheid-code.
+        WATHTE wordt twee keer aangevraagd: één keer met proces_type='astronomisch'
+        en één keer met proces_type='meting' (enkelvoud — DDAPI20 retourneerde
+        400 Bad Request bij de oude 'metingen'-waarde). We routeren op basis
+        van de ProcesType in de body, niet alleen op grootheid-code.
+
+        Voor de measured-call returnen we _empty_response() als measured_cm
+        leeg is, zodat het downstream `if not measured` pad correct triggert.
         """
         client = RWSClient()
-        measured_response = _series(GROOTHEID_WATHTE, 'cm', measured_cm)
+        if measured_cm:
+            measured_response = _series(GROOTHEID_WATHTE, 'cm', measured_cm)
+        else:
+            measured_response = _empty_response()
 
         async def fake_post(url, body):
             aquo = body['AquoPlusWaarnemingMetadata']['AquoMetadata']
             code = aquo['Grootheid']['Code']
             proces = aquo.get('ProcesType')
             router.calls.append(f"{code}:{proces}")
-            if code == GROOTHEID_WATHTE and proces == 'metingen':
+            if code == GROOTHEID_WATHTE and proces == 'meting':
                 return measured_response
             if code in router.errors:
                 raise router.errors[code]

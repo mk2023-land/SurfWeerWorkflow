@@ -254,11 +254,13 @@ class ScoreBreakdown:
     """Score breakdown voor één uur."""
     timestamp: datetime
 
-    # Component scores (max waarden uit config)
-    golf_score: float        # max 40
-    wind_score: float        # max 35
-    tide_score: float        # max 15
-    swell_dir_bonus: float   # max 10
+    # Component scores — max waarden komen uit SCORING_WEIGHTS in config.py.
+    # Hardcoded getallen niet vertrouwen; raadpleeg config bij twijfel. Huidige
+    # waarden (v4): golf_max=38, wind_max=32, tide_max=20, swell_dir_max=10.
+    golf_score: float        # max SCORING_WEIGHTS['golf_max']  (38)
+    wind_score: float        # max SCORING_WEIGHTS['wind_max']  (32)
+    tide_score: float        # max SCORING_WEIGHTS['tide_max']  (20)
+    swell_dir_bonus: float   # max SCORING_WEIGHTS['swell_dir_max']  (10)
 
     # Probabilistische confidence (Sprint 3 #17). Default 1.0 = volle vertrouwen.
     # Sprint 2 (multi-model wind-spread) zet deze lager bij grote inter-model
@@ -509,6 +511,11 @@ class RunLog:
     buoy_ijg1_height: Optional[float] = None
     buoy_ijg1_period: Optional[float] = None
     buoy_a12_period: Optional[float] = None
+    # Fix #4: audit-velden voor orchestration-trail in forecasts_log.jsonl.
+    bias_correction_applied: bool = False
+    rws_status: str = 'unknown'         # 'ok' | 'partial' | 'failed' | 'unknown'
+    openmeteo_status: str = 'unknown'   # 'ok' | 'partial' | 'failed' | 'unknown'
+    seasonal_baseline_loaded: bool = False
     error: Optional[str] = None
 
     def to_dict(self) -> Dict:
@@ -529,6 +536,10 @@ class RunLog:
             'buoy_ijg1_height': self.buoy_ijg1_height,
             'buoy_ijg1_period': self.buoy_ijg1_period,
             'buoy_a12_period': self.buoy_a12_period,
+            'bias_correction_applied': self.bias_correction_applied,
+            'rws_status': self.rws_status,
+            'openmeteo_status': self.openmeteo_status,
+            'seasonal_baseline_loaded': self.seasonal_baseline_loaded,
             'error': self.error
         }
 

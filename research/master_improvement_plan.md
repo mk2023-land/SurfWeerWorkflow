@@ -164,13 +164,15 @@ MEDIUM impact      │ #4 gust-ratio │ #6 drukgrad     │ #15 T1 detector│
 ### Sprint 1 — Quick wins (1 dag werk)
 **Doel:** systematisch alle "we hebben de data al maar gebruiken het niet" gaps dichten.
 
-- [ ] **#1** T4 groundswell bonus +1 → +8 pt (config + windowsanalyse extra check)
-- [ ] **#2** Wave-age filter (`cp/U10 < 0.83` → cap golf_score op 20% van max)
-- [ ] **#3** Wave energy flux als size-component (`P = 0.49·Hs²·Te`)
-- [ ] **#4** Wind-gust ratio penalty (`gust/sustained > 1.5` → −3 pt op wind_score)
-- [ ] **#5** Mixed-sea detector (`|wave_dir − swell_dir| > 30°` → flag + penalty)
-- [ ] **#6** Drukgradiënt-derivative (`|dp/dt| > 1.5 hPa/u` → "synoptische storing" flag)
-- [ ] **#7** Iribarren-number quality bonus
+**Status: Done (commit 300b1e6).**
+
+- [x] **#1** T4 groundswell bonus +1 → +8 pt (config + windowsanalyse extra check)
+- [x] **#2** Wave-age filter (`cp/U10 < 0.83` → cap golf_score op 20% van max)
+- [x] **#3** Wave energy flux als size-component (`P = 0.49·Hs²·Te`)
+- [x] **#4** Wind-gust ratio penalty (`gust/sustained > 1.5` → −3 pt op wind_score)
+- [x] **#5** Mixed-sea detector (`|wave_dir − swell_dir| > 30°` → flag + penalty)
+- [x] **#6** Drukgradiënt-derivative (`|dp/dt| > 1.5 hPa/u` → "synoptische storing" flag)
+- [x] **#7** Iribarren-number quality bonus
 
 **Test-criterium:** woensdag-ochtend window krijgt nu wave-age penalty (Hs groeit van 0.5→1.3m in 5u = young wind-sea). Verwacht resultaat: morning-window valt onder longboard-threshold OF wordt expliciet als "spin-up fase" gemarkeerd.
 
@@ -179,12 +181,14 @@ MEDIUM impact      │ #4 gust-ratio │ #6 drukgrad     │ #15 T1 detector│
 ### Sprint 2 — Structurele verbeteringen (3-4 dagen)
 **Doel:** de twee grootste single-source-of-truth problemen oplossen (wind & refractie) en spectrum-decompositie correct doen.
 
-- [ ] **#8** Multi-model wind triangulatie via Open-Meteo `models=` parameter
-- [ ] **#9** Continue refractie-functie voor pier-blokkade (sigmoid blend)
-- [ ] **#10** Partition-aware scoring (swell × wind-sea apart wegen met quality-factoren)
-- [ ] **#11** Tide-flank features (velocity, time-to-turn, sweet-spot)
-- [ ] **#12** Diurnal wind-decay rond zonsondergang
-- [ ] **#13** Hard size-cap met multiplicatieve aggregation
+**Status: Done (commit d78c7c3).**
+
+- [x] **#8** Multi-model wind triangulatie via Open-Meteo `models=` parameter
+- [x] **#9** Continue refractie-functie voor pier-blokkade (sigmoid blend)
+- [x] **#10** Partition-aware scoring (swell × wind-sea apart wegen met quality-factoren)
+- [x] **#11** Tide-flank features (velocity, time-to-turn, sweet-spot)
+- [x] **#12** Diurnal wind-decay rond zonsondergang
+- [x] **#13** Hard size-cap met multiplicatieve aggregation
 
 **Test-criterium:** CASE 3 en CASE 11 (N-swell cases) genereren nu ALERT (waren false-negative). Combo-swell dagen worden correct als surfable gescored ook wanneer dominante Hs matig is.
 
@@ -193,10 +197,12 @@ MEDIUM impact      │ #4 gust-ratio │ #6 drukgrad     │ #15 T1 detector│
 ### Sprint 3 — Real-time correctie & infrastructuur (3-5 dagen)
 **Doel:** boei-data echt benutten en lange-termijn learning voorbereiden.
 
-- [ ] **#14** RWS IJG1 boei bias-correctie voor eerste 6-12 uur forecast
-- [ ] **#15** Boei-spectrum history opslag + T1 swell-arrival detector
-- [ ] **#16** Forecast-vs-observation bias logger (voor ML voorbereiding)
-- [ ] **#17** Probabilistische output (model-spread ranges in LLM input)
+**Status: Done (commit d6d67f7).**
+
+- [x] **#14** RWS IJG1 boei bias-correctie voor eerste 6-12 uur forecast
+- [x] **#15** Boei-spectrum history opslag + T1 swell-arrival detector
+- [x] **#16** Forecast-vs-observation bias logger (voor ML voorbereiding)
+- [x] **#17** Probabilistische output (model-spread ranges in LLM input)
 
 **Test-criterium:** nowcast Hs-MAE daalt van ~0.35m naar ~0.25m. T1 alerts triggeren bij echte verre-storm-aankomst (validatie tegen historische SMSes 5 en 11).
 
