@@ -16,21 +16,22 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
         with:
-          python-version: '3.11'
-          cache: 'pip'
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Install dependencies (reproducible from uv.lock)
+        run: uv sync --frozen
 
       - name: Rebuild seasonal baseline
         run: |
           mkdir -p data
-          python src/baseline/seasonal.py
+          uv run python -m src.baseline.seasonal
 
       - name: Upload baseline artifact
         uses: actions/upload-artifact@v4
