@@ -23,18 +23,12 @@ firen en dat bias-correctie daadwerkelijk in productie wordt gebruikt:
 from __future__ import annotations
 
 import asyncio
-import json
 import os
-import sys
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
-from typing import Any, Dict, List
-from unittest.mock import patch, MagicMock
+from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
-
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'src'))
 
 # Force ALERTS_ENABLED=true voordat config geladen wordt — anders is
 # `alerts_enabled` in ALERT_CONFIG False (default) en gaat evaluate_forecast
@@ -60,7 +54,7 @@ def _now_aligned_start() -> datetime:
 
 
 def _marine_rows(n: int = 48, hs: float = 1.0, period: float = 6.0,
-                 start: datetime = None) -> List[Dict[str, Any]]:
+                 start: datetime = None) -> list[dict[str, Any]]:
     if start is None:
         start = _now_aligned_start()
     out = []
@@ -86,7 +80,7 @@ def _marine_rows(n: int = 48, hs: float = 1.0, period: float = 6.0,
 
 
 def _forecast_rows(n: int = 48, wind_speed: float = 8.0, wind_dir: int = 100,
-                   start: datetime = None) -> List[Dict[str, Any]]:
+                   start: datetime = None) -> list[dict[str, Any]]:
     if start is None:
         start = _now_aligned_start()
     out = []
@@ -117,7 +111,7 @@ def _forecast_rows(n: int = 48, wind_speed: float = 8.0, wind_dir: int = 100,
 
 def _openmeteo_data(hs: float = 1.0, period: float = 6.0,
                     wind_speed: float = 8.0, wind_dir: int = 100,
-                    n: int = 48) -> Dict[str, Any]:
+                    n: int = 48) -> dict[str, Any]:
     """Volledig openmeteo_data stub voor main.py wiring."""
     start = _now_aligned_start()
     return {
@@ -131,7 +125,7 @@ def _openmeteo_data(hs: float = 1.0, period: float = 6.0,
 
 
 def _rws_data_with_buoy(hs_obs: float = 1.3, period_obs: float = 7.0,
-                         n: int = 6) -> Dict[str, Any]:
+                         n: int = 6) -> dict[str, Any]:
     """RWS-stub met IJG1 boei-data die structureel hoger meet dan model →
     biast positief."""
     base = _now_aligned_start() + timedelta(hours=1)
@@ -161,7 +155,7 @@ def _rws_data_with_buoy(hs_obs: float = 1.3, period_obs: float = 7.0,
     }
 
 
-def _baseline_low_p70() -> Dict[str, Dict]:
+def _baseline_low_p70() -> dict[str, dict]:
     """Baseline waarin p70 LAAG ligt — bijna elke score >= 70e percentile.
 
     Bewijst dat zonder fix #1 (geen baseline) rarity_percentile altijd 50
@@ -400,10 +394,12 @@ class TestRecordAlertOnlyAfterSuccess:
 
     def test_evaluate_forecast_does_not_record_alert(self, tmp_state_dir, monkeypatch):
         """evaluate_forecast mag NIET zelf state bijwerken (was de bug)."""
-        from src.alerts.engine import AlertEngine
         from src.alerts import engine as engine_mod
+        from src.alerts.engine import AlertEngine
         from src.data.models import (
-            SurfWindow, ScoreBreakdown, AlertType,
+            AlertType,
+            ScoreBreakdown,
+            SurfWindow,
         )
         # Forceer alerts_enabled True in engine's view op ALERT_CONFIG.
         engine_mod.ALERT_CONFIG['alerts_enabled'] = True
@@ -429,8 +425,13 @@ class TestRecordAlertOnlyAfterSuccess:
             hourly_scores=scores, kind='surfable',
         )
 
-        engine.detector_engine.detect_all = MagicMock(
-            return_value={AlertType.SUSTAINED_GROUNDSWELL}
+        # `evaluate_forecast` roept nu `detect_all_with_candidates` aan
+        # (tuple-return: Set + Dict[AlertType, AlertCandidate]). De legacy
+        # `detect_all` blijft als backwards-compat shim bestaan voor main.py
+        # en is hier irrelevant; we mocken de methode die echt wordt
+        # aangeroepen door evaluate_forecast.
+        engine.detector_engine.detect_all_with_candidates = MagicMock(
+            return_value=({AlertType.SUSTAINED_GROUNDSWELL}, {})
         )
 
         before_alerts = engine.state.alerts_sent_this_week
@@ -456,8 +457,11 @@ class TestRecordAlertOnlyAfterSuccess:
             'load_baseline', lambda self: baseline,
         )
         from src.data.models import (
-            AlertCandidate, AlertType, SurfWindow,
-            ScoreBreakdown, Decision,
+            AlertCandidate,
+            AlertType,
+            Decision,
+            ScoreBreakdown,
+            SurfWindow,
         )
         from src.llm.validator import ValidationResult
 

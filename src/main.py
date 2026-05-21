@@ -4,21 +4,23 @@ Orkestreert data ophaling, scoring, alert detectie, en SMS verzending.
 """
 import argparse
 import asyncio
-import json
 import logging
 import os
 import sys
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Optional
 
 from src.alerts.detectors import AlertDetectorEngine
 from src.alerts.engine import AlertEngine
 from src.baseline.seasonal import SeasonalBaselineBuilder
 from src.config import ALERT_CONFIG, DEBUG, NOORDWIJK
 from src.data.models import HourState, RunLog, ScoreBreakdown, SurfWindow, WindState
-from src.data.sources.open_meteo import OpenMeteoClient, fetch_all_openmeteo_data
+from src.data.sources.open_meteo import (
+    _get_openmeteo_client,
+    fetch_all_openmeteo_data,
+)
 from src.data.sources.rws import fetch_all_rws_data, tide_state_at
 from src.llm.generator import SMSGenerator
 from src.llm.validator import SMSValidator
@@ -58,10 +60,10 @@ class SurfAlertSystem:
         self.sms_generator = SMSGenerator()
         self.sms_validator = SMSValidator()
         self.notifier = get_notifier()
-        self._last_wind_spread_full: Optional[List[Dict]] = None
+        self._last_wind_spread_full: Optional[list[dict]] = None
         # Fix #1: seasonal baseline wordt in run() geladen — placeholder hier
         # zodat een vroege error niet op een ontbrekend attribuut faalt.
-        self.seasonal_baseline: Optional[Dict] = None
+        self.seasonal_baseline: Optional[dict] = None
         logger.info(f"Notifier kanaal: {self.notifier.channel}")
 
         # Zorg dat data directory bestaat
@@ -149,7 +151,7 @@ class SurfAlertSystem:
             # was alleen `log_bias_observation` gewired — de feature die "~22% RMSE
             # reductie" geeft was dood (in productie nooit gerund).
             try:
-                from scoring.bias_correction import compute_buoy_bias, apply_bias_to_forecast
+                from src.scoring.bias_correction import apply_bias_to_forecast, compute_buoy_bias
                 boei_obs = (rws_data.get('primary_buoy') or {}).get('raw_data') or []
                 marine_rows = (openmeteo_data or {}).get('marine') or []
                 if boei_obs and marine_rows:
@@ -310,6 +312,7 @@ class SurfAlertSystem:
                         ALERT_CONFIG['cooldown_hours_between_alerts']
                     )
                     self.alert_engine._save_state()
+                    self.alert_engine.record_send(notify=True, llm=True)
                 else:
                     logger.warning(
                         "Alert send failed — state NIET bijgewerkt om ghost-"
@@ -341,8 +344,10 @@ class SurfAlertSystem:
                     # verstuur wel maar pollueer last_digest_time NIET — anders
                     # blokkeert die de eerstvolgende scheduled cron-run.
                     logger.info("MANUAL_RUN=true → state.last_digest_time NIET geüpdatet")
+                    self.alert_engine.record_send(notify=True, llm=True)
                 else:
                     self.alert_engine.record_digest_sent()
+                    self.alert_engine.record_send(notify=True, llm=True)
 
             else:
                 logger.info(f"No action: {decision.skip_reason}")
@@ -354,10 +359,8 @@ class SurfAlertSystem:
             logger.info(f"Run completed successfully in {(datetime.now() - start_time).total_seconds():.1f}s")
 
         except Exception as e:
-            logger.error(f"Run failed with error: {e}")
+            logger.exception("Run failed")
             run_log.error = str(e)
-            import traceback
-            traceback.print_exc()
 
         finally:
             # Stap 9: Log run
@@ -365,7 +368,7 @@ class SurfAlertSystem:
 
         return run_log
 
-    def _build_hour_states(self, openmeteo_data: dict, rws_data: dict) -> List[HourState]:
+    def _build_hour_states(self, openmeteo_data: dict, rws_data: dict) -> list[HourState]:
         """Bouw HourStates uit ruwe data.
 
         Pakt naast de basis-velden (wave/wind/tide) ook de nieuwe atmospheric-
@@ -395,7 +398,7 @@ class SurfAlertSystem:
             return []
 
         tide_data = (rws_data or {}).get('tide') or {}
-        openmeteo_client = OpenMeteoClient()
+        openmeteo_client = _get_openmeteo_client()
 
         # Storm-surge scalar uit RWS — zelfde waarde voor alle uren in deze
         # run (simpele distributie; kan later granulair per uur).
@@ -415,7 +418,6 @@ class SurfAlertSystem:
         if ijg1_raw_latest:
             logger.info(
                 f"IJG1 latest sample: tp_s={ijg1_raw_latest.get('tp_s')}, "
-                f"sobh_deg={ijg1_raw_latest.get('sobh_deg')}, "
                 f"hmax_m={ijg1_raw_latest.get('hmax_m')}"
             )
 
@@ -434,15 +436,16 @@ class SurfAlertSystem:
                 wave_spectrum = openmeteo_client.marine_data_to_wave_spectrum(marine)
 
                 # Boei-observatie overlay voor nowcast-uren (eerste 3): geef de
-                # latest IJG1 Tp + directional spread mee als "observed" override.
-                # Daarna blijft het None — alleen forecast-data telt.
+                # latest IJG1 Tp mee als "observed" override. Daarna blijft het
+                # None — alleen forecast-data telt.
+                # NB: S0BH (directional spread) wordt door RWS DDAPI20 voor onze
+                # stations niet meer gepubliceerd; de overlay daarvoor is
+                # verwijderd omdat `fetch_buoy_data` nooit `sobh_deg` in z'n
+                # output dict zet.
                 if ijg1_raw_latest and i < 3:
                     tp_obs = ijg1_raw_latest.get('tp_s')
-                    sobh_obs = ijg1_raw_latest.get('sobh_deg')
                     if tp_obs is not None:
                         wave_spectrum.peak_period_observed_s = float(tp_obs)
-                    if sobh_obs is not None:
-                        wave_spectrum.directional_spread_deg = float(sobh_obs)
 
                 wind_state = WindState(
                     speed_kn=weather['wind_speed'],
@@ -551,9 +554,9 @@ class SurfAlertSystem:
 
     def _handle_digest(
         self,
-        hour_states: List[HourState],
-        hourly_scores: List[ScoreBreakdown],
-        windows: List[SurfWindow],
+        hour_states: list[HourState],
+        hourly_scores: list[ScoreBreakdown],
+        windows: list[SurfWindow],
     ) -> dict:
         """
         Genereer en verstuur digest SMS.
@@ -573,7 +576,7 @@ class SurfAlertSystem:
 
         # Fix #4: track validation-uitkomst zodat RunLog deze kan loggen.
         validation_passed = True
-        validation_issues: List[str] = []
+        validation_issues: list[str] = []
 
         format_ok = self.sms_validator.validate_digest_format(sms_text)
         if not format_ok:
@@ -626,8 +629,8 @@ class SurfAlertSystem:
     def _update_run_log(
         self,
         run_log: RunLog,
-        hourly_scores: List[ScoreBreakdown],
-        windows: List[SurfWindow],
+        hourly_scores: list[ScoreBreakdown],
+        windows: list[SurfWindow],
         decision,
         rws_data: dict
     ):
@@ -656,11 +659,14 @@ class SurfAlertSystem:
             run_log.buoy_a12_period = a12.mean_period
 
     def _log_run(self, run_log: RunLog):
-        """Log run naar JSONL bestand."""
-        log_file = Path('data/forecasts_log.jsonl')
-
-        with open(log_file, 'a') as f:
-            f.write(json.dumps(run_log.to_dict(), default=str) + '\n')
+        """Log run naar JSONL bestand met line-count rotatie."""
+        from src.util_files import append_jsonl_with_rotation
+        append_jsonl_with_rotation(
+            Path('data/forecasts_log.jsonl'),
+            run_log.to_dict(),
+            max_lines=10000,
+            keep_archives=3,
+        )
 
 
 async def main():

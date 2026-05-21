@@ -4,14 +4,9 @@ Bevat 5 alert detectors die verschillende meteorologische patronen detecteren.
 """
 import logging
 from datetime import datetime, timedelta
-from typing import List, Dict, Optional, Set
+from typing import Optional
 
-from src.data.models import (
-    HourState,
-    AlertCandidate,
-    AlertType,
-    SurfWindow
-)
+from src.data.models import AlertCandidate, AlertType, HourState, SurfWindow
 
 logger = logging.getLogger(__name__)
 
@@ -30,9 +25,9 @@ class SwellArrivalDetector:
 
     def detect(
         self,
-        history: List[HourState],
+        history: list[HourState],
         current: HourState,
-        buoy_history: Dict[str, List] = None
+        buoy_history: dict[str, list] = None
     ) -> Optional[AlertCandidate]:
         """
         Detecteer swell arrival.
@@ -128,8 +123,8 @@ class WindShiftDetector:
 
     def detect(
         self,
-        forecast: List[HourState],
-        history: List[HourState] = None
+        forecast: list[HourState],
+        history: list[HourState] = None
     ) -> Optional[AlertCandidate]:
         """
         Detecteer wind shift.
@@ -153,7 +148,7 @@ class WindShiftDetector:
         # Loop over forecast op zoek naar shift
         for i in range(5, len(forecast) - 6):
             hour_before = forecast[i - 5]
-            hour_shift = forecast[i]
+            forecast[i]
             hour_after = forecast[i + 6]
 
             # Bereken richting verschil (account voor 0/360 wraparound)
@@ -204,8 +199,8 @@ class WindDipDetector:
 
     def detect(
         self,
-        forecast: List[HourState],
-        history: List[HourState] = None
+        forecast: list[HourState],
+        history: list[HourState] = None
     ) -> Optional[AlertCandidate]:
         """
         Detecteer wind dip.
@@ -277,7 +272,7 @@ class SustainedGroundswellDetector:
 
     def detect(
         self,
-        buoy_history: Dict[str, List],
+        buoy_history: dict[str, list],
         min_duration_hours: int = 3
     ) -> Optional[AlertCandidate]:
         """
@@ -352,8 +347,8 @@ class TideGatedWindowDetector:
 
     def detect(
         self,
-        windows: List[SurfWindow],
-        forecast: Optional[List[HourState]] = None,
+        windows: list[SurfWindow],
+        forecast: Optional[list[HourState]] = None,
     ) -> Optional[AlertCandidate]:
         """
         Detecteer tide-gated windows.
@@ -378,7 +373,7 @@ class TideGatedWindowDetector:
 
         # Index forecast op timestamp zodat we per ScoreBreakdown de bijbehorende
         # HourState (met tij/wind) kunnen vinden.
-        state_by_ts: Dict[datetime, HourState] = {h.timestamp: h for h in forecast}
+        state_by_ts: dict[datetime, HourState] = {h.timestamp: h for h in forecast}
 
         for window in windows:
             if window.peak_score < 75:
@@ -431,54 +426,64 @@ class AlertDetectorEngine:
             AlertType.TIDE_GATED: TideGatedWindowDetector()
         }
 
-    def detect_all(
+    def detect_all_with_candidates(
         self,
-        forecast: List[HourState],
-        history: List[HourState],
-        buoy_history: Dict[str, List] = None,
-        windows: List[SurfWindow] = None
-    ) -> Set[AlertType]:
+        forecast: list[HourState],
+        history: list[HourState],
+        buoy_history: dict[str, list] = None,
+        windows: list[SurfWindow] = None
+    ) -> tuple[set[AlertType], dict[AlertType, AlertCandidate]]:
         """
-        Voer alle detectors uit en return set van triggered alert types.
+        Voer alle detectors uit en return (Set, Dict) zodat callers naar keuze
+        de set van getriggerd-types kunnen gebruiken, of per type de bijbehorende
+        `AlertCandidate` met zijn rijke `explanation` (voor LLM-prompt of titel-
+        body fallback).
 
-        Args:
-            forecast: Forecast HourStates
-            history: Historische HourStates
-            buoy_history: Boei data history
-            windows: SurfWindow objecten
+        De Set bevat alle AlertType-waarden waarvoor minimaal één route triggerde.
+        De Dict mapt AlertType → AlertCandidate (de eerste candidate die we
+        kregen voor dat type — in praktijk is dat steeds dezelfde detector).
+        Voor SWELL_ARRIVAL geldt: de live-boei-route levert de candidate;
+        de persisted-history-route triggert hooguit alleen de Set-entry.
 
         Returns:
-            Set van AlertType die werden getriggerd
+            (triggered_alerts, candidates_by_type)
         """
-        triggered_alerts = set()
+        triggered_alerts: set[AlertType] = set()
+        candidates: dict[AlertType, AlertCandidate] = {}
 
         # Type 1: Swell arrival (buoy history)
         if buoy_history:
             candidate = self.detectors[AlertType.SWELL_ARRIVAL].detect(history, forecast[0] if forecast else None, buoy_history)
             if candidate:
                 triggered_alerts.add(AlertType.SWELL_ARRIVAL)
+                candidates[AlertType.SWELL_ARRIVAL] = candidate
 
         # Type 1 (Sprint 3 #15): tweede route via persisted boei-spectrum history
         # (A12/K13 6u-trend). Volledig stil bij ontbrekende history-file.
-        from src.scoring.trigger_T1 import load_history, detect_swell_arrival
+        from src.scoring.trigger_T1 import detect_swell_arrival, load_history
         if detect_swell_arrival(load_history()):
             triggered_alerts.add(AlertType.SWELL_ARRIVAL)
+            # Geen rijke candidate vanaf deze route — alleen de set-entry. De
+            # eerste route boven heeft mogelijk al de Dict gevuld.
 
         # Type 2: Wind shift (forecast)
         candidate = self.detectors[AlertType.WIND_SHIFT].detect(forecast, history)
         if candidate:
             triggered_alerts.add(AlertType.WIND_SHIFT)
+            candidates[AlertType.WIND_SHIFT] = candidate
 
         # Type 3: Wind dip (forecast)
         candidate = self.detectors[AlertType.WIND_DIP].detect(forecast, history)
         if candidate:
             triggered_alerts.add(AlertType.WIND_DIP)
+            candidates[AlertType.WIND_DIP] = candidate
 
         # Type 4: Sustained groundswell (buoy history)
         if buoy_history:
             candidate = self.detectors[AlertType.SUSTAINED_GROUNDSWELL].detect(buoy_history)
             if candidate:
                 triggered_alerts.add(AlertType.SUSTAINED_GROUNDSWELL)
+                candidates[AlertType.SUSTAINED_GROUNDSWELL] = candidate
 
         # Type 5: Tide gated window (windows) — heeft forecast nodig om per uur
         # de tij/wind condities te verifiëren.
@@ -486,6 +491,27 @@ class AlertDetectorEngine:
             candidate = self.detectors[AlertType.TIDE_GATED].detect(windows, forecast)
             if candidate:
                 triggered_alerts.add(AlertType.TIDE_GATED)
+                candidates[AlertType.TIDE_GATED] = candidate
 
         logger.info(f"Detected {len(triggered_alerts)} alert types: {[t.value for t in triggered_alerts]}")
-        return triggered_alerts
+        return triggered_alerts, candidates
+
+    def detect_all(
+        self,
+        forecast: list[HourState],
+        history: list[HourState],
+        buoy_history: dict[str, list] = None,
+        windows: list[SurfWindow] = None
+    ) -> set[AlertType]:
+        """
+        Backwards-compat shim: voert detectie uit en retourneert alleen de Set
+        van triggered types. Bestaande callers (main.py:269, tests die
+        `detect_all` mocken met een Set-return) blijven werken zonder wijziging.
+
+        Nieuwe code die de rijke per-detector `AlertCandidate.explanation`
+        nodig heeft kan `detect_all_with_candidates` direct aanroepen.
+        """
+        triggered, _ = self.detect_all_with_candidates(
+            forecast, history, buoy_history, windows
+        )
+        return triggered

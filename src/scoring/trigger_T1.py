@@ -28,7 +28,7 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 from src.data.models import AlertType, WaveSpectrum
 
@@ -49,7 +49,7 @@ def _coerce_aware_utc(ts: datetime) -> datetime:
     return ts.astimezone(timezone.utc)
 
 
-def _spectrum_to_snapshot(station: str, spectrum: WaveSpectrum) -> Dict[str, Any]:
+def _spectrum_to_snapshot(station: str, spectrum: WaveSpectrum) -> dict[str, Any]:
     """Reduceer een WaveSpectrum tot een dunne snapshot voor de history-file."""
     # Pak dominante piek (hoogste amplitude), zo niet beschikbaar val terug op
     # mean_period.
@@ -75,7 +75,7 @@ def _spectrum_to_snapshot(station: str, spectrum: WaveSpectrum) -> Dict[str, Any
 
 
 def append_buoy_snapshot(
-    buoy_spectra: Dict[str, List[WaveSpectrum]],
+    buoy_spectra: dict[str, list[WaveSpectrum]],
     path: Optional[Path] = None,
 ) -> int:
     """
@@ -117,7 +117,7 @@ def append_buoy_snapshot(
 def load_history(
     path: Optional[Path] = None,
     max_age_hours: int = 24,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Lees de jsonl-history file, filter op snapshots van de laatste `max_age_hours`.
 
@@ -131,9 +131,9 @@ def load_history(
         return []
 
     cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
-    snapshots: List[Dict[str, Any]] = []
+    snapshots: list[dict[str, Any]] = []
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:
@@ -163,7 +163,7 @@ def load_history(
 
 
 def detect_swell_arrival(
-    history: List[Dict[str, Any]],
+    history: list[dict[str, Any]],
     now: Optional[datetime] = None,
     window_hours: int = HISTORY_WINDOW_HOURS,
 ) -> Optional[AlertType]:
@@ -194,8 +194,8 @@ def detect_swell_arrival(
     cutoff_old = now - timedelta(hours=window_hours + 1)
     cutoff_recent = now - timedelta(hours=2)  # "nu" is de laatste 2u
 
-    # Groepeer per station.
-    by_station: Dict[str, List[Dict[str, Any]]] = {}
+    # Groepeer per station als (timestamp, record)-tuples zodat we kunnen sorteren.
+    by_station: dict[str, list[tuple[datetime, dict[str, Any]]]] = {}
     for rec in history:
         ts = rec.get("_ts_parsed") or _coerce_aware_utc(
             datetime.fromisoformat(rec["timestamp"])

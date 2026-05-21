@@ -8,16 +8,10 @@ ligt binnen ±2u tolerantie.
 """
 from __future__ import annotations
 
-import os
-import sys
 from datetime import datetime, timedelta
 
-import pytest
-
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from src.alerts.detectors import SwellArrivalDetector
-from src.alerts.engine import select_primary_alert_type, PRIMARY_ALERT_PRIORITY
+from src.alerts.engine import PRIMARY_ALERT_PRIORITY, select_primary_alert_type
 from src.data.models import (
     AlertType,
     HourState,
@@ -27,7 +21,6 @@ from src.data.models import (
     WaveSpectrum,
     WindState,
 )
-
 
 _NOW = datetime(2026, 5, 20, 12, 0, 0)
 

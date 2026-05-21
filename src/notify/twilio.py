@@ -15,13 +15,17 @@ from typing import Optional
 from twilio.base.exceptions import TwilioRestException
 from twilio.rest import Client
 
+from src.config import TWILIO_ALERT_MAX_LEN, TWILIO_DIGEST_MAX_LEN
+
 logger = logging.getLogger(__name__)
 
-# SMS-segment-limieten (GSM-7: 160 chars/segment; UCS-2: 70 chars/segment).
-# Wij rekenen pessimistisch in GSM-7 segments × 160. Bij ~€0.07 per segment
-# is een 10-segment digest €0.70 per push — onaanvaardbaar bij meerdere/dag.
-HARD_SMS_LIMIT = 1600          # 10 segments (digest hard cap)
-ALERT_SMS_LIMIT = 320          # 2 segments (alert moet kort blijven)
+# Backward-compatibele aliases — limieten leven nu in src.config zodat
+# validator en notifier dezelfde getallen delen.
+# (GSM-7: 160 chars/segment; UCS-2: 70 chars/segment. Wij rekenen pessimistisch
+# in GSM-7 segments × 160. Bij ~€0.07 per segment is een 10-segment digest
+# €0.70 per push — onaanvaardbaar bij meerdere/dag.)
+HARD_SMS_LIMIT = TWILIO_DIGEST_MAX_LEN
+ALERT_SMS_LIMIT = TWILIO_ALERT_MAX_LEN
 _TRUNCATE_SUFFIX = "..."
 
 

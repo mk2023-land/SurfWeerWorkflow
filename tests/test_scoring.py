@@ -2,31 +2,26 @@
 Unit tests voor scoring module.
 Gebaseerd op validatieset uit het plan document.
 """
-import pytest
 from datetime import datetime
-import sys
-import os
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import pytest
+
+from src.config import NOORDWIJK
+from src.data.models import (
+    HourState,
+    ScoreBreakdown,
+    SpectralPeak,
+    SwellType,
+    TideState,
+    WaveSpectrum,
+    WindState,
+)
+from src.scoring.hourly import score_golf_component, score_hour, score_wind_component
 
 # Deterministisch timestamp midden op de dag (zomertijd 11:00 NL = 09:00 UTC).
 # Voorkomt flaky tests bij datetime.now() — score_hour past sinds blok 3 een
 # daglicht-filter toe waardoor night-uren een 0-score krijgen.
 _FIXED_TS = datetime(2025, 8, 6, 9, 0, 0)
-
-from src.data.models import (
-    WaveSpectrum,
-    WindState,
-    TideState,
-    HourState,
-    SpectralPeak,
-    SwellType,
-    ScoreBreakdown
-)
-
-from src.scoring.hourly import score_hour, score_golf_component, score_wind_component
-
-from src.config import NOORDWIJK
 
 
 class TestGolfScoring:
@@ -200,8 +195,9 @@ class TestPeakBlock:
 
     def _make_window(self, score_sequence):
         """Bouw een SurfWindow met de gegeven uurlijkse total-scores."""
-        from src.data.models import SurfWindow, ScoreBreakdown
         from datetime import timedelta
+
+        from src.data.models import SurfWindow
         start_ts = datetime(2025, 8, 6, 12, 0, 0)
         breakdowns = []
         for i, total in enumerate(score_sequence):
@@ -771,7 +767,6 @@ class TestSprint2SizeCap:
 
     def test_marginal_wave_cannot_reach_surfable_via_environment(self):
         """0.4m golf (~3-5pt) + perfect environment mag GEEN 60+ score halen."""
-        from src.data.models import ScoreBreakdown
         from datetime import datetime
         sb = ScoreBreakdown(
             timestamp=datetime(2025, 8, 6, 12, 0),
@@ -789,7 +784,6 @@ class TestSprint2SizeCap:
 
     def test_big_wave_with_modest_environment_uses_additive(self):
         """30pt golf + matige environment → additieve uitkomst dominant in soft-blend."""
-        from src.data.models import ScoreBreakdown
         sb = ScoreBreakdown(
             timestamp=_FIXED_TS,
             golf_score=30.0,
@@ -1167,7 +1161,7 @@ class TestWaveAgeFactorPM:
 
     def test_marginal_wind_sea(self):
         """age=0.7 → mid-ramp 0.55-0.80, ergens rond 0.70."""
-        from src.scoring.hourly import wave_age_factor, wave_age
+        from src.scoring.hourly import wave_age, wave_age_factor
         # Tp=5, U=10kn → cp=7.8, u10=5.14 → age=1.517 (te hoog)
         # Tp=4, U=15kn → cp=6.24, u10=7.72 → age=0.808
         f = wave_age_factor(4.0, 15.0)
@@ -1178,7 +1172,7 @@ class TestWaveAgeFactorPM:
 
     def test_mature_wave_age_one(self):
         """age=1.0 → ramp-overgang naar 0.95 (mature/PM developed)."""
-        from src.scoring.hourly import wave_age_factor, wave_age
+        from src.scoring.hourly import wave_age_factor
         # Doel age=1.0: Tp=4, U=12kn → cp=6.24, u10=6.17 → age=1.011 → factor ~1.0 (>= 1.0 region)
         # Per spec 1.0 ≤ age ≤ 1.2 → factor 1.0
         f = wave_age_factor(4.0, 12.0)
@@ -1221,7 +1215,6 @@ class TestSoftBlendNoJumps:
 
     def test_small_golf_mostly_multiplicative(self):
         """golf=10 → alpha=sigmoid(-1)≈0.27, blend leunt naar multiplicatief."""
-        from src.data.models import ScoreBreakdown
         sb = ScoreBreakdown(timestamp=_FIXED_TS, golf_score=10.0,
                             wind_score=20.0, tide_score=10.0, swell_dir_bonus=5.0)
         # additive=45, multiplicative=10×(1+2.5×35/62)=10×2.411=24.11
@@ -1231,7 +1224,6 @@ class TestSoftBlendNoJumps:
 
     def test_large_golf_mostly_additive(self):
         """golf=20 → alpha=sigmoid(1)≈0.73, blend leunt naar additief."""
-        from src.data.models import ScoreBreakdown
         sb = ScoreBreakdown(timestamp=_FIXED_TS, golf_score=20.0,
                             wind_score=20.0, tide_score=10.0, swell_dir_bonus=5.0)
         # additive=55, multiplicative=20×(1+2.5×35/62)=20×2.411=48.22
@@ -1241,7 +1233,6 @@ class TestSoftBlendNoJumps:
 
     def test_midpoint_5050_blend(self):
         """golf=15 → alpha=0.5, blend = (additive+multiplicative)/2."""
-        from src.data.models import ScoreBreakdown
         sb = ScoreBreakdown(timestamp=_FIXED_TS, golf_score=15.0,
                             wind_score=20.0, tide_score=10.0, swell_dir_bonus=5.0)
         # additive=50, multiplicative=15×(1+2.5×35/62)=15×2.411=36.17
@@ -1254,7 +1245,6 @@ class TestConfidenceWiredInTotalScore:
     """Fix #6 — confidence wordt toegepast in total_score."""
 
     def test_confidence_one_no_effect(self):
-        from src.data.models import ScoreBreakdown
         sb = ScoreBreakdown(timestamp=_FIXED_TS, golf_score=20.0,
                             wind_score=20.0, tide_score=10.0, swell_dir_bonus=5.0,
                             confidence=1.0)
@@ -1266,7 +1256,6 @@ class TestConfidenceWiredInTotalScore:
 
     def test_confidence_low_penalty(self):
         """confidence=0.7 → 30% penalty op total_score."""
-        from src.data.models import ScoreBreakdown
         full = ScoreBreakdown(timestamp=_FIXED_TS, golf_score=20.0,
                               wind_score=20.0, tide_score=10.0, swell_dir_bonus=5.0,
                               confidence=1.0)
@@ -1279,7 +1268,6 @@ class TestConfidenceWiredInTotalScore:
 
     def test_confidence_clamped_at_lower_bound(self):
         """confidence=0.3 wordt geclampd op 0.7."""
-        from src.data.models import ScoreBreakdown
         very_low = ScoreBreakdown(timestamp=_FIXED_TS, golf_score=20.0,
                                   wind_score=20.0, tide_score=10.0, swell_dir_bonus=5.0,
                                   confidence=0.3)
@@ -1293,7 +1281,6 @@ class TestWindowDipTolerance:
     """Fix #7 — cluster_consecutive_hours met 1-h dip tolerance."""
 
     def _scores(self, totals):
-        from src.data.models import ScoreBreakdown
         from datetime import timedelta
         start = datetime(2025, 8, 6, 12, 0)
         out = []
@@ -1308,9 +1295,9 @@ class TestWindowDipTolerance:
 
     def test_single_dip_tolerated(self):
         """[62,63,58,61,62] met threshold 60 → 1 cluster van 5u (dip=58, 2pt onder)."""
-        from src.scoring.windows import cluster_consecutive_hours
-        from src.data.models import ScoreBreakdown
         from datetime import timedelta
+
+        from src.scoring.windows import cluster_consecutive_hours
         start = datetime(2025, 8, 6, 12, 0)
         # Construeer scores: golf=target zodat total_score >= target voor
         # additieve-dominante regime (golf=62 → alpha=sigmoid(9.4)≈1 → total≈62).
@@ -1332,9 +1319,9 @@ class TestWindowDipTolerance:
 
     def test_dip_too_deep_breaks_cluster(self):
         """Dip van 10pt onder threshold (>5pt depth) breekt het cluster."""
-        from src.scoring.windows import cluster_consecutive_hours
-        from src.data.models import ScoreBreakdown
         from datetime import timedelta
+
+        from src.scoring.windows import cluster_consecutive_hours
         start = datetime(2025, 8, 6, 12, 0)
         # Een uur met total=50 (10pt onder threshold) → echte break
         scores = []
@@ -1353,9 +1340,9 @@ class TestWindowDipTolerance:
 
     def test_no_dip_legacy_behavior(self):
         """Zonder dips: oude clustering werkt nog steeds."""
-        from src.scoring.windows import cluster_consecutive_hours
-        from src.data.models import ScoreBreakdown
         from datetime import timedelta
+
+        from src.scoring.windows import cluster_consecutive_hours
         start = datetime(2025, 8, 6, 12, 0)
         scores = []
         for i, total in enumerate([62, 65, 70, 65, 62]):
@@ -1489,8 +1476,9 @@ class TestTidalCurrentAsymmetry:
 
     def test_afgaand_stronger_than_opgaand(self):
         """Zelfde positie (mid-cycle), phase='afgaand' geeft hoger intensity dan 'opgaand'."""
-        from src.data.models import TideState
         from datetime import timedelta
+
+        from src.data.models import TideState
         now = datetime(2025, 8, 6, 12, 0)
         last_turn = now - timedelta(hours=3)
         next_turn = now + timedelta(hours=3)  # mid-cycle (sin pi/2 = 1)
@@ -1541,6 +1529,45 @@ class TestDominantPeriodFallback:
         )
         Tp = _dominant_period_partition_based(spectrum)
         assert Tp == 8.0
+
+
+class TestRarityPercentileWeekLookup:
+    """Bewijs: `calculate_rarity_percentile` gebruikt de week-baseline van
+    het *forecast-tijdstip* (parameter `when`), niet `datetime.now()`.
+
+    Bug-context: voor forecast-uren 3 dagen vooruit (en zeker rond de
+    jaargrens 52→1) leverde de oude implementatie steeds de wall-clock-week
+    op, waardoor scores in week 52 vs week 1 dezelfde baseline kregen.
+    """
+
+    _BASELINE = {
+        "week_1":  {"p50": 30, "p70": 50, "p90": 75},
+        "week_52": {"p50": 60, "p70": 80, "p90": 95},
+    }
+
+    def test_same_score_higher_percentile_in_week_1_than_week_52(self):
+        """Een score van 55 is zeldzaam in week 1 (lage baseline, p70=50)
+        maar gemiddeld in week 52 (hoge baseline, p50=60)."""
+        from src.scoring.windows import calculate_rarity_percentile
+
+        score = 55
+        # 30 dec 2024 valt in ISO week 1 (van 2025).
+        ts_week_1 = datetime(2024, 12, 30, 12, 0)
+        # 23 dec 2024 valt in ISO week 52 (van 2024).
+        ts_week_52 = datetime(2024, 12, 23, 12, 0)
+
+        assert ts_week_1.isocalendar()[1] == 1
+        assert ts_week_52.isocalendar()[1] == 52
+
+        pct_week_1 = calculate_rarity_percentile(score, self._BASELINE, when=ts_week_1)
+        pct_week_52 = calculate_rarity_percentile(score, self._BASELINE, when=ts_week_52)
+
+        assert pct_week_1 > pct_week_52, (
+            f"Score {score} hoort hogere percentile te krijgen in week 1 "
+            f"(p70={self._BASELINE['week_1']['p70']}) dan in week 52 "
+            f"(p70={self._BASELINE['week_52']['p70']}); "
+            f"kreeg week1={pct_week_1}, week52={pct_week_52}"
+        )
 
 
 if __name__ == "__main__":

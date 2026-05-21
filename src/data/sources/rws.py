@@ -22,6 +22,7 @@ Response-shape sinds DDAPI20:
 import asyncio
 import json
 import logging
+import random
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any
 from zoneinfo import ZoneInfo
@@ -197,7 +198,9 @@ class RWSClient:
                     f"RWS request failed (attempt {attempt + 1}/{self.max_retries}): {e}"
                 )
                 if attempt < self.max_retries - 1:
-                    await asyncio.sleep(2 ** attempt)
+                    # Exponential backoff + jitter (anti-thundering-herd voor
+                    # parallelle boei-calls die tegelijk failen).
+                    await asyncio.sleep(2 ** attempt + random.uniform(0, 0.5))
         raise last_err or RuntimeError("RWS request failed")
 
     async def _fetch_series(
@@ -300,7 +303,11 @@ class RWSClient:
                             f"RWS empty-body retry {attempt + 1}/{max_attempts - 1} "
                             f"voor grootheid {grootheid}@{location_code}: {e}"
                         )
-                        await asyncio.sleep(RWS_EMPTY_BODY_RETRY_DELAY_S)
+                        # Jitter op de empty-body retry-delay zodat parallelle
+                        # grootheid-calls niet synchroon retryen.
+                        await asyncio.sleep(
+                            RWS_EMPTY_BODY_RETRY_DELAY_S + random.uniform(0, 0.5)
+                        )
                         continue
                     logger.warning(
                         f"RWS grootheid {grootheid}@{location_code} empty-body "

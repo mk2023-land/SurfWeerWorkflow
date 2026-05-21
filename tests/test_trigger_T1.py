@@ -4,14 +4,7 @@ Unit tests voor T1 swell-arrival detector (Sprint 3 #15).
 from __future__ import annotations
 
 import json
-import os
-import sys
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
-
-import pytest
-
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.data.models import AlertType, SpectralPeak, SwellType, WaveSpectrum
 from src.scoring.trigger_T1 import (
@@ -53,7 +46,7 @@ class TestAppendAndLoad:
         assert n == 2
         lines = path.read_text().strip().splitlines()
         assert len(lines) == 2
-        recs = [json.loads(l) for l in lines]
+        recs = [json.loads(line) for line in lines]
         stations = {r["station"] for r in recs}
         assert stations == {"A12", "K13"}
 

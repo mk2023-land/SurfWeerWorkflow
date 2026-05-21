@@ -22,13 +22,14 @@ import logging
 import os
 import sys
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List
+from typing import Any
 
 import httpx
 import pytest
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import src.data.sources.rws as rws_mod  # noqa: E402
 from src.data.sources.rws import (  # noqa: E402
     GROOTHEID_H13,
     GROOTHEID_HM0,
@@ -45,7 +46,6 @@ from src.data.sources.rws import (  # noqa: E402
     GROOTHEID_WATHTE,
     RWSClient,
 )
-import src.data.sources.rws as rws_mod  # noqa: E402
 
 
 def _run(coro):
@@ -67,7 +67,7 @@ def _ts(offset_min: int) -> str:
     return (base + timedelta(minutes=offset_min)).isoformat(timespec='milliseconds')
 
 
-def _series(grootheid: str, eenheid: str, values: List[float]) -> Dict[str, Any]:
+def _series(grootheid: str, eenheid: str, values: list[float]) -> dict[str, Any]:
     """Bouw een RWS DDAPI20-response voor één grootheid."""
     return {
         'Succesvol': True,
@@ -87,7 +87,7 @@ def _series(grootheid: str, eenheid: str, values: List[float]) -> Dict[str, Any]
     }
 
 
-def _empty_response() -> Dict[str, Any]:
+def _empty_response() -> dict[str, Any]:
     return {'Succesvol': True, 'WaarnemingenLijst': []}
 
 
@@ -99,17 +99,17 @@ class _FakeRouter:
     """
 
     def __init__(self):
-        self.responses: Dict[str, Any] = {}
-        self.errors: Dict[str, Exception] = {}
-        self.calls: List[str] = []
+        self.responses: dict[str, Any] = {}
+        self.errors: dict[str, Exception] = {}
+        self.calls: list[str] = []
 
-    def add(self, grootheid: str, response: Dict[str, Any]):
+    def add(self, grootheid: str, response: dict[str, Any]):
         self.responses[grootheid] = response
 
     def fail(self, grootheid: str, exc: Exception):
         self.errors[grootheid] = exc
 
-    def __call__(self, url: str, body: Dict[str, Any]) -> Dict[str, Any]:
+    def __call__(self, url: str, body: dict[str, Any]) -> dict[str, Any]:
         aquo = body['AquoPlusWaarnemingMetadata']['AquoMetadata']
         code = aquo['Grootheid']['Code']
         self.calls.append(code)
@@ -291,9 +291,9 @@ class TestExtendedBuoyData:
 class TestSurgeResidual:
     def _tide_router(
         self,
-        astro_cm: List[float],
-        measured_cm: List[float],
-        brkd_cm: List[float] = None,
+        astro_cm: list[float],
+        measured_cm: list[float],
+        brkd_cm: list[float] = None,
     ) -> _FakeRouter:
         r = _FakeRouter()
         # Astronomisch via WATHTE (de fetch_tide_predictions-call).
@@ -309,7 +309,7 @@ class TestSurgeResidual:
         self,
         monkeypatch,
         router: _FakeRouter,
-        measured_cm: List[float],
+        measured_cm: list[float],
     ) -> RWSClient:
         """
         WATHTE wordt twee keer aangevraagd: één keer met proces_type='astronomisch'

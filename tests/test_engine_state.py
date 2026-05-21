@@ -18,14 +18,10 @@ Deze tests dekken:
 from __future__ import annotations
 
 import json
-import os
-import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.alerts.engine import AlertEngine
 from src.data.models import SystemState

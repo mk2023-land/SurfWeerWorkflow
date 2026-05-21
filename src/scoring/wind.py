@@ -110,7 +110,7 @@ def pressure_gradient_factor(pressure_history_hpa: list) -> float:
         return 1.0
     dp_dt = sum(
         (t - mean_t) * (p - mean_p)
-        for t, p in zip(ts, pressure_history_hpa)
+        for t, p in zip(ts, pressure_history_hpa, strict=False)
     ) / denom
     abs_grad = abs(dp_dt)
     if abs_grad < 1.5:

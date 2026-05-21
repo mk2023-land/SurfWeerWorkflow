@@ -3,27 +3,23 @@ Window analysis module.
 Detecteert en analyseert aaneengesloten periodes van goede surfcondities.
 """
 import logging
-from datetime import datetime, timedelta
-from typing import List, Optional
 import statistics
+from datetime import datetime
+from typing import Optional
 
 from src.config import SURF_THRESHOLDS
-from src.data.models import (
-    ScoreBreakdown,
-    SurfWindow,
-    AlertType
-)
+from src.data.models import AlertType, ScoreBreakdown, SurfWindow
 
 logger = logging.getLogger(__name__)
 
 
 def cluster_consecutive_hours(
-    scores: List[ScoreBreakdown],
+    scores: list[ScoreBreakdown],
     min_score: int = None,
     min_golf: float = 0.0,
     max_dip_hours: int = 1,
     max_dip_depth: float = 5.0,
-) -> List[List[ScoreBreakdown]]:
+) -> list[list[ScoreBreakdown]]:
     """
     Cluster aaneengesloten uren met score boven minimum, met tolerantie
     voor korte dips (max_dip_hours uren tot max_dip_depth onder threshold)
@@ -65,7 +61,7 @@ def cluster_consecutive_hours(
     current_cluster = []
     pending_dip = []  # Lijst van dip-uren in afwachting van een "qualifies" terug
 
-    for i, score in enumerate(scores):
+    for _i, score in enumerate(scores):
         if _qualifies(score):
             # Eerst eventuele pending dip absorberen (we hebben nu een 'na'-buur).
             if current_cluster and pending_dip and len(pending_dip) <= max_dip_hours:
@@ -91,7 +87,7 @@ def cluster_consecutive_hours(
     return clusters
 
 
-def calculate_window_stability(scores: List[ScoreBreakdown]) -> float:
+def calculate_window_stability(scores: list[ScoreBreakdown]) -> float:
     """
     Bereken stabiliteit van een window (0.0-1.0).
 
@@ -122,13 +118,22 @@ def calculate_window_stability(scores: List[ScoreBreakdown]) -> float:
     return stability
 
 
-def calculate_rarity_percentile(score: int, seasonal_baseline: dict) -> float:
+def calculate_rarity_percentile(
+    score: int,
+    seasonal_baseline: dict,
+    when: Optional[datetime] = None,
+) -> float:
     """
     Bereken rarity percentile van een score.
 
     Args:
         score: De score om te evalueren
         seasonal_baseline: Seizoensbaseline data
+        when: Tijdstip waarop deze score geldt — bepaalt welke week-baseline
+            wordt gebruikt. Default ``None`` → ``datetime.now()`` (backwards-
+            compat). Voor forecast-uren ≥1 dag vooruit MOET dit het forecast-
+            tijdstip zijn, anders kruist de jaar-grens (week 52 → week 1)
+            naar de verkeerde baseline-bucket.
 
     Returns:
         Percentile 0-100
@@ -136,9 +141,11 @@ def calculate_rarity_percentile(score: int, seasonal_baseline: dict) -> float:
     if not seasonal_baseline:
         return 50.0  # Geen baseline = gemiddeld
 
-    # Bepaal week van jaar
-    now = datetime.now()
-    week_number = now.isocalendar()[1]
+    # Bepaal week van jaar — voor het tijdstip waar de score op slaat,
+    # niet het wall-clock-now. Dit voorkomt baseline-mismatch rond
+    # jaargrens en bij multi-dag forecast-windows.
+    reference = when if when is not None else datetime.now()
+    week_number = reference.isocalendar()[1]
 
     # Haal baseline voor deze week
     week_key = f"week_{week_number}"
@@ -169,8 +176,8 @@ def calculate_rarity_percentile(score: int, seasonal_baseline: dict) -> float:
 
 
 def create_surf_window(
-    scores: List[ScoreBreakdown],
-    triggers: List[AlertType],
+    scores: list[ScoreBreakdown],
+    triggers: list[AlertType],
     seasonal_baseline: dict = None,
     kind: str = 'surfable',
 ) -> SurfWindow:
@@ -199,8 +206,12 @@ def create_surf_window(
     # Stabiliteit
     stability = calculate_window_stability(scores)
 
-    # Rarity percentile (gebruik peak score)
-    rarity_percentile = calculate_rarity_percentile(peak_score, seasonal_baseline)
+    # Rarity percentile (gebruik peak score). Geef het window-start-tijdstip
+    # mee zodat de juiste week-baseline geraadpleegd wordt voor forecast-
+    # uren die niet op vandaag vallen (jaargrens 52→1 etc.).
+    rarity_percentile = calculate_rarity_percentile(
+        peak_score, seasonal_baseline, when=scores[0].timestamp
+    )
 
     return SurfWindow(
         start=start,
@@ -217,10 +228,10 @@ def create_surf_window(
 
 
 def analyze_windows(
-    hourly_scores: List[ScoreBreakdown],
+    hourly_scores: list[ScoreBreakdown],
     triggers_dict: dict = None,
     seasonal_baseline: dict = None
-) -> List[SurfWindow]:
+) -> list[SurfWindow]:
     """
     Analyseer alle surf windows in de forecast — zowel shortboard-surfable
     (peak ≥ SURF_THRESHOLDS['surfable']) als longboard-only
@@ -290,7 +301,7 @@ def analyze_windows(
     return all_windows
 
 
-def filter_alertworthy_windows(windows: List[SurfWindow]) -> List[SurfWindow]:
+def filter_alertworthy_windows(windows: list[SurfWindow]) -> list[SurfWindow]:
     """
     Filter windows die alert-waardig zijn.
 
@@ -313,7 +324,7 @@ def filter_alertworthy_windows(windows: List[SurfWindow]) -> List[SurfWindow]:
     return alertworthy
 
 
-def get_best_window(windows: List[SurfWindow]) -> Optional[SurfWindow]:
+def get_best_window(windows: list[SurfWindow]) -> Optional[SurfWindow]:
     """
     Kies het beste window uit een lijst.
 

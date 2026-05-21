@@ -79,21 +79,21 @@ class WaveSpectrum:
     peak_period_observed_s: Optional[float] = None    # van boei Tp
     directional_spread_deg: Optional[float] = None    # van boei SObh
 
+    def get_peak(self, swell_type: Optional[SwellType] = None) -> Optional[SpectralPeak]:
+        """Retourneer hoogste peak; optioneel gefilterd op swell_type."""
+        candidates = self.peaks if swell_type is None else [p for p in self.peaks if p.type == swell_type]
+        return max(candidates, key=lambda p: p.height_m) if candidates else None
+
+    # Deprecation shims — externe callers blijven werken; intern roepen we
+    # de geconsolideerde `get_peak()` aan.
     def get_dominant_peak(self) -> Optional[SpectralPeak]:
-        """Retourneer de dominante piek (hoogste amplitude)."""
-        if not self.peaks:
-            return None
-        return max(self.peaks, key=lambda p: p.height_m)
+        return self.get_peak()
 
     def get_groundswell_component(self) -> Optional[SpectralPeak]:
-        """Retourneer de groundswell piek indien aanwezig."""
-        groundswell_peaks = [p for p in self.peaks if p.type == SwellType.GROUND_SWELL]
-        return max(groundswell_peaks, key=lambda p: p.height_m) if groundswell_peaks else None
+        return self.get_peak(SwellType.GROUND_SWELL)
 
     def get_wind_sea_component(self) -> Optional[SpectralPeak]:
-        """Retourneer de wind sea piek indien aanwezig."""
-        wind_sea_peaks = [p for p in self.peaks if p.type == SwellType.WIND_SEA]
-        return max(wind_sea_peaks, key=lambda p: p.height_m) if wind_sea_peaks else None
+        return self.get_peak(SwellType.WIND_SEA)
 
 
 @dataclass
@@ -102,21 +102,6 @@ class WindState:
     speed_kn: float
     direction_deg: int
     gusts_kn: Optional[float] = None
-
-    @property
-    def is_offshore(self) -> bool:
-        """Controleer of wind offshore is (75°-135°)."""
-        return 75 <= self.direction_deg <= 135
-
-    @property
-    def is_side_offshore(self) -> bool:
-        """Controleer of wind side-offshore is (135°-225°)."""
-        return 135 <= self.direction_deg <= 225
-
-    @property
-    def is_onshore(self) -> bool:
-        """Controleer of wind onshore is (225°-315°)."""
-        return 225 <= self.direction_deg <= 315
 
 
 @dataclass
@@ -503,7 +488,7 @@ class RunLog:
     alert_types_detected: List[str]
     windows_total: int
     windows_alertworthy: int
-    decision: str  # "send_alert", "send_digest", "skip"
+    decision: str  # "alert", "digest", "skip" — zie Decision.action
     sms_sent: Optional[str] = None
     llm_used: bool = False
     llm_validation_passed: bool = False

@@ -8,9 +8,6 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import Dict
-
-import pytest
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -81,7 +78,7 @@ class TestB8CompassExtraction:
             f"Issues missen NWN-flag: {result.issues}"
 
 
-def _make_days_input(allowed: Dict) -> Dict:
+def _make_days_input(allowed: dict) -> dict:
     """Helper: bouw structured_input met één day_block + _allowed_citations."""
     return {
         'days': [{

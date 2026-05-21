@@ -2,30 +2,22 @@
 Alert engine module.
 Coördineert detectie, besluitvorming, en state management.
 """
+import json
 import logging
 import os
 import uuid
-from datetime import datetime, timedelta, timezone
-from typing import List, Dict, Optional, Set
-from zoneinfo import ZoneInfo
-import json
+from datetime import datetime, timezone
 from pathlib import Path
-
-_NL = ZoneInfo('Europe/Amsterdam')
-
-from src.data.models import (
-    HourState,
-    AlertCandidate,
-    AlertType,
-    Decision,
-    SystemState,
-    SurfWindow,
-    ScoreBreakdown
-)
+from typing import Optional
+from zoneinfo import ZoneInfo
 
 from src.config import ALERT_CONFIG
+from src.data.models import AlertCandidate, AlertType, Decision, HourState, SurfWindow, SystemState
+from src.util import to_utc
 
 from .detectors import AlertDetectorEngine
+
+_NL = ZoneInfo('Europe/Amsterdam')
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +40,7 @@ PRIMARY_ALERT_PRIORITY = [
 ]
 
 
-def select_primary_alert_type(triggered: Set[AlertType]) -> Optional[AlertType]:
+def select_primary_alert_type(triggered: set[AlertType]) -> Optional[AlertType]:
     """
     Kies deterministisch de primary alert-type uit een set triggered types.
 
@@ -70,9 +62,14 @@ class AlertEngine:
     Hoofd alert engine die detectie coördineert en beslissingen neemt.
     """
 
-    def __init__(self, state_file: str = "data/state.json"):
+    def __init__(
+        self,
+        state_file: str = "data/state.json",
+        budget_file: str = "data/monthly_budget.json",
+    ):
         self.detector_engine = AlertDetectorEngine()
         self.state_file = state_file
+        self.budget_file = budget_file
         self.state = self._load_state()
 
     def _load_state(self) -> SystemState:
@@ -104,7 +101,7 @@ class AlertEngine:
             return SystemState()
 
         try:
-            with open(state_path, 'r') as f:
+            with open(state_path) as f:
                 data = json.load(f)
         except json.JSONDecodeError as e:
             # B10: corrupt file — raise zodat de run faalt ipv stilletjes
@@ -169,10 +166,10 @@ class AlertEngine:
 
     def evaluate_forecast(
         self,
-        forecast: List[HourState],
-        history: List[HourState],
-        buoy_history: Dict[str, List] = None,
-        windows: List[SurfWindow] = None,
+        forecast: list[HourState],
+        history: list[HourState],
+        buoy_history: dict[str, list] = None,
+        windows: list[SurfWindow] = None,
         is_digest_time: bool = False
     ) -> Decision:
         """
@@ -197,9 +194,13 @@ class AlertEngine:
                 skip_reason="Maandelijks budget bereikt (notificatie + Anthropic gecombineerde cap)"
             )
 
-        # Voer detectors uit
-        triggered_alerts = self.detector_engine.detect_all(
-            forecast, history, buoy_history, windows
+        # Voer detectors uit. We trekken zowel de Set (voor priority-selectie)
+        # als de Dict[AlertType, AlertCandidate] (voor rijke explanations) op
+        # — zie AlertDetectorEngine.detect_all_with_candidates.
+        triggered_alerts, candidates_by_type = (
+            self.detector_engine.detect_all_with_candidates(
+                forecast, history, buoy_history, windows
+            )
         )
 
         # Filter alert-worthy windows
@@ -253,7 +254,9 @@ class AlertEngine:
                 alert_type=primary_type,
                 window=best_window,
                 detection_time=datetime.now(),
-                explanation=self._generate_explanation(best_window, triggered_alerts),
+                explanation=self._generate_explanation(
+                    best_window, triggered_alerts, candidates_by_type
+                ),
                 confidence=best_window.stability
             )
 
@@ -279,8 +282,26 @@ class AlertEngine:
             skip_reason="No alert-worthy conditions found"
         )
 
-    def _generate_explanation(self, window: SurfWindow, alert_types: Set[AlertType]) -> str:
-        """Genereer uitleg voor alert."""
+    def _generate_explanation(
+        self,
+        window: SurfWindow,
+        alert_types: set[AlertType],
+        candidates_by_type: Optional[dict[AlertType, AlertCandidate]] = None,
+    ) -> str:
+        """Genereer uitleg voor alert.
+
+        Als `candidates_by_type` is meegegeven, gebruik dan de rijke
+        per-detector `AlertCandidate.explanation` strings — die bevatten
+        concrete getallen (periode, hoogte, windrichting/snelheid, duur)
+        waar de generieke labels alleen het categorie-name geven. We
+        deduppen geordend zodat de volgorde stabiel is met
+        PRIMARY_ALERT_PRIORITY zoals elders in deze module.
+
+        Voor types waarvoor géén candidate bekend is (bijv. SWELL_ARRIVAL
+        die alleen via de persisted-history-route triggerde) valt het
+        per-type stukje terug op het generieke label hieronder, zodat
+        de uitleg nooit een type stilletjes weglaat.
+        """
         type_names = {
             AlertType.SWELL_ARRIVAL: "Nieuwe swell aankomst",
             AlertType.WIND_SHIFT: "Wind draait aflandig",
@@ -289,10 +310,25 @@ class AlertEngine:
             AlertType.TIDE_GATED: "Gunstige tij combinatie"
         }
 
-        type_explanations = [type_names[t] for t in alert_types if t in type_names]
+        type_explanations: list[str] = []
+
+        if candidates_by_type:
+            # Geordend per PRIMARY_ALERT_PRIORITY zodat de volgorde
+            # deterministisch is. Onbekende (out-of-priority) types
+            # daarna in iteratie-volgorde van de set.
+            ordered_types = [t for t in PRIMARY_ALERT_PRIORITY if t in alert_types]
+            ordered_types += [t for t in alert_types if t not in PRIMARY_ALERT_PRIORITY]
+            for t in ordered_types:
+                cand = candidates_by_type.get(t)
+                if cand and cand.explanation:
+                    type_explanations.append(cand.explanation)
+                elif t in type_names:
+                    type_explanations.append(type_names[t])
+        else:
+            type_explanations = [type_names[t] for t in alert_types if t in type_names]
 
         if type_explanations:
-            explanation = ", ".join(type_explanations)
+            explanation = "; ".join(type_explanations) if candidates_by_type else ", ".join(type_explanations)
         else:
             explanation = "Goede surfcondities"
 
@@ -300,36 +336,195 @@ class AlertEngine:
 
         return explanation
 
+    # ---- Monthly budget: O(1) cache ipv O(n) jsonl-scan -------------------
+    #
+    # Voorheen las `_check_monthly_budget` per run het volledige
+    # `data/forecasts_log.jsonl` om notify- en LLM-calls van deze maand op te
+    # tellen. Dat is O(n) over alle historische runs en blijft groeien zolang
+    # het bestand niet roteert — bij 4 runs/dag tikt dat op aan ~120 regels per
+    # maand × jaren history. Bovendien werd de timestamp naive geparset
+    # (Europe/Amsterdam aanname zonder tz-info, vergeleken met `datetime.now()`
+    # ook naive) → in de praktijk werkbaar maar inconsistent met de rest van
+    # de pipeline die overal `src.util.to_utc` gebruikt.
+    #
+    # Nu houden we de tellers bij in `data/monthly_budget.json` (zelfde
+    # atomic-write patroon als state.json). Bij maand-rollover wordt het
+    # bestand reset. Bij ontbrekend bestand vallen we exact één keer terug op
+    # de legacy log-scan (first-run / cache-loss recovery) zodat we geen
+    # historische teller verliezen. Caller (main.py) roept `record_send()`
+    # aan na bevestigde send-success — analoog aan de Fix #3 record_alert-
+    # ordering — zodat een mislukte notifier-5xx geen budget verbruikt.
+
+    def _current_month_str(self) -> str:
+        """YYYY-MM voor de huidige maand (UTC). Eén canonieke tijd-zone houdt
+        rollover deterministisch ongeacht runner-tz."""
+        return datetime.now(timezone.utc).strftime('%Y-%m')
+
+    def _load_monthly_budget(self) -> dict:
+        """Lees `data/monthly_budget.json` of return een verse maand-struct.
+
+        Bij maand-rollover (stored month != huidige maand): reset counters.
+        Bij ontbrekend bestand: fallback naar legacy jsonl-scan (one-shot
+        zodat we niet stilletjes een lopende maand op 0 zetten na een cache-
+        wipe). Bij corrupte JSON: log + reset (het is een teller, geen
+        veiligheids-kritische state zoals state.json).
+        """
+        current_month = self._current_month_str()
+        budget_path = Path(self.budget_file)
+
+        if not budget_path.exists():
+            # Legacy fallback — telt deze maand op uit forecasts_log.jsonl.
+            # Gebeurt maximaal één keer per cache-cycle; daarna wordt de
+            # waarde gepersisteerd door _update_monthly_budget na de
+            # eerstvolgende send.
+            return self._scan_legacy_log_for_month(current_month)
+
+        try:
+            with open(budget_path) as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning(
+                f"Corrupt monthly_budget at {budget_path}: {e}. Resetting counters."
+            )
+            return {
+                'month': current_month,
+                'notify_count': 0,
+                'llm_count': 0,
+                'last_updated': datetime.now(timezone.utc).isoformat(),
+            }
+
+        if data.get('month') != current_month:
+            logger.info(
+                f"Monthly budget rollover {data.get('month')} → {current_month}"
+            )
+            return {
+                'month': current_month,
+                'notify_count': 0,
+                'llm_count': 0,
+                'last_updated': datetime.now(timezone.utc).isoformat(),
+            }
+
+        # Coerce velden voor robustheid tegen handmatige edits.
+        return {
+            'month': current_month,
+            'notify_count': int(data.get('notify_count', 0)),
+            'llm_count': int(data.get('llm_count', 0)),
+            'last_updated': data.get('last_updated') or datetime.now(timezone.utc).isoformat(),
+        }
+
+    def _scan_legacy_log_for_month(self, current_month: str) -> dict:
+        """Tel notify/LLM-calls van de huidige maand uit forecasts_log.jsonl.
+
+        Eenmalige fallback voor first-run of cache-loss. Naive timestamps
+        worden geïnterpreteerd als Europe/Amsterdam (consistent met de rest
+        van de pipeline via `src.util.to_utc`) en in UTC vergeleken.
+        """
+        log_file = Path('data/forecasts_log.jsonl')
+        notify_count = 0
+        llm_count = 0
+        if log_file.exists():
+            try:
+                # Maand-grens in UTC: eerste van de maand 00:00 UTC. We
+                # vergelijken UTC met UTC zodat tz-aware en geconverteerde
+                # naive timestamps consistent gebufferd worden.
+                month_start = datetime.strptime(current_month, '%Y-%m').replace(tzinfo=timezone.utc)
+                with open(log_file) as f:
+                    for line in f:
+                        try:
+                            log_entry = json.loads(line)
+                            raw_ts = log_entry.get('timestamp')
+                            if not raw_ts:
+                                continue
+                            ts = datetime.fromisoformat(raw_ts)
+                            ts_utc = to_utc(ts)
+                            if ts_utc >= month_start:
+                                if log_entry.get('sms_sent'):
+                                    notify_count += 1
+                                if log_entry.get('llm_used'):
+                                    llm_count += 1
+                        except (json.JSONDecodeError, KeyError, ValueError):
+                            continue
+            except OSError as e:
+                logger.warning(f"Legacy budget scan failed: {e}")
+
+        return {
+            'month': current_month,
+            'notify_count': notify_count,
+            'llm_count': llm_count,
+            'last_updated': datetime.now(timezone.utc).isoformat(),
+        }
+
+    def _save_monthly_budget(self, budget: dict) -> None:
+        """Atomic write — zelfde tmp+rename patroon als `_save_state` zodat een
+        mid-write crash de bestaande teller niet corrumpeert."""
+        budget_path = Path(self.budget_file)
+        budget_path.parent.mkdir(parents=True, exist_ok=True)
+
+        tmp_path = budget_path.with_name(
+            f"{budget_path.name}.tmp.{os.getpid()}.{uuid.uuid4().hex}"
+        )
+        try:
+            with open(tmp_path, 'w') as f:
+                json.dump(budget, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, budget_path)
+        except Exception:
+            try:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+            except OSError:
+                pass
+            raise
+
+    def _update_monthly_budget(self, notify_increment: int, llm_increment: int) -> dict:
+        """Increment de monthly-budget tellers en persist atomisch.
+
+        Returns de geüpdatete struct (handig voor tests / logging).
+        """
+        budget = self._load_monthly_budget()
+        budget['notify_count'] = int(budget.get('notify_count', 0)) + int(notify_increment)
+        budget['llm_count'] = int(budget.get('llm_count', 0)) + int(llm_increment)
+        budget['last_updated'] = datetime.now(timezone.utc).isoformat()
+        self._save_monthly_budget(budget)
+        return budget
+
+    def record_send(self, notify: bool, llm: bool) -> None:
+        """Hook voor main.py — call na een bevestigd-successfulle send.
+
+        `notify=True`  → +1 op `notify_count` (1 SMS/mail/push verzonden)
+        `llm=True`     → +1 op `llm_count` (1 LLM-call verbruikt voor deze run)
+
+        Caller-discipline: roep dit ALLEEN aan na `result.get('success')`
+        — analoog aan de Fix #3 ordering voor `state.record_alert`. Een
+        mislukte notifier mag het budget niet aantasten.
+        """
+        notify_inc = 1 if notify else 0
+        llm_inc = 1 if llm else 0
+        if notify_inc == 0 and llm_inc == 0:
+            return
+        try:
+            self._update_monthly_budget(notify_inc, llm_inc)
+        except Exception as e:
+            # Budget-bookkeeping mag de send-pipeline nooit laten falen.
+            logger.error(f"record_send: monthly budget update faalde: {e}")
+
     def _check_monthly_budget(self) -> bool:
         """
         Controleer maandelijks budget. Kosten per notificatie hangen af van het
         kanaal: ntfy.sh en SMTP-mail zijn €0, alleen Twilio-SMS kost ~€0.08.
+
+        O(1) — leest enkel `data/monthly_budget.json`. Bij missing file valt
+        `_load_monthly_budget` éénmalig terug op een log-scan zodat een cache-
+        wipe halverwege de maand geen budget-reset triggert.
         """
         try:
-            log_file = Path('data/forecasts_log.jsonl')
-            if not log_file.exists():
-                return True
-
-            import os
             channel = (os.getenv('NOTIFIER') or 'ntfy').lower()
             cost_per_send = 0.08 if channel == 'twilio' else 0.0
 
-            notify_count = 0
-            llm_count = 0
-            current_month = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-
-            with open(log_file, 'r') as f:
-                for line in f:
-                    try:
-                        log_entry = json.loads(line)
-                        timestamp = datetime.fromisoformat(log_entry['timestamp'])
-                        if timestamp >= current_month:
-                            if log_entry.get('sms_sent'):
-                                notify_count += 1
-                            if log_entry.get('llm_used'):
-                                llm_count += 1
-                    except (json.JSONDecodeError, KeyError):
-                        continue
+            budget = self._load_monthly_budget()
+            notify_count = int(budget.get('notify_count', 0))
+            llm_count = int(budget.get('llm_count', 0))
 
             notify_cost = notify_count * cost_per_send
             llm_cost = llm_count * 0.001  # ~€0.001 per Claude Haiku call

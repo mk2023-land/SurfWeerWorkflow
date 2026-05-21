@@ -10,18 +10,13 @@ Dekt:
 from __future__ import annotations
 
 import logging
-import os
 import smtplib
-import sys
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
-
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 
 # ---------------------------------------------------------------------------
 # format_nl_date — timezone-awareness

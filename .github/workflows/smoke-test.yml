@@ -1,0 +1,88 @@
+name: Smoke Test
+
+# Smoke-test van de end-to-end pipeline. Draait `python -m src.main --dry-run`
+# zodat de hele code-pad inclusief Claude-tekst-generatie doorlopen wordt
+# (dry-run slaat alleen de uiteindelijke notifier-send over). Detecteert
+# regressies in data-fetch (Open-Meteo, RWS), scoring, alert-detection en
+# LLM-generation BEFORE de wijziging in main hits.
+#
+# Dagelijks om 02:00 UTC (= ~04:00 NL CEST / 03:00 NL CET) — buiten de
+# productie-cron windows in check.yml (vroegste prod-cron is 03:00 UTC) zodat
+# we geen contentie krijgen om dezelfde API-quota's.
+#
+# Op pull_request voor changes in `src/**/*.py`: vangt regressies vroeg op,
+# vóór merge naar main.
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  pull_request:
+    paths:
+      - 'src/**/*.py'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/smoke-test.yml'
+  workflow_dispatch:
+
+# Smoke-tests mogen niet parallel met elkaar lopen — anders raken ze in een
+# race op shared API-quotas en kan dat false-positives geven. Cancel oudere
+# in-progress smoke-runs zodra een nieuwe binnenkomt (anders dan check.yml,
+# die juist alle scheduled runs wil voltooien wegens cache-state).
+concurrency:
+  group: smoke-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Install dependencies (reproducible from uv.lock)
+        run: uv sync --frozen
+
+      - name: Run smoke test (dry-run)
+        env:
+          # Echte API-key zodat het complete pad inclusief Claude-call
+          # doorlopen wordt. Alleen de notifier-send wordt overgeslagen
+          # door --dry-run. Bij missing secret valt de Claude-call terug op
+          # de deterministische fallback-template en is dat ook OK signaal.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+          # Notifier-credentials worden NIET gezet — dry-run zou ze sowieso
+          # niet gebruiken, maar zo voorkomen we per-ongeluk-verzending bij
+          # een toekomstige tweak die --dry-run niet honoreert.
+          NOTIFIER: 'ntfy'
+
+          # Smoke-conservatieve defaults. ALERTS_ENABLED=false zodat de
+          # alert-detector zijn werk doet maar evaluate_forecast direct
+          # bail-out doet — dat is precies de pipeline-shape die we willen
+          # valideren (build_hour_states, scoring, windows, detectors).
+          ALERTS_ENABLED: 'false'
+          DEBUG: 'true'
+          MANUAL_RUN: 'true'
+        run: |
+          mkdir -p data
+          uv run python -m src.main --dry-run
+
+      - name: Upload smoke logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-logs-${{ github.run_id }}
+          path: |
+            data/forecasts_log.jsonl
+            data/surf_alert.log
+          retention-days: 7
+          if-no-files-found: ignore
