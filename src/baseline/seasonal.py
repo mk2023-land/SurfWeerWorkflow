@@ -234,9 +234,21 @@ class SeasonalBaselineBuilder:
         return baseline
 
     def _save_baseline(self, baseline: dict):
-        """Sla baseline op naar JSON bestand."""
+        """Sla baseline op naar JSON bestand.
+
+        Veiligheidscheck: een lege baseline (rebuild faalde maar workflow
+        exit=0) zou de bestaande werkende baseline overschrijven en alerts
+        onmogelijk maken. We weigeren in dat geval te schrijven.
+        """
         baseline_file = Path('data/seasonal_baseline.json')
         baseline_file.parent.mkdir(parents=True, exist_ok=True)
+
+        if not baseline:
+            logger.error(
+                "Refuse to write empty baseline — would overwrite working file. "
+                "Check archive fetch errors above. Existing file (if any) preserved."
+            )
+            return
 
         with open(baseline_file, 'w') as f:
             json.dump(baseline, f, indent=2)
