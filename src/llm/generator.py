@@ -229,9 +229,25 @@ STIJL & FORMAT — HARDE EISEN
   grapje, mag een korte duiding ("wind blijft te hard", "swell loopt af").
 - Begin EXACT met "Nwijk [day_label_today]: " (kleine letters voor de dag,
   bv. "Nwijk di: "). Geen tekst ervoor.
-- Per dag één korte alinea, gescheiden door enkele nieuwe regel of dubbele
-  punt. Bv. "Nwijk di: ... Nwijk wo: ... Nwijk do: ... Nwijk vr: ..."
-- Lengte: ergens tussen 400-900 tekens. Hou het bondig en pittig.
+- Per dag één alinea van 2-4 zinnen. Dek per dag: golf (hoogte/periode/
+  richting), wind (snelheid/richting/label), tij (richting + relevante
+  HW/LW), bord-keuze, en eventueel venster of duiding.
+- LAYOUT: dagen worden gescheiden door een LEGE REGEL (twee newlines,
+  '\\n\\n'). NOOIT alle dagen op één regel met dubbele punten. NOOIT alleen
+  een enkele newline. Het bericht moet er zo uitzien:
+
+      Nwijk di: <alinea over dinsdag>
+
+      Nwijk wo: <alinea over woensdag>
+
+      Nwijk do: <alinea over donderdag>
+
+      Nwijk vr: <alinea over vrijdag>
+
+      Cam: surfweer.nl/webcams/noordwijk/
+
+- Lengte: 700-1400 tekens inclusief webcam-regel. Bondig per zin, maar
+  géén telegram-stijl en géén afgekapte dagen.
 
 ═══════════════════════════════════════════════════════════════════════
 BOARDS — HARDE REGEL
@@ -355,6 +371,22 @@ Voorbeeld 3 (multi-window: ochtend en avond apart):
   19:30-21u 1,0m WNW 7s, wind 5kn ZZW.
   Output-fragment: "Nwijk/Zvoort 14-16u of na 19:30u, genoeg hoogte rond
   1m WNW, 7s erop — wind 8kn ZW middag, 's avonds 5kn ZZW."
+
+Voorbeeld 4 (volledige layout — let op de lege regels tussen dagen):
+  Nwijk di: rond 14u 1,1m WNW met 7s erop, wind 8kn ZW zijaflandig en tij
+  loopt nog op tot 16u. Beste venster 14-16u voor long, mid en fish, of
+  later 19:30-21u als de wind verder zakt naar 5kn ZZW.
+
+  Nwijk wo: kleinere dag, peak om 11u op 0,7m WNW met 6s, wind 12kn ZW
+  zijaflandig. Longboard-uurtje rond hoog water 11-13u, daarna te slap.
+
+  Nwijk do: flat, swell zakt naar 0,2m windhoogte, 18kn N aanlandig —
+  niet aan beginnen, lessen zien hooguit rimpel.
+
+  Nwijk vr: nog steeds geen golven, wind 11kn NW aanlandig. Weekend ook
+  stil; pas midden volgende week komt er N-swell binnen.
+
+  Cam: surfweer.nl/webcams/noordwijk/
 
 ═══════════════════════════════════════════════════════════════════════
 STRIKTE REGELS — SAMENVATTING
