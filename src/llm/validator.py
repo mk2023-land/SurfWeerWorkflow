@@ -359,6 +359,15 @@ class SMSValidator:
             if v:
                 merged['times_hhmm'].add(v)
 
+        # Lookahead (dagen 5-8 buiten de digest-window): de optionele
+        # `lookahead.allowed_citations` levert wave-heights/periods/dirs voor
+        # de vooruitblik-zin aan het einde van het bericht. Zonder dit
+        # zou Claude een geldige vooruitblik krijgen geflagd als hallucinatie.
+        lookahead = structured_input.get('lookahead') or {}
+        la_cit = lookahead.get('allowed_citations') or {}
+        for k in ('wave_heights_m', 'wave_periods_s', 'wave_directions_compass'):
+            merged[k].update(la_cit.get(k) or [])
+
         return {k: sorted(v) for k, v in merged.items()}
 
     def _extract_numbers_from_input(self, input_data: dict) -> set[float]:
@@ -399,6 +408,18 @@ class SMSValidator:
 
         def _overlaps(s: int, e: int) -> bool:
             return any(not (e <= cs or s >= ce) for cs, ce in consumed_spans)
+
+        # Pre-pass: markeer dag-afkortingen na "Nwijk " of begin-van-alinea als
+        # consumed, zodat ze niet als compass-richting worden geïnterpreteerd.
+        # `zo` (zondag) zou anders verward worden met `ZO` (zuidoost). De andere
+        # dagen botsen niet met compass-codes, maar we markeren ze allemaal voor
+        # consistentie. Het bericht-format is bv. "Nwijk zo: ..." of "\nzo: ...".
+        for m in re.finditer(
+            r'(?:NWIJK\s+|^|\n)(MA|DI|WO|DO|VR|ZA|ZO)(?=\s*[:\-—])',
+            upper,
+            re.MULTILINE,
+        ):
+            consumed_spans.append((m.start(1), m.end(1)))
 
         found: list[str] = []
         for d in _COMPASS_DIRS:  # al gesorteerd langste-eerst
@@ -453,10 +474,15 @@ class SMSValidator:
         return ValidationResult(len(issues) == 0, issues)
 
     def validate_digest_format(self, sms_text: str) -> ValidationResult:
-        """Valideer specifieke digest formaat eisen."""
+        """Valideer specifieke digest formaat eisen.
+
+        Twee geldige starts:
+          - 'Nwijk' — Claude-output (Tobias-stijl, per-dag alineas)
+          - 'Surfweerbericht' — deterministische fallback-template
+        """
         issues = []
-        if not sms_text.startswith("Nwijk"):
-            issues.append("Digest SMS must start with 'Nwijk'")
+        if not (sms_text.startswith("Nwijk") or sms_text.startswith("Surfweerbericht")):
+            issues.append("Digest SMS must start with 'Nwijk' or 'Surfweerbericht'")
         if not any(dag in sms_text.lower() for dag in ['ma', 'di', 'wo', 'do', 'vr', 'za', 'zo']):
             issues.append("Digest SMS must contain day abbreviation")
         return ValidationResult(len(issues) == 0, issues)

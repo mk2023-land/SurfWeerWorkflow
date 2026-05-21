@@ -24,7 +24,6 @@ from src.data.models import HourState, WindState
 from src.data.sources.open_meteo import OpenMeteoClient, fetch_all_openmeteo_data
 from src.data.sources.rws import fetch_all_rws_data, tide_state_at
 from src.llm.generator import SMSGenerator
-from src.llm.validator import SMSValidator
 from src.notify import get_notifier
 from src.scoring.hourly import compute_wind_spread_per_hour, score_hour_series
 from src.scoring.windows import analyze_windows
@@ -106,47 +105,23 @@ async def main() -> int:
             f"dir avg {avg_dir_spread:.1f}°"
         )
 
-    print("→ Tekst genereren via Claude Haiku...")
+    print("→ Tekst genereren via Claude (retry-loop met validator-feedback)...")
     gen = SMSGenerator()
-    val = SMSValidator()
     summary = {'total_hours': len(scores),
                'surfable_hours': sum(1 for s in scores if s.is_surfable())}
-    # Build input expliciet zodat we het ook door de contextuele validator kunnen halen
-    structured_input = gen._prepare_digest_input(
+
+    # Productie-pad: generate_digest_sms doet intern 3× retry met
+    # validator-feedback bij hallucinaties. Pas bij alle 3 falen → fallback.
+    text = gen.generate_digest_sms(
         states, scores, windows, summary,
         wind_spread_series=wind_spread_full,
     )
-    try:
-        text = gen._call_claude(structured_input) if gen.client else None
-    except Exception as e:
-        print(f"⚠ Claude API exception: {e}")
-        text = None
-    if text:
-        print(f"→ LLM-output ({len(text)} tekens):")
-        print("  " + text.replace("\n", "\n  "))
 
-    # Drie validaties: (1) basis format, (2) full contextual (anti-hallucinatie),
-    # (3) fallback als één faalt.
-    used_fallback = False
-    if not text:
-        used_fallback = True
-        print("⚠ Geen LLM-output, fallback template gebruikt.")
-    elif not val.validate_digest_format(text):
-        used_fallback = True
-        print("⚠ Format-validatie faalde, fallback gebruikt.")
-    else:
-        full_result = val.validate_sms(text, structured_input)
-        if not full_result.passed:
-            used_fallback = True
-            print(f"⚠ Contextuele validatie faalde ({len(full_result.issues)} issues):")
-            for issue in full_result.issues:
-                print(f"   - {issue}")
-            print("→ Fallback template gebruikt.")
-        else:
-            print("✓ Validatie geslaagd (geen hallucinaties gedetecteerd)")
-
+    used_fallback = text.startswith("Surfweerbericht")
     if used_fallback:
-        text = gen._fallback_digest_template(states, scores, windows)
+        print("⚠ Alle 3 LLM-pogingen faalden — fallback template gebruikt.")
+    else:
+        print("✓ Claude-tekst gegenereerd en gevalideerd (anti-hallucinatie OK).")
 
     print(f"→ Bericht ({len(text)} tekens):")
     print("  " + text.replace("\n", "\n  "))
