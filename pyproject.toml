@@ -1,0 +1,77 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "surfweer"
+version = "0.1.0"
+description = "Noordwijk Surf Alert Workflow"
+requires-python = ">=3.10"
+dependencies = [
+    "httpx>=0.28.1",
+    "anthropic>=0.102.0",
+    "numpy>=2.2.6",
+    "python-dotenv>=1.2.2",
+    "twilio>=9.10.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.3.0",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.14.0",
+    "mypy>=1.18.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+namespaces = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["data", ".venv", "research"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "W",    # pycodestyle warnings
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # bugbear
+    "SIM",  # simplify
+]
+ignore = [
+    "E501",   # line-too-long (handled by formatter)
+    "B008",   # function-call-in-default (datetime defaults common)
+    "SIM108", # ternary not always more readable
+    "SIM117", # nested with (clarity > brevity sometimes)
+    "UP007",  # Optional[X] vs X | None (style choice, keep current)
+    "UP045",  # idem voor Optional
+    "B904",   # raise from (legacy)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011", "F841"]  # asserts and unused vars in tests OK
+"scripts/*" = ["E402"]         # late imports in scripts OK
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+exclude = ["data/", ".venv/", "research/", "build/"]
+# Non-strict: leave untyped defs alone for legacy code
+disallow_untyped_defs = false
+check_untyped_defs = false

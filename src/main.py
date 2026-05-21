@@ -2,55 +2,32 @@
 Hoofdscript voor Noordwijk Surf Alert Systeem.
 Orkestreert data ophaling, scoring, alert detectie, en SMS verzending.
 """
+import argparse
 import asyncio
-import logging
-from logging.handlers import RotatingFileHandler
 import json
-from datetime import datetime, timedelta
+import logging
+import os
+import sys
+from datetime import datetime
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Dict, List, Optional
-import argparse
-import sys
-import os
 
-# Add src to path for imports
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from config import (
-    NOORDWIJK,
-    ALERT_CONFIG,
-    DEBUG,
-)
-
-from data.models import (
-    HourState,
-    WaveSpectrum,
-    WindState,
-    TideState,
-    ScoreBreakdown,
-    SurfWindow,
-    RunLog
-)
-
-from data.sources.open_meteo import fetch_all_openmeteo_data, OpenMeteoClient
-from data.sources.rws import fetch_all_rws_data, RWSClient, tide_state_at
-
-from scoring.hourly import (
-    score_hour,
-    score_hour_series,
+from src.alerts.detectors import AlertDetectorEngine
+from src.alerts.engine import AlertEngine
+from src.baseline.seasonal import SeasonalBaselineBuilder
+from src.config import ALERT_CONFIG, DEBUG, NOORDWIJK
+from src.data.models import HourState, RunLog, ScoreBreakdown, SurfWindow, WindState
+from src.data.sources.open_meteo import OpenMeteoClient, fetch_all_openmeteo_data
+from src.data.sources.rws import fetch_all_rws_data, tide_state_at
+from src.llm.generator import SMSGenerator
+from src.llm.validator import SMSValidator
+from src.notify import format_send_result_for_logging, get_notifier
+from src.scoring.hourly import (
     compute_wind_spread_per_hour,
+    score_hour_series,
 )
-from scoring.windows import analyze_windows, filter_alertworthy_windows
-
-from alerts.engine import AlertEngine
-from alerts.detectors import AlertDetectorEngine
-
-from baseline.seasonal import SeasonalBaselineBuilder
-
-from llm.generator import SMSGenerator
-from llm.validator import SMSValidator
-
-from notify import get_notifier, format_send_result_for_logging
+from src.scoring.windows import analyze_windows, filter_alertworthy_windows
 
 # Setup logging. Fix #6: RotatingFileHandler — surf_alert.log groeit anders
 # unbounded (multi-MB per jaar) en blaast de GH Actions cache op (cache thrash
