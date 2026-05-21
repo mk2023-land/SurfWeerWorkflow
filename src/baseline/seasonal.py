@@ -32,8 +32,10 @@ class SeasonalBaselineBuilder:
         logger.info(f"Building seasonal baseline from {self.years_back} years of historical data")
 
         # Haal historische data op
+        # Open-Meteo archive heeft latente data — end_date 5 dagen in het verleden
+        # voorkomt rows met None-velden voor uren die nog niet zijn ge-archiveerd.
         start_date = (datetime.now() - timedelta(days=self.years_back * 365)).strftime("%Y-%m-%d")
-        end_date = datetime.now().strftime("%Y-%m-%d")
+        end_date = (datetime.now() - timedelta(days=5)).strftime("%Y-%m-%d")
 
         logger.info(f"Fetching archive data from {start_date} to {end_date}")
 
@@ -122,18 +124,26 @@ class SeasonalBaselineBuilder:
                     WindState,
                 )
 
+                # Skip rows met essentiële None-velden (archive heeft soms gaten).
+                if (weather.get('wind_speed') is None
+                        or weather.get('wind_direction') is None
+                        or marine.get('wave_height') is None
+                        or marine.get('wave_period') is None
+                        or marine.get('wave_direction') is None):
+                    continue
+
                 # Wave spectrum (simplificeerd)
                 wave_spectrum = WaveSpectrum(
                     timestamp=weather['timestamp'],
-                    significant_height_total=marine.get('wave_height', 0.0),
-                    mean_period=marine.get('wave_period', 0.0),
-                    mean_direction=int(marine.get('wave_direction', 0.0)),
+                    significant_height_total=float(marine['wave_height']),
+                    mean_period=float(marine['wave_period']),
+                    mean_direction=int(marine['wave_direction']),
                     peaks=[]
                 )
 
                 # Wind state
                 wind_state = WindState(
-                    speed_kn=weather['wind_speed'],
+                    speed_kn=float(weather['wind_speed']),
                     direction_deg=int(weather['wind_direction']),
                     gusts_kn=None
                 )
@@ -253,7 +263,11 @@ async def main():
     # Print summary
     print("\nBaseline Summary:")
     print(f"Weeks covered: {len(baseline)}")
-    print(f"Average sample size: {sum(b['sample_size'] for b in baseline.values()) / len(baseline):.0f}")
+    if baseline:
+        avg = sum(b['sample_size'] for b in baseline.values()) / len(baseline)
+        print(f"Average sample size: {avg:.0f}")
+    else:
+        print("Average sample size: N/A (geen weken — check archive errors hierboven)")
 
     # Print some examples
     print("\nExample weeks:")
