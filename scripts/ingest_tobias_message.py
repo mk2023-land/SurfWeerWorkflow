@@ -26,9 +26,8 @@ import argparse
 import json
 import re
 import sys
-from datetime import datetime, date
+from datetime import date, datetime
 from pathlib import Path
-
 
 ARCHIVE_DIR = Path(__file__).resolve().parent.parent / 'data' / 'tobias_archive'
 
@@ -67,7 +66,7 @@ TIME_RANGE_PATTERN = re.compile(r'(\d{1,2})(?::(\d{2}))?\s*[-–—]\s*(\d{1,2})
 
 def parse_metadata(text: str, msg_date: date) -> dict:
     """Extract gestructureerde metadata uit ruwe SMS-tekst."""
-    text_lower = text.lower()
+    text.lower()
 
     # Spots genoemd
     spots_mentioned = []

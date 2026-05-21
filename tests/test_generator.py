@@ -9,14 +9,8 @@ Focus:
 """
 from __future__ import annotations
 
-import os
-import sys
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
-
-import pytest
-
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.data.models import (
     HourState,
@@ -27,7 +21,6 @@ from src.data.models import (
     TideState,
     WaveSpectrum,
     WindState,
-    AlertType,
 )
 from src.llm.generator import SMSGenerator
 
@@ -273,19 +266,23 @@ class TestMaxTokensPerCallType:
         assert call_kwargs['max_tokens'] == 800
 
 
-class TestRetryAfterHeaderRespect:
-    """Bij 429/529 met retry-after header: sleep voor het header-aantal seconden."""
+class TestOverloadFallbackToHaiku:
+    """
+    Bij OverloadedError/RateLimitError op het primaire model schakelt
+    _call_claude door naar het fallback-model. De Anthropic SDK doet zelf
+    al exponential-backoff retry (`max_retries=2` in __init__) — wij testen
+    alleen het model-fallback gedrag, niet de SDK-interne sleep.
+    """
 
-    def test_retry_after_header_used_when_present(self):
-        """Mocked OverloadedError met retry-after header → time.sleep met die waarde."""
+    def test_primary_overload_falls_back_to_haiku(self):
+        """OverloadedError op Sonnet → één call naar Haiku, returned die output."""
         from anthropic._exceptions import OverloadedError
 
         gen = SMSGenerator()
         gen.client = MagicMock()
 
-        # Bouw een mock-response met retry-after header
         mock_response = MagicMock()
-        mock_response.headers = {'retry-after': '7'}
+        mock_response.headers = {}
 
         err = OverloadedError(
             message="overloaded",
@@ -294,27 +291,33 @@ class TestRetryAfterHeaderRespect:
         )
 
         success_message = MagicMock()
-        success_message.content = [MagicMock(text="after retry")]
-        # Eerst error, dan succes
+        success_message.content = [MagicMock(text="haiku output")]
+        # Eerste call (Sonnet) faalt na SDK-retries, tweede call (Haiku) slaagt
         gen.client.messages.create.side_effect = [err, success_message]
 
-        with patch("time.sleep") as mock_sleep:
-            result = gen._call_claude({"test": "input"})
+        result = gen._call_claude({"test": "input"})
 
-        assert result == "after retry"
-        # time.sleep moet zijn aangeroepen met 7.0 (uit retry-after)
-        sleep_args = [c.args[0] for c in mock_sleep.call_args_list]
-        assert 7.0 in sleep_args, f"Verwacht 7.0 in sleep-args, kreeg: {sleep_args}"
+        assert result == "haiku output"
+        # Twee separate calls — één per model
+        assert gen.client.messages.create.call_count == 2
+        models_called = [
+            c.kwargs.get("model")
+            for c in gen.client.messages.create.call_args_list
+        ]
+        # Primary eerst, fallback daarna
+        from src.config import ANTHROPIC_CONFIG
+        assert models_called[0] == ANTHROPIC_CONFIG['model']
+        assert models_called[1] == ANTHROPIC_CONFIG['fallback_model']
 
-    def test_no_retry_after_uses_exponential_backoff(self):
-        """Zonder retry-after header → 2**attempt fallback."""
+    def test_both_models_overloaded_returns_none(self):
+        """Beide modellen Overloaded → return None zodat caller fallback-template gebruikt."""
         from anthropic._exceptions import OverloadedError
 
         gen = SMSGenerator()
         gen.client = MagicMock()
 
         mock_response = MagicMock()
-        mock_response.headers = {}  # geen retry-after
+        mock_response.headers = {}
 
         err = OverloadedError(
             message="overloaded",
@@ -322,14 +325,63 @@ class TestRetryAfterHeaderRespect:
             body={"error": {"type": "overloaded_error"}},
         )
 
+        gen.client.messages.create.side_effect = [err, err]
+
+        result = gen._call_claude({"test": "input"})
+
+        assert result is None
+        assert gen.client.messages.create.call_count == 2
+
+    def test_rate_limit_on_primary_also_triggers_fallback(self):
+        """Niet alleen OverloadedError — ook RateLimitError moet fallback triggeren."""
+        from anthropic._exceptions import RateLimitError
+
+        gen = SMSGenerator()
+        gen.client = MagicMock()
+
+        mock_response = MagicMock()
+        mock_response.headers = {}
+
+        err = RateLimitError(
+            message="rate limited",
+            response=mock_response,
+            body={"error": {"type": "rate_limit_error"}},
+        )
+
         success_message = MagicMock()
-        success_message.content = [MagicMock(text="after retry")]
+        success_message.content = [MagicMock(text="ok")]
         gen.client.messages.create.side_effect = [err, success_message]
 
-        with patch("time.sleep") as mock_sleep:
-            result = gen._call_claude({"test": "input"})
+        result = gen._call_claude({"test": "input"})
 
-        assert result == "after retry"
-        # Eerste attempt heeft attempt=0 → 2**1 = 2
-        sleep_args = [c.args[0] for c in mock_sleep.call_args_list]
-        assert 2 in sleep_args, f"Verwacht 2 in sleep-args, kreeg: {sleep_args}"
+        assert result == "ok"
+        assert gen.client.messages.create.call_count == 2
+
+
+class TestPromptCaching:
+    """
+    SYSTEM_PROMPT wordt verzonden als content-block list met
+    cache_control=ephemeral zodat Anthropic prompt-caching herbruik kan
+    pakken op de ~3K-token Tobias-prompt.
+    """
+
+    def test_system_param_is_list_with_cache_control(self):
+        gen = SMSGenerator()
+        gen.client = MagicMock()
+        mock_message = MagicMock()
+        mock_message.content = [MagicMock(text="ok")]
+        gen.client.messages.create.return_value = mock_message
+
+        gen._call_claude({"test": "input"})
+
+        call_kwargs = gen.client.messages.create.call_args.kwargs
+        system_arg = call_kwargs['system']
+        # Moet een lijst zijn (niet een bare string) — anders kan cache_control
+        # niet worden geattacheerd.
+        assert isinstance(system_arg, list), f"Verwacht lijst, kreeg {type(system_arg)}"
+        assert len(system_arg) == 1
+        block = system_arg[0]
+        assert block.get("type") == "text"
+        assert block.get("cache_control") == {"type": "ephemeral"}
+        # System-tekst moet de Tobias-prompt zijn (gecheckt via anker-string)
+        assert "Tobias" in block.get("text", "")

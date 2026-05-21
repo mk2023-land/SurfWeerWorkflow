@@ -3,17 +3,8 @@ Swell deconstructie module.
 Scheidt golf data in wind sea, wind swell, en groundswell componenten.
 """
 import logging
-from typing import List, Optional
-import numpy as np
 
-from src.data.models import (
-    WaveSpectrum,
-    SpectralPeak,
-    SwellType,
-    HourState
-)
-
-from src.config import SWELL_TYPES, FREQUENCY_RANGES
+from src.data.models import SwellType, WaveSpectrum
 
 logger = logging.getLogger(__name__)
 

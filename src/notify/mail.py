@@ -18,7 +18,6 @@ Gmail-setup:
 import logging
 import os
 import smtplib
-import socket
 import time
 from datetime import datetime
 from email.mime.text import MIMEText
@@ -109,8 +108,7 @@ class EmailNotifier:
                     }
                 last_error = f"SMTP {e.smtp_code}: {e.smtp_error!r}"
                 last_error_type = type(e).__name__
-            except (smtplib.SMTPServerDisconnected, smtplib.SMTPConnectError,
-                    socket.timeout, OSError) as e:
+            except (TimeoutError, smtplib.SMTPServerDisconnected, smtplib.SMTPConnectError, OSError) as e:
                 last_error = str(e)
                 last_error_type = type(e).__name__
             except Exception as e:

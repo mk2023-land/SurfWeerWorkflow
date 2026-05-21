@@ -16,9 +16,12 @@ confidence=1.0 in een ander veld stond). Nieuwe versie:
 De validator faalt liever te streng dan te losjes — een gefaalde validatie
 triggert het fallback-template, wat altijd correcte data heeft.
 """
+import contextlib
 import logging
 import re
-from typing import Dict, List, Set, Optional
+from typing import Optional
+
+from src.config import SMS_VALIDATOR_MAX_LEN
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +41,7 @@ _WIND_LABELS = {'aflandig', 'zijaflandig', 'aanlandig', 'zij-aanlandig',
 class ValidationResult:
     """Resultaat van output validatie."""
 
-    def __init__(self, passed: bool, issues: List[str] = None):
+    def __init__(self, passed: bool, issues: list[str] = None):
         self.passed = passed
         self.issues = issues if issues is not None else []
 
@@ -56,7 +59,7 @@ def _parse_nl_decimal(s: str) -> float:
     return float(s.replace(',', '.'))
 
 
-def _within(value: float, allowed: List[float], tol: float) -> bool:
+def _within(value: float, allowed: list[float], tol: float) -> bool:
     """True als `value` binnen `tol` ligt van enige waarde in `allowed`."""
     return any(abs(value - a) <= tol for a in allowed)
 
@@ -75,14 +78,14 @@ def _time_to_minutes(hhmm: str) -> Optional[int]:
 class SMSValidator:
     """Valideert SMS output tegen input data — contextueel/semantisch."""
 
-    def validate_sms(self, sms_text: str, structured_input: Dict) -> ValidationResult:
+    def validate_sms(self, sms_text: str, structured_input: dict) -> ValidationResult:
         """
         Valideer SMS tegen structured input.
 
         Gebruikt `days[]._allowed_citations` waar beschikbaar (nieuwe pipeline)
         en valt anders terug op de oude recursieve whitelist.
         """
-        issues: List[str] = []
+        issues: list[str] = []
 
         allowed = self._collect_allowed_citations(structured_input)
 
@@ -91,7 +94,7 @@ class SMSValidator:
         # moeten in allowed staan, anders glipt het lagere getal door de
         # enkelvoudige regex heen. Tracking van consumed spans voorkomt
         # double-counting.
-        consumed_spans: List[tuple] = []
+        consumed_spans: list[tuple] = []
 
         def _claim(s: int, e: int) -> bool:
             for cs, ce in consumed_spans:
@@ -124,7 +127,7 @@ class SMSValidator:
                 )
 
         # 2. Wave periods "Xs" — ranges eerst ("6-8s"), dan losse waarden.
-        period_spans: List[tuple] = []
+        period_spans: list[tuple] = []
         for match in re.finditer(
             r'(\d+[\.,]?\d*)\s*[-–—]\s*(\d+[\.,]?\d*)\s*s(?=[\s\.,;:!?]|$)',
             sms_text,
@@ -155,7 +158,7 @@ class SMSValidator:
         )
         allowed_wind_list = sorted(allowed_wind)
 
-        wind_spans: List[tuple] = []
+        wind_spans: list[tuple] = []
         for match in re.finditer(
             r'(\d+[\.,]?\d*)\s*[-–—]\s*(\d+[\.,]?\d*)\s*kn(?:open)?\b',
             sms_text,
@@ -205,7 +208,7 @@ class SMSValidator:
 
         # Pre-compute "soft" tijd-spans: positions waar een rond/omstreeks
         # vlak voor staat (max 5 chars whitespace tussen woord en cijfer).
-        soft_spans: List[tuple] = []
+        soft_spans: list[tuple] = []
         for sm in re.finditer(
             r'(?:rond|omstreeks|tegen|ongeveer)\s+(\d{1,2}):?(\d{2})?u?',
             sms_text,
@@ -295,9 +298,13 @@ class SMSValidator:
                 issues.append("Springtij geclaimd maar niet in input")
 
         # 8. Lengte cap — Tobias' eigen SMS'jes zitten op 1400-1700 tekens.
-        # Voor ntfy maakt het niet uit. Houden we op 1800 voor wat marge.
-        if len(sms_text) > 1800:
-            issues.append(f"SMS too long: {len(sms_text)} characters (max 1800)")
+        # Voor ntfy maakt het niet uit. SMS_VALIDATOR_MAX_LEN (src.config) als
+        # centrale waarde — gedeeld met notifier-laag.
+        if len(sms_text) > SMS_VALIDATOR_MAX_LEN:
+            issues.append(
+                f"SMS too long: {len(sms_text)} characters "
+                f"(max {SMS_VALIDATOR_MAX_LEN})"
+            )
 
         # 9. Webcam URL aanwezig
         if "surfweer.nl/webcams/noordwijk/" not in sms_text:
@@ -308,12 +315,12 @@ class SMSValidator:
             logger.warning(f"SMS validation failed ({len(issues)} issues): {issues}")
         return ValidationResult(passed, issues)
 
-    def _collect_allowed_citations(self, structured_input: Dict) -> Dict[str, List]:
+    def _collect_allowed_citations(self, structured_input: dict) -> dict[str, list]:
         """
         Verzamel alle toegestane citaties uit `days[]._allowed_citations`.
         Valt terug op recursieve extractie (oude pipeline) als die ontbreken.
         """
-        merged: Dict[str, Set] = {
+        merged: dict[str, set] = {
             'wave_heights_m': set(),
             'wave_periods_s': set(),
             'wind_speeds_kn': set(),
@@ -354,9 +361,9 @@ class SMSValidator:
 
         return {k: sorted(v) for k, v in merged.items()}
 
-    def _extract_numbers_from_input(self, input_data: Dict) -> Set[float]:
+    def _extract_numbers_from_input(self, input_data: dict) -> set[float]:
         """Recursief extractie van alle getallen (legacy fallback)."""
-        numbers: Set[float] = set()
+        numbers: set[float] = set()
 
         def walk(node):
             if isinstance(node, (int, float)):
@@ -368,15 +375,13 @@ class SMSValidator:
                 for v in node:
                     walk(v)
             elif isinstance(node, str):
-                try:
+                with contextlib.suppress(ValueError):
                     numbers.add(float(node.replace(',', '.')))
-                except ValueError:
-                    pass
 
         walk(input_data)
         return numbers
 
-    def _extract_compass_directions(self, text: str) -> List[str]:
+    def _extract_compass_directions(self, text: str) -> list[str]:
         """
         Extraheer compass-richtingen uit tekst. Langste-eerst gretig matchen:
         'NNO' wordt voor 'N' herkend zodat 'NNO 5kn' niet als 'N' telt.
@@ -390,12 +395,12 @@ class SMSValidator:
         eerdere langere match valt (bv. 'N' binnen 'NNO') wordt geskipt.
         """
         upper = text.upper()
-        consumed_spans: List[tuple] = []  # (start, end) van al gematchte richtingen
+        consumed_spans: list[tuple] = []  # (start, end) van al gematchte richtingen
 
         def _overlaps(s: int, e: int) -> bool:
             return any(not (e <= cs or s >= ce) for cs, ce in consumed_spans)
 
-        found: List[str] = []
+        found: list[str] = []
         for d in _COMPASS_DIRS:  # al gesorteerd langste-eerst
             for m in re.finditer(r'\b' + re.escape(d) + r'\b', upper):
                 start, end = m.start(), m.end()
@@ -425,7 +430,7 @@ class SMSValidator:
 
         return found
 
-    def _input_mentions_spring_tide(self, structured_input: Dict) -> bool:
+    def _input_mentions_spring_tide(self, structured_input: dict) -> bool:
         """Check of springtij ergens in de input expliciet is gezegd."""
         tc = structured_input.get('tide_context') or {}
         if tc.get('spring_tide') is True:

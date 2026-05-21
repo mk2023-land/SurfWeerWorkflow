@@ -20,14 +20,14 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from src.config import NOORDWIJK
-from src.data.sources.open_meteo import fetch_all_openmeteo_data, OpenMeteoClient
-from src.data.sources.rws import fetch_all_rws_data, tide_state_at
 from src.data.models import HourState, WindState
-from src.scoring.hourly import score_hour_series, compute_wind_spread_per_hour
-from src.scoring.windows import analyze_windows
+from src.data.sources.open_meteo import OpenMeteoClient, fetch_all_openmeteo_data
+from src.data.sources.rws import fetch_all_rws_data, tide_state_at
 from src.llm.generator import SMSGenerator
 from src.llm.validator import SMSValidator
 from src.notify import get_notifier
+from src.scoring.hourly import compute_wind_spread_per_hour, score_hour_series
+from src.scoring.windows import analyze_windows
 
 
 async def main() -> int:
@@ -133,7 +133,7 @@ async def main() -> int:
         print("⚠ Geen LLM-output, fallback template gebruikt.")
     elif not val.validate_digest_format(text):
         used_fallback = True
-        print(f"⚠ Format-validatie faalde, fallback gebruikt.")
+        print("⚠ Format-validatie faalde, fallback gebruikt.")
     else:
         full_result = val.validate_sms(text, structured_input)
         if not full_result.passed:
@@ -143,7 +143,7 @@ async def main() -> int:
                 print(f"   - {issue}")
             print("→ Fallback template gebruikt.")
         else:
-            print(f"✓ Validatie geslaagd (geen hallucinaties gedetecteerd)")
+            print("✓ Validatie geslaagd (geen hallucinaties gedetecteerd)")
 
     if used_fallback:
         text = gen._fallback_digest_template(states, scores, windows)

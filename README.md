@@ -1,5 +1,7 @@
 # Noordwijk Surf Alert Systeem
 
+[![Surf Alert Check](https://github.com/kiliantargaryen/SurfWeerWorkflow/actions/workflows/check.yml/badge.svg)](https://github.com/kiliantargaryen/SurfWeerWorkflow/actions/workflows/check.yml)
+
 Geautomatiseerd surfweer alert systeem voor Noordwijk dat 4x per dag surfcondities analyseert en notificaties verstuurt (push via ntfy.sh, mail via SMTP, of SMS via Twilio) bij gunstige golven.
 
 ## 📋 Overzicht
@@ -164,8 +166,9 @@ Andere kanalen (SMTP-mail of Twilio-SMS) staan beschreven in `.env.example`.
 ### Unit tests
 
 ```bash
-# Run alle tests (250 tests in totaal: scoring + bias correction + T1 + detectors +
-# engine + open-meteo + rws + LLM validator + LLM generator + notify + orchestration)
+# Run alle tests (259 tests in totaal: scoring + bias correction + T1 + detectors +
+# engine + open-meteo + rws + LLM validator + LLM generator + notify + orchestration +
+# util_files)
 pytest tests/ -v
 
 # Run alleen scoring tests

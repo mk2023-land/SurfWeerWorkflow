@@ -4,6 +4,7 @@ Ondersteunt Marine, Forecast en Archive APIs met async en retry logica.
 """
 import asyncio
 import logging
+import random
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Any
 import httpx
@@ -160,8 +161,10 @@ class OpenMeteoClient:
                 if attempt == self.max_retries - 1:
                     raise
 
-                # Exponential backoff
-                await asyncio.sleep(2 ** attempt)
+                # Exponential backoff met jitter — voorkomt thundering-herd
+                # wanneer parallelle marine+forecast-calls tegelijkertijd in
+                # retry-state belanden.
+                await asyncio.sleep(2 ** attempt + random.uniform(0, 0.5))
 
         raise Exception("Max retries exceeded")
 
@@ -761,6 +764,23 @@ class OpenMeteoClient:
         )
 
 
+# ---------------------------------------------------------------------------
+# Module-level singleton voor OpenMeteoClient. Construction is goedkoop maar
+# we willen één gedeelde instance zodat callers consistent dezelfde stateless
+# config gebruiken (en, indirect, dezelfde shared httpx.AsyncClient via
+# `_get_shared_open_meteo_client`).
+# ---------------------------------------------------------------------------
+_openmeteo_client_singleton: Optional[OpenMeteoClient] = None
+
+
+def _get_openmeteo_client() -> OpenMeteoClient:
+    """Lazy-init singleton accessor voor OpenMeteoClient."""
+    global _openmeteo_client_singleton
+    if _openmeteo_client_singleton is None:
+        _openmeteo_client_singleton = OpenMeteoClient()
+    return _openmeteo_client_singleton
+
+
 async def fetch_all_openmeteo_data(
     lat: float = None,
     lon: float = None,
@@ -772,7 +792,7 @@ async def fetch_all_openmeteo_data(
     Returns:
         Dictionary met 'marine' en 'forecast' data
     """
-    client = OpenMeteoClient()
+    client = _get_openmeteo_client()
 
     # Parallel requests
     marine_data, forecast_data = await asyncio.gather(

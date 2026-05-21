@@ -8,9 +8,9 @@ import math
 import os
 from typing import Optional
 
+from src.config import PARTITION_WEIGHTS
 from src.data.models import WaveSpectrum
 from src.scoring.deconstruct import decompose_spectrum
-from src.config import PARTITION_WEIGHTS
 
 
 def _combine_golf_modifiers(factors: dict) -> float:

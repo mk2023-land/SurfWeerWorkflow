@@ -4,14 +4,9 @@ Unit tests voor RWS-boei bias-correctie + bias-logger (Sprint 3 #14 & #16).
 from __future__ import annotations
 
 import json
-import os
-import sys
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import pytest
-
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.scoring.bias_correction import (
     BIAS_FACTOR_MAX,

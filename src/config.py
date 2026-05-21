@@ -4,7 +4,7 @@ Bevat alle locatie parameters, drempelwaarden en boei definities.
 """
 import os
 from dataclasses import dataclass
-from typing import Dict, List
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -246,6 +246,16 @@ TWILIO_CONFIG = {
     'from_number': os.getenv('TWILIO_PHONE_NUMBER'),
     'recipient': os.getenv('RECIPIENT_PHONE_NUMBER', ''),
 }
+
+# SMS / notifier length-caps. Gecentraliseerd zodat validator én notifier
+# vanuit één bron werken.
+# - SMS_VALIDATOR_MAX_LEN: hard maximum bij SMSValidator (faalt bij overschrijding).
+# - TWILIO_DIGEST_MAX_LEN: 10 SMS-segments × 160 chars (GSM-7) — kosten-plafond
+#   per digest-push bij Twilio (€0.07/segment).
+# - TWILIO_ALERT_MAX_LEN: 2 SMS-segments — alerts moeten kort blijven.
+SMS_VALIDATOR_MAX_LEN = 1800
+TWILIO_DIGEST_MAX_LEN = 1600
+TWILIO_ALERT_MAX_LEN = 320
 
 # Debug configuratie — alleen log-level. Voor "niet verzenden" gebruik --dry-run.
 DEBUG = os.getenv('DEBUG', 'false').lower() == 'true'

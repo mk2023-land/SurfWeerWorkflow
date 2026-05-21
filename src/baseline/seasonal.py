@@ -3,19 +3,14 @@ Seizoensbaseline builder module.
 Bouwt baseline van historische surfcondities voor rarity percentiles.
 """
 import asyncio
+import json
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, List
-import json
 from pathlib import Path
-import statistics
 
-from src.data.sources.open_meteo import OpenMeteoClient
-from src.data.models import HourState, ScoreBreakdown, SurfWindow
+from src.config import NOORDWIJK
+from src.data.sources.open_meteo import _get_openmeteo_client
 from src.scoring.hourly import score_hour
-from src.scoring.windows import analyze_windows
-
-from src.config import NOORDWIJK, TIMEZONE
 
 logger = logging.getLogger(__name__)
 
@@ -25,9 +20,9 @@ class SeasonalBaselineBuilder:
 
     def __init__(self, years_back: int = 5):
         self.years_back = years_back
-        self.openmeteo_client = OpenMeteoClient()
+        self.openmeteo_client = _get_openmeteo_client()
 
-    async def build_baseline(self) -> Dict[str, Dict]:
+    async def build_baseline(self) -> dict[str, dict]:
         """
         Bouw baseline voor alle weken van het jaar.
 
@@ -91,7 +86,7 @@ class SeasonalBaselineBuilder:
 
         return baseline
 
-    def _process_archive_data(self, archive_data: Dict) -> List[tuple]:
+    def _process_archive_data(self, archive_data: dict) -> list[tuple]:
         """
         Process archief data naar lijst van (week_number, score) tuples.
 
@@ -120,8 +115,12 @@ class SeasonalBaselineBuilder:
 
             try:
                 # Maak HourState
-                from src.data.models import WaveSpectrum, WindState, TideState, HourState
-                from src.data.models import SpectralPeak, SwellType
+                from src.data.models import (
+                    HourState,
+                    TideState,
+                    WaveSpectrum,
+                    WindState,
+                )
 
                 # Wave spectrum (simplificeerd)
                 wave_spectrum = WaveSpectrum(
@@ -171,7 +170,7 @@ class SeasonalBaselineBuilder:
 
         return scores
 
-    def _calculate_weekly_percentiles(self, scores: List[tuple]) -> Dict[str, Dict]:
+    def _calculate_weekly_percentiles(self, scores: list[tuple]) -> dict[str, dict]:
         """
         Bereken percentiles per week van het jaar.
 
@@ -224,7 +223,7 @@ class SeasonalBaselineBuilder:
 
         return baseline
 
-    def _save_baseline(self, baseline: Dict):
+    def _save_baseline(self, baseline: dict):
         """Sla baseline op naar JSON bestand."""
         baseline_file = Path('data/seasonal_baseline.json')
         baseline_file.parent.mkdir(parents=True, exist_ok=True)
@@ -234,7 +233,7 @@ class SeasonalBaselineBuilder:
 
         logger.info(f"Baseline saved to {baseline_file}")
 
-    def load_baseline(self) -> Dict:
+    def load_baseline(self) -> dict:
         """Laad baseline van bestand."""
         baseline_file = Path('data/seasonal_baseline.json')
 
@@ -242,7 +241,7 @@ class SeasonalBaselineBuilder:
             logger.warning("No baseline file found")
             return {}
 
-        with open(baseline_file, 'r') as f:
+        with open(baseline_file) as f:
             return json.load(f)
 
 
@@ -252,12 +251,12 @@ async def main():
     baseline = await builder.build_baseline()
 
     # Print summary
-    print(f"\nBaseline Summary:")
+    print("\nBaseline Summary:")
     print(f"Weeks covered: {len(baseline)}")
     print(f"Average sample size: {sum(b['sample_size'] for b in baseline.values()) / len(baseline):.0f}")
 
     # Print some examples
-    print(f"\nExample weeks:")
+    print("\nExample weeks:")
     for week_key in ['week_1', 'week_13', 'week_26', 'week_39', 'week_52']:
         if week_key in baseline:
             data = baseline[week_key]

@@ -7,19 +7,13 @@ runnable script (geen test_-functies), dus hoort in scripts/. Imports
 (logger, timedelta) zijn gefixt zodat het zonder NameError draait.
 """
 import asyncio
-import json
 import logging
-from datetime import datetime, timedelta
-from typing import Dict, List, Tuple
 import sys
-import os
+from datetime import datetime, timedelta
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from src.data.sources.open_meteo import OpenMeteoClient
-from src.data.models import HourState, ScoreBreakdown
-from src.scoring.hourly import score_hour
 from src.config import NOORDWIJK
+from src.data.sources.open_meteo import OpenMeteoClient
+from src.scoring.hourly import score_hour
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +25,7 @@ class ValidationRunner:
         self.openmeteo_client = OpenMeteoClient()
         self.results = []
 
-    async def validate_against_historical_set(self, validation_set: List[Dict]) -> Dict:
+    async def validate_against_historical_set(self, validation_set: list[dict]) -> dict:
         """
         Voer validatie uit tegen historische SMS dataset.
 
@@ -69,7 +63,7 @@ class ValidationRunner:
 
         return summary
 
-    async def _validate_case(self, case: Dict) -> Dict:
+    async def _validate_case(self, case: dict) -> dict:
         """
         Valideer één historische case.
 
@@ -147,7 +141,7 @@ class ValidationRunner:
                 'actual': None
             }
 
-    def _process_archive_data(self, archive_data: Dict) -> List:
+    def _process_archive_data(self, archive_data: dict) -> list:
         """Process archief data naar HourStates (zelfde als baseline builder)."""
         weather_data = archive_data.get('weather', [])
         marine_data = archive_data.get('marine', [])
@@ -165,7 +159,7 @@ class ValidationRunner:
                 continue
 
             try:
-                from src.data.models import WaveSpectrum, WindState, TideState, HourState
+                from src.data.models import HourState, TideState, WaveSpectrum, WindState
 
                 wave_spectrum = WaveSpectrum(
                     timestamp=weather['timestamp'],
@@ -200,12 +194,12 @@ class ValidationRunner:
 
                 hour_states.append(hour_state)
 
-            except Exception as e:
+            except Exception:
                 continue
 
         return hour_states
 
-    def _print_summary(self, summary: Dict):
+    def _print_summary(self, summary: dict):
         """Print samenvatting van validatie resultaten."""
         print("\n" + "="*80)
         print("VALIDATIE SAMENVATTING")

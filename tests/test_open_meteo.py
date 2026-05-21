@@ -9,13 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import sys
 from datetime import datetime
-
-import pytest
-
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.data.sources.open_meteo import OpenMeteoClient
 

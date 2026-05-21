@@ -36,6 +36,8 @@ from src.scoring.swell_direction import (
 )
 from src.scoring.tide import (
     hours_until as _hours_until,
+)
+from src.scoring.tide import (
     score_tide_component,
     tide_flank_bonus,
     tide_velocity_mh,

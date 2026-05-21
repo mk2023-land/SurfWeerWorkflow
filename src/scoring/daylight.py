@@ -18,17 +18,15 @@ piek of in surf-windows verschijnen.
 """
 import math
 from datetime import date, datetime
-from typing import Tuple
 
 from src.util import to_utc
-
 
 _LAT_DEG = 52.241
 _LON_DEG = 4.428  # positief = oost
 _LAT_RAD = math.radians(_LAT_DEG)
 
 
-def _sunrise_sunset_utc_hours(d: date) -> Tuple[float, float]:
+def _sunrise_sunset_utc_hours(d: date) -> tuple[float, float]:
     """
     Bereken zonsopgang en -ondergang in UTC-uren (decimaal) voor `d`.
     Cooper's-equation voor declinatie + standaard uurhoek-formule.

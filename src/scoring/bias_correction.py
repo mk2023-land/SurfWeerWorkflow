@@ -36,10 +36,9 @@ from __future__ import annotations
 import json
 import logging
 import math
-import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Optional
 
 from src.util import to_utc
 
@@ -72,12 +71,12 @@ def _coerce_aware_utc(ts: datetime) -> datetime:
 
 
 def _match_pairs(
-    observations: List[Dict[str, Any]],
-    model_predictions: List[Dict[str, Any]],
+    observations: list[dict[str, Any]],
+    model_predictions: list[dict[str, Any]],
     when: datetime,
     lookback_hours: int = 6,
     tolerance_minutes: int = 30,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Pair boei-observaties met model-predicties op gelijk uur (±tolerance).
 
@@ -97,7 +96,7 @@ def _match_pairs(
     tol = timedelta(minutes=tolerance_minutes)
 
     # Index modellen op aware UTC timestamp.
-    model_by_ts: List[tuple] = []
+    model_by_ts: list[tuple] = []
     for m in model_predictions:
         ts = m.get("timestamp")
         if ts is None:
@@ -105,7 +104,7 @@ def _match_pairs(
         ts_utc = _coerce_aware_utc(ts)
         model_by_ts.append((ts_utc, m))
 
-    pairs: List[Dict[str, Any]] = []
+    pairs: list[dict[str, Any]] = []
     for obs in observations:
         obs_ts = obs.get("timestamp")
         if obs_ts is None:
@@ -153,11 +152,11 @@ def _match_pairs(
 
 
 def compute_buoy_bias(
-    boei_observations: List[Dict[str, Any]],
-    model_predictions: List[Dict[str, Any]],
+    boei_observations: list[dict[str, Any]],
+    model_predictions: list[dict[str, Any]],
     when: datetime,
     lookback_hours: int = 6,
-) -> Dict[str, float]:
+) -> dict[str, float]:
     """
     Bereken bias-factor tussen live boei en model-forecast.
 
@@ -234,11 +233,11 @@ def _decay_weight(hours_ahead: float, tau_h: float = DEFAULT_DECAY_TAU_H) -> flo
 
 
 def apply_bias_to_forecast(
-    forecast: List[Dict[str, Any]],
-    bias: Dict[str, float],
+    forecast: list[dict[str, Any]],
+    bias: dict[str, float],
     when: datetime,
     tau_h: float = DEFAULT_DECAY_TAU_H,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Pas bias-correctie toe op een Open-Meteo marine forecast-lijst.
 
@@ -264,7 +263,7 @@ def apply_bias_to_forecast(
         return forecast
 
     when_utc = _coerce_aware_utc(when)
-    out: List[Dict[str, Any]] = []
+    out: list[dict[str, Any]] = []
     for row in forecast:
         ts = row.get("timestamp")
         if ts is None:
@@ -298,8 +297,8 @@ def apply_bias_to_forecast(
 
 def log_bias_observation(
     timestamp: datetime,
-    model_predictions: List[Dict[str, Any]],
-    actual_observations: Dict[str, List[Dict[str, Any]]],
+    model_predictions: list[dict[str, Any]],
+    actual_observations: dict[str, list[dict[str, Any]]],
     path: Optional[Path] = None,
 ) -> int:
     """
