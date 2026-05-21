@@ -106,6 +106,12 @@ def _prepare_digest_input(
                     day_block['model_spread_warning'] = True
         day_blocks.append(day_block)
 
+    # Lookahead: scan dagen 5-8 (na de digest-window) op aankomende swell.
+    # We hebben 8 dagen forecast (192u Open-Meteo) maar tonen er maar 4 in
+    # de digest. Als er VERDER in de week iets aankomt, geven we Claude
+    # voldoende info om een korte vooruitblik-zin te schrijven aan het einde.
+    lookahead = _build_lookahead(days[4:8])
+
     now = datetime.now()
     _, moon_label, is_spring = moon_phase_info(now)
 
@@ -114,6 +120,7 @@ def _prepare_digest_input(
         "date_today": now.strftime("%Y-%m-%d"),
         "day_label_today": _DAY_NL_SHORT[now.weekday()],
         "days": day_blocks,
+        "lookahead": lookahead,
         "tide_context": {
             "moon_phase_nl": moon_label,
             "spring_tide": is_spring,
@@ -121,6 +128,113 @@ def _prepare_digest_input(
         },
         "forecast_summary": forecast_summary,
         "webcam_url": "https://surfweer.nl/webcams/noordwijk/",
+    }
+
+
+def _build_lookahead(future_days: list) -> dict:
+    """
+    Scan dagen 5-8 (na de 4-daagse digest-window) op aankomende swell.
+
+    Returns dict met:
+      - has_swell_arrival: bool — is er een dag met substantiële swell?
+      - best_day_label: str | None — bv. "ma" / "di" (kort) als er iets
+        noemenswaardigs aankomt
+      - best_day_date: str | None — "2026-05-26" voor traceability
+      - days_ahead: int | None — afstand t.o.v. vandaag (4, 5, 6, 7)
+      - peak_height_m: float | None
+      - peak_period_s: float | None
+      - peak_wave_direction: str | None — kompasrichting
+      - summary_quality: str | None — "klein", "matig", "stevig"
+      - allowed_citations: dict — extra wave_heights/periods/dirs voor
+        validator zodat Claude deze waarden mag noemen zonder false-positive.
+
+    Drempel voor "aankomende swell": peak Hs ≥ 0.8m EN peak periode ≥ 7s
+    (echte swell, niet wind-sea). Lager → niet noemenswaardig, Claude
+    zegt niets in de vooruitblik.
+    """
+    empty = {
+        "has_swell_arrival": False,
+        "best_day_label": None,
+        "best_day_date": None,
+        "days_ahead": None,
+        "peak_height_m": None,
+        "peak_period_s": None,
+        "peak_wave_direction": None,
+        "summary_quality": None,
+        "allowed_citations": {
+            "wave_heights_m": [],
+            "wave_periods_s": [],
+            "wave_directions_compass": [],
+            "day_labels_short": [],
+        },
+    }
+    if not future_days:
+        return empty
+
+    best = None  # (score, day_index, day_data)
+    for offset, (date_obj, day_states, day_scores) in enumerate(future_days):
+        if not day_states or not day_scores:
+            continue
+        # Pak hoogste Hs van die dag (alleen daglicht-uren).
+        daylight = [
+            (s, sc) for s, sc in zip(day_states, day_scores, strict=False)
+            if sc.total_score > 0
+        ]
+        if not daylight:
+            continue
+        peak_state, _ = max(
+            daylight,
+            key=lambda pair: pair[0].wave_spectrum.significant_height_total,
+        )
+        hs = peak_state.wave_spectrum.significant_height_total
+        # Dominante periode + richting via peaks of mean
+        if peak_state.wave_spectrum.peaks:
+            dom = max(peak_state.wave_spectrum.peaks, key=lambda p: p.height_m)
+            tp = dom.period_s
+            wave_dir_deg = dom.direction_deg
+        else:
+            tp = peak_state.wave_spectrum.mean_period or 0.0
+            wave_dir_deg = peak_state.wave_spectrum.mean_direction
+
+        # Score voor "noemenswaardigheid": Hs²·T (energy-achtig)
+        score = (hs ** 2) * tp
+        if hs >= 0.8 and tp >= 7.0:
+            candidate = (score, offset, date_obj, hs, tp, wave_dir_deg)
+            if best is None or candidate[0] > best[0]:
+                best = candidate
+
+    if best is None:
+        return empty
+
+    _, offset, date_obj, hs, tp, wave_dir_deg = best
+    days_ahead = 4 + offset  # 4 = morgen+3 = laatste digest-dag
+    if hs >= 1.5 and tp >= 9.0:
+        quality = "stevig"
+    elif hs >= 1.0:
+        quality = "matig"
+    else:
+        quality = "klein"
+
+    height_r = round(hs, 1)
+    period_r = round(tp, 1)
+    wave_dir_compass = degrees_to_compass(wave_dir_deg)
+    day_short = _DAY_NL_SHORT[date_obj.weekday()]
+
+    return {
+        "has_swell_arrival": True,
+        "best_day_label": day_short,
+        "best_day_date": date_obj.strftime("%Y-%m-%d"),
+        "days_ahead": days_ahead,
+        "peak_height_m": height_r,
+        "peak_period_s": period_r,
+        "peak_wave_direction": wave_dir_compass,
+        "summary_quality": quality,
+        "allowed_citations": {
+            "wave_heights_m": [height_r],
+            "wave_periods_s": [period_r],
+            "wave_directions_compass": [wave_dir_compass],
+            "day_labels_short": [day_short],
+        },
     }
 
 
@@ -251,12 +365,28 @@ def _summarize_day(
     # Andere windows van de dag (referentie-forecaster' "14-16u of na 19:30u" patroon)
     result["other_windows"] = [_window_payload(w) for w in other_windows]
 
-    # Anti-hallucinatie vangnet — exact wat de LLM mag citeren
+    # Anti-hallucinatie vangnet — exact wat de LLM mag citeren.
+    # Inclusief ALLE daglicht-uren van de dag zodat ochtend-wind én avond-
+    # wind beide legitiem mogen worden genoemd ("ochtend ZW, 's avonds draait
+    # naar ZO"). Voorheen alleen het peak-uur → echte windrichtingen later
+    # op de dag werden onterecht als hallucinatie geflagd.
+    daylight_states_with_scores = [
+        (s, sc) for s, sc in zip(day_states, day_scores, strict=False) if sc.total_score > 0
+    ]
+    if not daylight_states_with_scores:
+        # Geen daglicht-uren (defensief) — val terug op peak alleen.
+        all_day_conditions = [peak_height_conditions]
+    else:
+        all_day_conditions = [
+            _hour_state_to_conditions(s) for s, _ in daylight_states_with_scores
+        ]
+
     result["_allowed_citations"] = _build_allowed_citations(
         peak_height_conditions,
         result.get("best_window"),
         result["tide_summary"],
         other_windows=result["other_windows"],
+        all_day_conditions=all_day_conditions,
     )
 
     return result
@@ -267,24 +397,44 @@ def _build_allowed_citations(
     best_window: Optional[dict],
     tide_summary: dict,
     other_windows: Optional[list] = None,
+    all_day_conditions: Optional[list] = None,
 ) -> dict:
     """
     Bouw een whitelist van getallen, tijden en richtingen die de LLM voor
     deze dag mag noemen. Wordt ook door SMSValidator gebruikt om
     hallucinaties te detecteren.
+
+    `all_day_conditions` is een lijst _hour_state_to_conditions() dicts voor
+    ALLE daglicht-uren van de dag — wind kan binnen één dag draaien, dus
+    de whitelist moet alle uren dekken, niet alleen peak.
     """
-    heights_m = {peak_height_conditions["wave_height_m"]}
-    periods_s = {peak_height_conditions["wave_period_s"]}
-    wind_speeds_kn = {peak_height_conditions["wind_speed_kn"]}
-    wind_dirs = {peak_height_conditions["wind_direction_compass"]}
-    wave_dirs = {peak_height_conditions["wave_direction_compass"]}
-    times_hhmm = {peak_height_conditions["time"]}
-    # Uitgebreide whitelist — boei-extras + atmospheric context.
-    gusts_kn = {peak_height_conditions.get("wind_gust_kn")}
-    air_temps_c = {peak_height_conditions.get("air_temperature_c")}
-    ssts_c = {peak_height_conditions.get("sea_surface_temperature_c")}
-    precipitations_mm = {peak_height_conditions.get("precipitation_mm")}
-    visibilities_m = {peak_height_conditions.get("visibility_m")}
+    # Start altijd met peak — backwards-compat als all_day_conditions ontbreekt.
+    seed = list(all_day_conditions) if all_day_conditions else [peak_height_conditions]
+
+    heights_m: set = set()
+    periods_s: set = set()
+    wind_speeds_kn: set = set()
+    wind_dirs: set = set()
+    wave_dirs: set = set()
+    times_hhmm: set = set()
+    gusts_kn: set = set()
+    air_temps_c: set = set()
+    ssts_c: set = set()
+    precipitations_mm: set = set()
+    visibilities_m: set = set()
+
+    for cond in seed:
+        heights_m.add(cond.get("wave_height_m"))
+        periods_s.add(cond.get("wave_period_s"))
+        wind_speeds_kn.add(cond.get("wind_speed_kn"))
+        wind_dirs.add(cond.get("wind_direction_compass"))
+        wave_dirs.add(cond.get("wave_direction_compass"))
+        times_hhmm.add(cond.get("time"))
+        gusts_kn.add(cond.get("wind_gust_kn"))
+        air_temps_c.add(cond.get("air_temperature_c"))
+        ssts_c.add(cond.get("sea_surface_temperature_c"))
+        precipitations_mm.add(cond.get("precipitation_mm"))
+        visibilities_m.add(cond.get("visibility_m"))
 
     # Best_window kan 'surfable' of 'longboard' zijn — beide soorten leveren
     # citeerbare condities (wind/golf/tijd) op voor de LLM en validator.

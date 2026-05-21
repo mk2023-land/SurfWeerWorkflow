@@ -114,10 +114,10 @@ class SMSGenerator:
             max_tokens = ANTHROPIC_CONFIG.get(
                 'max_tokens_alert', ANTHROPIC_CONFIG['max_tokens']
             )
-            return (
-                self._call_claude(structured_input, max_tokens=max_tokens)
-                or self._fallback_alert_template(alert)
+            text = self._generate_with_retry(
+                structured_input, max_tokens=max_tokens, kind='alert',
             )
+            return text or self._fallback_alert_template(alert)
         except Exception as e:
             logger.error(f"Failed to generate alert SMS with Claude: {e}")
             return self._fallback_alert_template(alert)
@@ -141,13 +141,92 @@ class SMSGenerator:
             max_tokens = ANTHROPIC_CONFIG.get(
                 'max_tokens_digest', ANTHROPIC_CONFIG['max_tokens']
             )
-            return (
-                self._call_claude(structured_input, max_tokens=max_tokens)
-                or self._fallback_digest_template(hour_states, scores, windows)
+            text = self._generate_with_retry(
+                structured_input, max_tokens=max_tokens, kind='digest',
             )
+            return text or self._fallback_digest_template(hour_states, scores, windows)
         except Exception as e:
             logger.error(f"Failed to generate digest SMS with Claude: {e}")
             return self._fallback_digest_template(hour_states, scores, windows)
+
+    def _generate_with_retry(
+        self,
+        structured_input: dict,
+        max_tokens: int,
+        kind: str,
+        max_attempts: int = 3,
+    ) -> Optional[str]:
+        """
+        Genereer LLM-tekst met validator-feedback retry-loop.
+
+        Bij hallucinatie (validator faalt) wordt de uitkomst + de issues
+        teruggegeven aan Claude met de opdracht "fix dit en genereer opnieuw".
+        Claude krijgt zo tot `max_attempts` pogingen om binnen de
+        `_allowed_citations` te blijven. Pas als alle pogingen falen
+        valt de caller terug op de deterministische fallback-template.
+
+        Bij echte API-fouten (network down, beide modellen overloaded) returnt
+        `_call_claude` None → we breken meteen af en laten caller fallback doen.
+        """
+        # Lazy import om circular dependency tussen generator ↔ validator te
+        # voorkomen.
+        from src.llm.validator import SMSValidator
+        validator = SMSValidator()
+
+        messages: list[dict] = [{
+            "role": "user",
+            "content": json.dumps(structured_input, indent=2, default=str),
+        }]
+
+        for attempt in range(max_attempts):
+            text = self._call_claude(messages, max_tokens=max_tokens)
+            if text is None:
+                # API faalde echt (network/overload/auth) — geen retry zin.
+                logger.warning(f"{kind} attempt {attempt + 1}: Claude API faalde")
+                return None
+
+            # Anti-hallucinatie check
+            result = validator.validate_sms(text, structured_input)
+            if result.passed:
+                if attempt > 0:
+                    logger.info(
+                        f"{kind} attempt {attempt + 1}/{max_attempts}: validatie OK na retry"
+                    )
+                return text
+
+            # Validatie faalde — geef feedback en probeer opnieuw
+            issues_str = "\n".join(f"- {issue}" for issue in result.issues)
+            logger.warning(
+                f"{kind} attempt {attempt + 1}/{max_attempts} validatie faalde: "
+                f"{len(result.issues)} issues"
+            )
+
+            if attempt == max_attempts - 1:
+                # Laatste poging faalde — caller doet fallback.
+                logger.error(
+                    f"{kind}: alle {max_attempts} pogingen faalden op validatie. "
+                    f"Laatste issues: {result.issues}"
+                )
+                return None
+
+            # Voeg assistant-output + correctie-instructie toe aan conversation.
+            messages.append({"role": "assistant", "content": text})
+            messages.append({
+                "role": "user",
+                "content": (
+                    "Je vorige bericht bevat hallucinaties — getallen, tijden of "
+                    "richtingen die NIET in de _allowed_citations van de "
+                    "betreffende dag staan. Concrete fouten:\n"
+                    f"{issues_str}\n\n"
+                    "Genereer het bericht NU OPNIEUW, in dezelfde referentie-forecaster-stijl en "
+                    "format, maar zonder deze fouten. Loop voordat je schrijft "
+                    "elke dag mentaal langs _allowed_citations.wind_directions_compass "
+                    "en wave_directions_compass — gebruik UITSLUITEND die richtingen. "
+                    "Geef alleen het nieuwe bericht terug, geen uitleg vooraf."
+                ),
+            })
+
+        return None
 
     # ---------- methode-aliassen op SMSGenerator ----------
     # Bewust als methoden — main.py en bestaande tests roepen
@@ -202,11 +281,16 @@ class SMSGenerator:
 
     def _call_claude(
         self,
-        structured_input: dict,
+        structured_input_or_messages,
         max_tokens: Optional[int] = None,
     ) -> Optional[str]:
         """
         Anthropic Messages API call met built-in SDK retry + model fallback.
+
+        Accepteert:
+          - `dict`: backwards-compat — wordt naar één user-message gewrapped.
+          - `list[dict]`: messages-list voor multi-turn retry-conversaties
+            (zie `_generate_with_retry`).
 
         Strategie:
           1. Primair model (Sonnet) — SDK doet transparent retry op 429/5xx
@@ -222,6 +306,17 @@ class SMSGenerator:
         calls/maand levert dat 50-70% korting op input-tokens.
         """
         effective_max_tokens = max_tokens or ANTHROPIC_CONFIG['max_tokens']
+
+        # Normaliseer naar messages-list. Dict-input = single user message.
+        if isinstance(structured_input_or_messages, dict):
+            messages = [{
+                "role": "user",
+                "content": json.dumps(
+                    structured_input_or_messages, indent=2, default=str
+                ),
+            }]
+        else:
+            messages = structured_input_or_messages
 
         # Cached system block — moet identieke bytes hebben elke call zodat
         # de prefix-match werkt. Geen datetime / uuid / lokale state hier.
@@ -239,10 +334,7 @@ class SMSGenerator:
                 max_tokens=effective_max_tokens,
                 temperature=ANTHROPIC_CONFIG['temperature'],
                 system=system_blocks,
-                messages=[{
-                    "role": "user",
-                    "content": json.dumps(structured_input, indent=2, default=str),
-                }],
+                messages=messages,
             )
             # Prompt-caching telemetrie op DEBUG: laat zien of de cache hits
             # binnenkomen. Bij `cache_read_input_tokens == 0` over meerdere
