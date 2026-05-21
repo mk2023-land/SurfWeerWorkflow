@@ -40,10 +40,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
@@ -64,7 +64,7 @@ jobs:
       # elkaars cooldowns/weekly counters). restore-keys behoudt fallback voor
       # eerste run met v1-key.
       - name: Restore persistent data cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: data/
           key: surf-data-v1
@@ -109,7 +109,7 @@ jobs:
 
       - name: Upload forecasts log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: forecasts-log-${{ github.run_id }}
           path: data/forecasts_log.jsonl
@@ -117,7 +117,7 @@ jobs:
 
       - name: Upload surf alert log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: surf-alert-log-${{ github.run_id }}
           path: data/surf_alert.log
@@ -131,7 +131,7 @@ jobs:
       # afhangt van env-vars uit een eerdere step.
       - name: Save persistent data cache
         if: always() && github.event_name != 'workflow_dispatch'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: data/
           key: surf-data-v1
