@@ -259,10 +259,14 @@ class AlertEngine:
 
             logger.info(f"Sending alert: {best_window.peak_score} peak score, {best_window.duration_hours:.1f}h duration")
 
-            # Update state
-            self.state.record_alert(ALERT_CONFIG['cooldown_hours_between_alerts'])
-            self._save_state()
-
+            # Fix #3: NIET hier state.record_alert + save callen. Voorheen werd
+            # state direct na de Decision bijgewerkt; bij een notifier-5xx,
+            # validator-fail of crash in main.py kreeg de gebruiker een
+            # ghost-cooldown (4u) en ++ weekly counter zónder dat er een alert
+            # daadwerkelijk verzonden was. Bij een 5xx-spike kon dat de hele
+            # week aan alert-budget kosten zonder één verzonden alert.
+            # Caller (main.py:_handle_alert) doet record_alert PAS NA bevestigd
+            # success van notifier.send_alert().
             return Decision(
                 send_digest=False,
                 send_alerts=[alert_candidate]

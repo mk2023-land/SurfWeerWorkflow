@@ -21,6 +21,14 @@ from src.data.sources.open_meteo import OpenMeteoClient
 
 
 def _run(coro):
+    """Run een coroutine op de current event loop voor deze test.
+
+    De `_fresh_event_loop` autouse fixture in tests/conftest.py installeert
+    voor elke test een verse event loop. We gebruiken die loop hier zodat
+    primitives die in de test-body worden aangemaakt en de loop die _run
+    gebruikt altijd consistent zijn. Geen `asyncio.run()` — dat zou onze
+    fixture-loop sluiten en cross-test pollution veroorzaken.
+    """
     return asyncio.get_event_loop().run_until_complete(coro)
 
 

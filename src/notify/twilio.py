@@ -17,6 +17,25 @@ from twilio.rest import Client
 
 logger = logging.getLogger(__name__)
 
+# SMS-segment-limieten (GSM-7: 160 chars/segment; UCS-2: 70 chars/segment).
+# Wij rekenen pessimistisch in GSM-7 segments × 160. Bij ~€0.07 per segment
+# is een 10-segment digest €0.70 per push — onaanvaardbaar bij meerdere/dag.
+HARD_SMS_LIMIT = 1600          # 10 segments (digest hard cap)
+ALERT_SMS_LIMIT = 320          # 2 segments (alert moet kort blijven)
+_TRUNCATE_SUFFIX = "..."
+
+
+def _truncate(message: str, limit: int, kind: str) -> str:
+    """Truncate to `limit` chars (suffix included). No-op als al binnen limiet."""
+    if len(message) <= limit:
+        return message
+    cut = max(0, limit - len(_TRUNCATE_SUFFIX))
+    truncated = message[:cut] + _TRUNCATE_SUFFIX
+    logger.warning(
+        f"Twilio {kind} truncated: {len(message)} → {len(truncated)} chars (limit={limit})"
+    )
+    return truncated
+
 
 class TwilioNotifier:
     channel = 'sms'
@@ -39,10 +58,12 @@ class TwilioNotifier:
                 self.client = None
 
     def send_alert(self, message: str) -> dict:
-        return self._send(message)
+        # Alert moet kort zijn — 2 segments max.
+        return self._send(_truncate(message, ALERT_SMS_LIMIT, 'alert'))
 
     def send_digest(self, message: str) -> dict:
-        return self._send(message)
+        # Digest mag tot 10 segments (kosten-cap).
+        return self._send(_truncate(message, HARD_SMS_LIMIT, 'digest'))
 
     def _send(self, message: str, recipient: Optional[str] = None) -> dict:
         if not self.client:

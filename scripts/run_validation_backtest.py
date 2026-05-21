@@ -1,10 +1,15 @@
 """
 Validation script voor backtesting tegen historische SMS dataset.
 Vergelijkt algoritme output met verwachte resultaten uit validatieset.
+
+Verplaatst uit tests/test_validation.py — dit is geen pytest-suite maar een
+runnable script (geen test_-functies), dus hoort in scripts/. Imports
+(logger, timedelta) zijn gefixt zodat het zonder NameError draait.
 """
 import asyncio
 import json
-from datetime import datetime
+import logging
+from datetime import datetime, timedelta
 from typing import Dict, List, Tuple
 import sys
 import os
@@ -15,6 +20,8 @@ from src.data.sources.open_meteo import OpenMeteoClient
 from src.data.models import HourState, ScoreBreakdown
 from src.scoring.hourly import score_hour
 from src.config import NOORDWIJK
+
+logger = logging.getLogger(__name__)
 
 
 class ValidationRunner:
@@ -210,9 +217,9 @@ class ValidationRunner:
         # Check of accuracy threshold gehaald is
         min_accuracy = 0.70
         if summary['accuracy'] >= min_accuracy:
-            print(f"\n✓ VALIDATIE GESLAAGD (≥{min_accuracy*100:.0f}% accuracy)")
+            print(f"\nVALIDATIE GESLAAGD (>= {min_accuracy*100:.0f}% accuracy)")
         else:
-            print(f"\n✗ VALIDATIE GEFAALD (<{min_accuracy*100:.0f}% accuracy)")
+            print(f"\nVALIDATIE GEFAALD (< {min_accuracy*100:.0f}% accuracy)")
 
         # Print gefaalde cases
         failed_results = [r for r in summary['results'] if not r['passed']]
@@ -252,7 +259,7 @@ VALIDATION_SET = [
     {
         "date": "09-09-2025",
         "tobias_alert_explicit": False,
-        "tobias_noordwijk_assessment": "Nauwelijks wind → geen golfgeneratie",
+        "tobias_noordwijk_assessment": "Nauwelijks wind -> geen golfgeneratie",
         "tobias_alert_type": None,
         "expected_algorithm_output": {
             "score_range": [0, 15],
@@ -274,7 +281,6 @@ VALIDATION_SET = [
 
 async def main():
     """Hoofd entry point."""
-    import logging
     logging.basicConfig(level=logging.INFO)
 
     validator = ValidationRunner()
@@ -288,5 +294,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    from datetime import timedelta
     asyncio.run(main())

@@ -7,6 +7,16 @@ on:
     - cron: '15 5,11,17,23 * * *'
   workflow_dispatch:
 
+# Fix #5: voorkom parallelle runs van check.yml. Bij workflow_dispatch tijdens
+# een geplande schedule-run zouden twee runners hetzelfde data/state.json (in
+# de cache) kunnen lezen, elk hun eigen update doen en pas op `cache/save`
+# clobberen → één van de twee state-updates verdwijnt → weekly cap drift,
+# verloren cooldowns. cancel-in-progress=false zodat de eerste run af mag
+# maken (anders verliezen we juist de geplande run).
+concurrency:
+  group: surf-alert-${{ github.workflow }}
+  cancel-in-progress: false
+
 jobs:
   check-surf-conditions:
     runs-on: ubuntu-latest

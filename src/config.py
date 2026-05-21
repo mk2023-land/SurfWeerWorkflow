@@ -44,6 +44,16 @@ NOORDWIJK = LocationConfig(
 # Rijkswaterstaat boei definities.
 # `code` is de externe label, `rws_code` is de exacte locatiecode in de nieuwe DDAPI20
 # WaterWebservices (zie https://ddapi20-waterwebservices.rijkswaterstaat.nl).
+#
+# `quantities` lijst (optioneel) bepaalt welke Aquo-grootheden we feitelijk
+# bevragen voor deze locatie. Empirisch gevalideerd tegen OphalenCatalogus +
+# 24h/48h live probes (mei 2026). Het beperken voorkomt onnodige 204-calls op
+# grootheden die deze sensor niet publiceert (RWS geeft 204 No Content i.p.v.
+# 200/empty list, wat ons retry-mechanisme zou triggeren).
+#
+# Universeel beschikbaar bij DDAPI20: 'Hm0', 'Tm02'.
+# Andere codes hieronder kunnen per station ontbreken — alleen opnemen waar
+# bewezen werkend. Onbekende stations krijgen de full-set als default.
 RWS_STATIONS = {
     'IJG1': {
         'name': 'IJgeul',
@@ -52,7 +62,10 @@ RWS_STATIONS = {
         'use_for': ['noordwijk', 'zandvoort', 'scheveningen'],
         'lead_time_hours': 1,
         'code': 'IJG1',
-        'rws_code': 'ijgeul.1'
+        'rws_code': 'ijgeul.1',
+        # IJG1 publiceert geen golfrichting (Th0/Th3 leeg) en geen S0BH; wel
+        # Hmax + Tm-10 (peak-periode proxy via spectrale momenten m-1/m0).
+        'quantities': ['Hm0', 'Tm02', 'Hmax', 'Tm-10', 'H1/3'],
     },
     'A12': {
         'name': 'A12 platform',
@@ -61,7 +74,9 @@ RWS_STATIONS = {
         'use_for': ['early_warning_north_swell'],
         'lead_time_hours': 10,
         'code': 'A12',
-        'rws_code': 'a12'
+        'rws_code': 'a12',
+        # A12 levert wel Hm0/Tm02/Tm-10/H1/3 — geen Hmax/Th0 actief.
+        'quantities': ['Hm0', 'Tm02', 'Tm-10', 'H1/3', 'T1/3'],
     },
     'K13': {
         'name': 'K13 platform',
@@ -70,7 +85,10 @@ RWS_STATIONS = {
         'use_for': ['early_warning_west_north'],
         'lead_time_hours': 4,
         'code': 'K13',
-        'rws_code': 'k13a.1'
+        'rws_code': 'k13a.1',
+        # K13 publiceert alleen Hm0, T (water temp) en Th3 (deining-richting).
+        # GEEN Tm02 of andere periodes — we gebruiken K13 puur voor Hs early-warning.
+        'quantities': ['Hm0', 'Th3'],
     },
     'J6': {
         'name': 'J6 platform',
@@ -79,7 +97,8 @@ RWS_STATIONS = {
         'use_for': ['early_warning_north_swell_short'],
         'lead_time_hours': 5,
         'code': 'J6',
-        'rws_code': 'j6'
+        'rws_code': 'j6',
+        'quantities': ['Hm0', 'Tm02', 'Tm-10', 'H1/3'],
     },
     'MUN1': {
         'name': 'IJmuiden Munitiestort',
@@ -88,8 +107,12 @@ RWS_STATIONS = {
         'use_for': ['wijk_aan_zee'],
         'lead_time_hours': 0,
         'code': 'MUN1',
-        'rws_code': 'ijmuiden.munitiestort.1'
-    }
+        'rws_code': 'ijmuiden.munitiestort.1',
+        # MUN1 heeft de rijkste sensor-suite van onze stations: directionele
+        # golfdata + watertemperatuur. Gebruikt als directie-donor wanneer
+        # IJG1 niets levert.
+        'quantities': ['Hm0', 'Tm02', 'Hmax', 'Tm-10', 'Th0', 'Th3', 'T'],
+    },
 }
 
 # Alert configuratie drempelwaarden

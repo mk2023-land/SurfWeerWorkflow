@@ -4,6 +4,7 @@ Orkestreert data ophaling, scoring, alert detectie, en SMS verzending.
 """
 import asyncio
 import logging
+from logging.handlers import RotatingFileHandler
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -19,7 +20,6 @@ from config import (
     NOORDWIJK,
     ALERT_CONFIG,
     DEBUG,
-    TIMEZONE
 )
 
 from data.models import (
@@ -35,11 +35,9 @@ from data.models import (
 from data.sources.open_meteo import fetch_all_openmeteo_data, OpenMeteoClient
 from data.sources.rws import fetch_all_rws_data, RWSClient, tide_state_at
 
-from scoring.deconstruct import decompose_spectrum
 from scoring.hourly import (
     score_hour,
     score_hour_series,
-    calculate_confidence,
     compute_wind_spread_per_hour,
 )
 from scoring.windows import analyze_windows, filter_alertworthy_windows
@@ -47,17 +45,26 @@ from scoring.windows import analyze_windows, filter_alertworthy_windows
 from alerts.engine import AlertEngine
 from alerts.detectors import AlertDetectorEngine
 
+from baseline.seasonal import SeasonalBaselineBuilder
+
 from llm.generator import SMSGenerator
 from llm.validator import SMSValidator
 
 from notify import get_notifier, format_send_result_for_logging
 
-# Setup logging
+# Setup logging. Fix #6: RotatingFileHandler — surf_alert.log groeit anders
+# unbounded (multi-MB per jaar) en blaast de GH Actions cache op (cache thrash
+# + 10GB repo-limit risk). 2MB × 3 backups = harde 8MB cap voor logs.
+_log_file_handler = RotatingFileHandler(
+    'data/surf_alert.log',
+    maxBytes=2 * 1024 * 1024,  # 2 MB per file
+    backupCount=3,
+)
 logging.basicConfig(
     level=logging.INFO if DEBUG else logging.WARNING,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('data/surf_alert.log'),
+        _log_file_handler,
         logging.StreamHandler(sys.stdout)
     ]
 )
@@ -75,6 +82,9 @@ class SurfAlertSystem:
         self.sms_validator = SMSValidator()
         self.notifier = get_notifier()
         self._last_wind_spread_full: Optional[List[Dict]] = None
+        # Fix #1: seasonal baseline wordt in run() geladen — placeholder hier
+        # zodat een vroege error niet op een ontbrekend attribuut faalt.
+        self.seasonal_baseline: Optional[Dict] = None
         logger.info(f"Notifier kanaal: {self.notifier.channel}")
 
         # Zorg dat data directory bestaat
@@ -101,6 +111,33 @@ class SurfAlertSystem:
             decision="skip"
         )
 
+        # Fix #1: laad seasonal baseline VROEG in de run. Zonder baseline geeft
+        # `calculate_rarity_percentile` altijd 50 → `rarity_percentile >= 70`
+        # faalt altijd → geen enkele alert kan ooit firen. Zonder file laten
+        # we het systeem doordraaien, maar met expliciete WARNING dat rarity
+        # check effectief uit staat.
+        try:
+            baseline_builder = SeasonalBaselineBuilder()
+            baseline = baseline_builder.load_baseline()
+            if baseline:
+                self.seasonal_baseline = baseline
+                run_log.seasonal_baseline_loaded = True
+                logger.info(
+                    f"Seasonal baseline geladen: {len(baseline)} weken. "
+                    f"Rarity-check actief."
+                )
+            else:
+                self.seasonal_baseline = None
+                logger.warning(
+                    "Seasonal baseline ontbreekt → rarity_percentile valt terug "
+                    "op default 50.0 voor alle windows. is_alertworthy.rarity-"
+                    "check (>=70) zal NOOIT passen. Run "
+                    "`python -m src.baseline.seasonal` om de baseline te bouwen."
+                )
+        except Exception as e:
+            logger.warning(f"Baseline laden faalde, fallback naar None: {e}")
+            self.seasonal_baseline = None
+
         try:
             # Stap 1: Haal data op (parallel)
             logger.info("Fetching data from all sources...")
@@ -108,16 +145,56 @@ class SurfAlertSystem:
             # Open-Meteo data opslaan
             try:
                 openmeteo_data = await fetch_all_openmeteo_data(NOORDWIJK.lat, NOORDWIJK.lon)
+                run_log.openmeteo_status = 'ok' if openmeteo_data else 'partial'
             except Exception as e:
                 logger.error(f"Failed to fetch Open-Meteo data: {e}")
                 openmeteo_data = None
+                run_log.openmeteo_status = 'failed'
 
             # RWS data proberen (tijdelijk optioneel — API is verhuisd)
             rws_data = {}
             try:
                 rws_data = await fetch_all_rws_data() or {}
+                # 'ok' = primary boei aanwezig, 'partial' = alleen tide of EW-boeien,
+                # 'failed' = niets bruikbaars.
+                if rws_data.get('primary_buoy'):
+                    run_log.rws_status = 'ok'
+                elif rws_data.get('tide') or rws_data.get('early_warning_buoys'):
+                    run_log.rws_status = 'partial'
+                else:
+                    run_log.rws_status = 'failed'
             except Exception as e:
                 logger.warning(f"RWS data unavailable (API transition): {e}")
+                run_log.rws_status = 'failed'
+
+            # Fix #2: BIAS-CORRECTIE WIRING. Vergelijk laatste 3-6u boei vs model,
+            # pas decay-correctie toe op de eerstvolgende 12-24u forecast. Voorheen
+            # was alleen `log_bias_observation` gewired — de feature die "~22% RMSE
+            # reductie" geeft was dood (in productie nooit gerund).
+            try:
+                from scoring.bias_correction import compute_buoy_bias, apply_bias_to_forecast
+                boei_obs = (rws_data.get('primary_buoy') or {}).get('raw_data') or []
+                marine_rows = (openmeteo_data or {}).get('marine') or []
+                if boei_obs and marine_rows:
+                    bias = compute_buoy_bias(boei_obs, marine_rows, when=datetime.now())
+                    if bias:
+                        corrected_marine = apply_bias_to_forecast(
+                            marine_rows, bias, when=datetime.now()
+                        )
+                        openmeteo_data['marine'] = corrected_marine
+                        run_log.bias_correction_applied = True
+                        logger.info(
+                            f"Bias-correctie toegepast: "
+                            f"hs_factor={bias['hs_bias_factor']:.3f}, "
+                            f"period_factor={bias['period_bias_factor']:.3f}, "
+                            f"n={bias['n_samples']}"
+                        )
+                    else:
+                        logger.info(
+                            "Bias-correctie: onvoldoende samples, forecast ongecorrigeerd"
+                        )
+            except Exception as e:
+                logger.warning(f"Bias-correctie wiring failed: {e}")
 
             # Stap 2: Bouw HourStates
             logger.info("Building hour states...")
@@ -160,9 +237,16 @@ class SurfAlertSystem:
             self._last_wind_spread_full = wind_spread_full
 
             # Stap 4: Analyseer windows
+            # Fix #1: geef de seasonal baseline door zodat
+            # `calculate_rarity_percentile` ECHTE percentiles berekent ipv
+            # default 50. Zonder dit kon `is_alertworthy.rarity_percentile>=70`
+            # NOOIT True worden → geen enkele alert kon firen.
             logger.info("Analyzing surf windows...")
             triggers_dict = {}  # timestamp → AlertType lijst
-            windows = analyze_windows(hourly_scores, triggers_dict)
+            windows = analyze_windows(
+                hourly_scores, triggers_dict,
+                seasonal_baseline=self.seasonal_baseline,
+            )
             alertworthy_windows = filter_alertworthy_windows(windows)
 
             # Stap 5: Voer alert detectie uit
@@ -223,26 +307,65 @@ class SurfAlertSystem:
                 forecast, history, buoy_history, windows, is_digest_time
             )
 
+            # Fix #4: capture welke alert types triggered zijn vóór decision-
+            # specifieke logica. Lijst van enum-values als strings.
+            run_log.alert_types_detected = [t.value for t in triggered_alerts]
+
             # Stap 7: Genereer en verstuur notificatie (mail of SMS)
             if decision.has_alert:
                 logger.info("Generating and sending alert notification...")
                 result = self._handle_alert(decision.send_alerts[0])
                 run_log.sms_sent = format_send_result_for_logging(result)
                 run_log.llm_used = True
+                # Fix #4: validation status uit handle_alert result.
+                if 'validation_passed' in result:
+                    run_log.llm_validation_passed = bool(result.get('validation_passed'))
+                if result.get('validation_issues'):
+                    run_log.llm_validation_issues = list(result['validation_issues'])
+
+                # Fix #3: record_alert PAS NA bevestigde send-success. Eerder
+                # werd state al in `evaluate_forecast` bijgewerkt → bij notifier-
+                # 5xx of validator-fail kreeg de gebruiker een ghost-cooldown
+                # van 4u + ++ weekly counter terwijl er niets verzonden was.
+                # Bij 5xx-spike kon dat de hele week aan alert-budget kosten.
+                if result.get('success'):
+                    self.alert_engine.state.record_alert(
+                        ALERT_CONFIG['cooldown_hours_between_alerts']
+                    )
+                    self.alert_engine._save_state()
+                else:
+                    logger.warning(
+                        "Alert send failed — state NIET bijgewerkt om ghost-"
+                        "cooldown te voorkomen. Result: %s",
+                        result.get('error'),
+                    )
 
             elif decision.send_digest:
                 logger.info("Generating and sending digest notification...")
                 result = self._handle_digest(hour_states, hourly_scores, windows)
                 run_log.sms_sent = format_send_result_for_logging(result)
                 run_log.llm_used = True
-                # MANUAL_RUN=true (set door workflow_dispatch / lokale tests):
-                # verstuur wel maar pollueer state.last_digest_time NIET zodat
-                # de eerstvolgende scheduled cron-run niet onterecht geblokkeerd
-                # wordt door "vandaag al verstuurd"-check.
-                if os.getenv('MANUAL_RUN', '').lower() not in ('true', '1', 'yes'):
-                    self.alert_engine.record_digest_sent()
-                else:
+                if 'validation_passed' in result:
+                    run_log.llm_validation_passed = bool(result.get('validation_passed'))
+                if result.get('validation_issues'):
+                    run_log.llm_validation_issues = list(result['validation_issues'])
+
+                # Fix #3: record_digest_sent ALLEEN na success. Anders raakt
+                # `last_digest_time` gezet op een dag waarop niets verstuurd is
+                # → volgende ochtend wordt de digest geblokkeerd door
+                # is_morning_first_run's "vandaag al verstuurd"-check.
+                if not result.get('success'):
+                    logger.warning(
+                        "Digest send failed — last_digest_time NIET bijgewerkt. "
+                        "Result: %s", result.get('error'),
+                    )
+                elif os.getenv('MANUAL_RUN', '').lower() in ('true', '1', 'yes'):
+                    # MANUAL_RUN=true (workflow_dispatch / lokale tests):
+                    # verstuur wel maar pollueer last_digest_time NIET — anders
+                    # blokkeert die de eerstvolgende scheduled cron-run.
                     logger.info("MANUAL_RUN=true → state.last_digest_time NIET geüpdatet")
+                else:
+                    self.alert_engine.record_digest_sent()
 
             else:
                 logger.info(f"No action: {decision.skip_reason}")
@@ -275,43 +398,55 @@ class SurfAlertSystem:
         """
         hour_states = []
 
+        # Fix #7: catch-all `except Exception` swallowt programming-errors
+        # (AttributeError/ValueError) → onmogelijk te debuggen. Hier vangen we
+        # alleen data-shape-mismatches per-row (KeyError/IndexError/TypeError)
+        # met DEBUG-log; programmatic errors propaganderen we naar boven zodat
+        # ze in run() opgevangen worden en in de RunLog.error landen.
+        if not openmeteo_data:
+            logger.warning("No openmeteo_data — kan geen hour states bouwen")
+            return []
+
+        marine_data = openmeteo_data.get('marine', [])
+        forecast_data = openmeteo_data.get('forecast', {})
+
+        # Gebruik KNMI model als primary
+        primary_model = forecast_data.get('knmi_seamless', [])
+
+        if not marine_data or not primary_model:
+            logger.warning("Missing marine or forecast data")
+            return []
+
+        tide_data = (rws_data or {}).get('tide') or {}
+        openmeteo_client = OpenMeteoClient()
+
+        # Storm-surge scalar uit RWS — zelfde waarde voor alle uren in deze
+        # run (simpele distributie; kan later granulair per uur).
+        latest_surge_cm = None
+        if tide_data:
+            latest_surge_cm = tide_data.get('latest_surge_cm')
+
+        # Recente IJG1 boei-observatie voor Tp + spread (nowcast-overlay).
+        ijg1_raw_latest = None
         try:
-            marine_data = openmeteo_data.get('marine', [])
-            forecast_data = openmeteo_data.get('forecast', {})
-
-            # Gebruik KNMI model als primary
-            primary_model = forecast_data.get('knmi_seamless', [])
-
-            if not marine_data or not primary_model:
-                logger.warning("Missing marine or forecast data")
-                return []
-
-            tide_data = (rws_data or {}).get('tide') or {}
-            openmeteo_client = OpenMeteoClient()
-
-            # Storm-surge scalar uit RWS — zelfde waarde voor alle uren in deze
-            # run (simpele distributie; kan later granulair per uur).
-            latest_surge_cm = None
-            if tide_data:
-                latest_surge_cm = tide_data.get('latest_surge_cm')
-
-            # Recente IJG1 boei-observatie voor Tp + spread (nowcast-overlay).
+            ijg1_raw = ((rws_data or {}).get('primary_buoy') or {}).get('raw_data') or []
+            if ijg1_raw:
+                ijg1_raw_latest = ijg1_raw[-1]
+        except (KeyError, TypeError, IndexError) as e:
+            logger.debug(f"IJG1 raw_data lookup failed (data-shape mismatch): {e}")
             ijg1_raw_latest = None
-            try:
-                ijg1_raw = ((rws_data or {}).get('primary_buoy') or {}).get('raw_data') or []
-                if ijg1_raw:
-                    ijg1_raw_latest = ijg1_raw[-1]
-            except Exception:
-                ijg1_raw_latest = None
-            if ijg1_raw_latest:
-                logger.info(
-                    f"IJG1 latest sample: tp_s={ijg1_raw_latest.get('tp_s')}, "
-                    f"sobh_deg={ijg1_raw_latest.get('sobh_deg')}, "
-                    f"hmax_m={ijg1_raw_latest.get('hmax_m')}"
-                )
+        if ijg1_raw_latest:
+            logger.info(
+                f"IJG1 latest sample: tp_s={ijg1_raw_latest.get('tp_s')}, "
+                f"sobh_deg={ijg1_raw_latest.get('sobh_deg')}, "
+                f"hmax_m={ijg1_raw_latest.get('hmax_m')}"
+            )
 
-            # Merge marine en forecast data per uur
-            for i in range(min(len(marine_data), len(primary_model))):
+        # Merge marine en forecast data per uur. Per-row: data-shape problemen
+        # (KeyError/TypeError/IndexError) → DEBUG-log + skip; programmatic
+        # errors (AttributeError, ValueError) bubbelen naar boven.
+        for i in range(min(len(marine_data), len(primary_model))):
+            try:
                 marine = marine_data[i]
                 weather = primary_model[i]
 
@@ -371,10 +506,14 @@ class SurfAlertSystem:
                 )
 
                 hour_states.append(hour_state)
-
-        except Exception as e:
-            logger.error(f"Error building hour states: {e}")
-            return []
+            except (KeyError, TypeError, IndexError) as e:
+                # Data-shape mismatch in deze rij — skip en log op DEBUG zodat
+                # we niet de logs vervuilen, maar wel kunnen tracen.
+                logger.debug(
+                    f"_build_hour_states: skip rij i={i} door data-mismatch "
+                    f"({type(e).__name__}: {e})"
+                )
+                continue
 
         return hour_states
 
@@ -406,6 +545,7 @@ class SurfAlertSystem:
                 'success': False,
                 'channel': self.notifier.channel,
                 'error': 'validation_failed',
+                'validation_passed': False,
                 'validation_issues': anti_hallucination.issues,
                 'message': sms_text,
             }
@@ -418,8 +558,19 @@ class SurfAlertSystem:
             )
 
         if not self.dry_run:
-            return self.notifier.send_alert(sms_text)
-        return {'success': True, 'debug_mode': True, 'channel': self.notifier.channel, 'message': sms_text}
+            result = self.notifier.send_alert(sms_text)
+            # Fix #4: voeg validation-status toe aan result voor RunLog audit.
+            result.setdefault('validation_passed', True)
+            result.setdefault('validation_issues', [])
+            return result
+        return {
+            'success': True,
+            'debug_mode': True,
+            'channel': self.notifier.channel,
+            'message': sms_text,
+            'validation_passed': True,
+            'validation_issues': [],
+        }
 
     def _handle_digest(
         self,
@@ -443,10 +594,16 @@ class SurfAlertSystem:
             wind_spread_series=getattr(self, '_last_wind_spread_full', None),
         )
 
+        # Fix #4: track validation-uitkomst zodat RunLog deze kan loggen.
+        validation_passed = True
+        validation_issues: List[str] = []
+
         format_ok = self.sms_validator.validate_digest_format(sms_text)
         if not format_ok:
             logger.warning(f"Digest format validation failed: {format_ok.issues}, fallback gebruikt")
             sms_text = self.sms_generator._fallback_digest_template(hour_states, hourly_scores, windows)
+            validation_passed = False
+            validation_issues = list(format_ok.issues)
         else:
             # Anti-hallucinatie check op de LLM-output. Alleen als format OK
             # is — voor de fallback-template is hallucinatie per definitie
@@ -465,6 +622,8 @@ class SurfAlertSystem:
                     sms_text = self.sms_generator._fallback_digest_template(
                         hour_states, hourly_scores, windows
                     )
+                    validation_passed = False
+                    validation_issues = list(anti_hallucination.issues)
             except Exception as e:
                 # _prepare_digest_input kan extra argumenten verwachten die
                 # _handle_digest niet heeft — niet fataal, val terug op de
@@ -474,8 +633,18 @@ class SurfAlertSystem:
                 )
 
         if not self.dry_run:
-            return self.notifier.send_digest(sms_text)
-        return {'success': True, 'debug_mode': True, 'channel': self.notifier.channel, 'message': sms_text}
+            result = self.notifier.send_digest(sms_text)
+            result.setdefault('validation_passed', validation_passed)
+            result.setdefault('validation_issues', validation_issues)
+            return result
+        return {
+            'success': True,
+            'debug_mode': True,
+            'channel': self.notifier.channel,
+            'message': sms_text,
+            'validation_passed': validation_passed,
+            'validation_issues': validation_issues,
+        }
 
     def _update_run_log(
         self,
