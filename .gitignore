@@ -48,6 +48,10 @@ data/*.jsonl
 !data/ref_archive/
 !data/ref_archive/**
 
+# Seasonal baseline MOET in git (rebuild-baseline.yml committeert 'm).
+# Zonder dit kan calculate_rarity_percentile geen alerts firen in CI.
+!data/seasonal_baseline.json
+
 # IDE
 .vscode/
 .idea/
