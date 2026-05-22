@@ -1,0 +1,11 @@
+version: 2
+# Python-dependencies worden beheerd via uv.lock (bron-van-waarheid).
+# requirements.txt wordt geëxporteerd uit uv en mag NIET door Dependabot
+# worden bijgewerkt — dat zou conflicteren met uv.lock. Daarom geen
+# pip-ecosystem hier; alleen GitHub Actions-versies krijgen updates.
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
