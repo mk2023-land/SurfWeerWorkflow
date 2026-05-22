@@ -43,9 +43,8 @@ data/bias_log.jsonl
 data/*.json
 data/*.jsonl
 
-# Tobias-archief leeft in een aparte private repo sinds public-rollout:
-#   mk2023-land/SurfWeerWorkflow-tobias-archive
-# (Tobias' SMS-content is auteursrechtelijk en mag niet publiek.)
+# Forecaster-referentie-archief leeft in een aparte private repo sinds
+# public-rollout (auteursrechtelijk materiaal, mag niet publiek).
 # Mocht de map nog lokaal bestaan, gewoon negeren:
 data/tobias_archive/
 
