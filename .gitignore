@@ -43,10 +43,11 @@ data/bias_log.jsonl
 data/*.json
 data/*.jsonl
 
-# Tobias-archief MOET in git (training-labels voor Sprint 4 XGBoost).
-# Unignore expliciet ondanks data/*.json glob hierboven.
-!data/tobias_archive/
-!data/tobias_archive/**
+# Tobias-archief leeft in een aparte private repo sinds public-rollout:
+#   mk2023-land/SurfWeerWorkflow-tobias-archive
+# (Tobias' SMS-content is auteursrechtelijk en mag niet publiek.)
+# Mocht de map nog lokaal bestaan, gewoon negeren:
+data/tobias_archive/
 
 # Seasonal baseline MOET in git (rebuild-baseline.yml committeert 'm).
 # Zonder dit kan calculate_rarity_percentile geen alerts firen in CI.
