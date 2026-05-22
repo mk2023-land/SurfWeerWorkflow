@@ -122,7 +122,7 @@ tests/
 
 scripts/
 ├── send_test_notification.py   # End-to-end test van notifier-pipeline
-├── ingest_reference_message.py    # Forecaster-referentieberichten archiveren als training-labels
+├── ingest_forecaster_message.py  # Forecaster-referentieberichten archiveren als training-labels
 └── run_validation_backtest.py  # Backtest validatie tegen historische SMS dataset
 
 research/                  # 9 onderzoeksrapporten + master plan
@@ -199,7 +199,7 @@ python scripts/run_validation_backtest.py
 - **State**: `data/state.json` (runtime state)
 - **Bias log**: `data/bias_log.jsonl` (forecast-vs-observation, voor Sprint 4 XGBoost training)
 - **Boei-spectrum history**: `data/buoy_spectra_history.jsonl` (rolling input voor T1 swell-arrival detector)
-- **Forecaster-referentie-archief**: aparte private repo (user-geleverde SMS + parse-metadata, training-labels). Pad configureerbaar via `REF_ARCHIVE_DIR` env-var.
+- **Forecaster-referentie-archief**: aparte private repo (user-geleverde SMS + parse-metadata, training-labels). Pad configureerbaar via `FORECASTER_ARCHIVE_DIR` env-var.
 
 De GitHub Actions cache bewaart de hele `data/` map (7-dagen TTL), zodat de jsonl-historie tussen runs gepersisteerd blijft.
 

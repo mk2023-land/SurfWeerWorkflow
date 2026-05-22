@@ -1,5 +1,5 @@
 """
-referentie-forecaster-SMS ingestie voor Sprint 4 training-labels.
+Forecaster-referentiebericht ingestie voor Sprint 4 training-labels.
 
 Sla originele SMS-tekst op met datum-stempel zodat we later (Sprint 4
 XGBoost / fine-tuning) kunnen vergelijken met onze eigen voorspelling op
@@ -7,16 +7,16 @@ dezelfde dag. Een 6-maands archief geeft genoeg data voor supervised
 learning op surfability-categorisering.
 
 Gebruik (interactief):
-    python scripts/ingest_reference_message.py
+    python scripts/ingest_forecaster_message.py
     [plak SMS, Ctrl+D / Cmd+D om af te sluiten]
 
 Gebruik (CLI argument):
-    python scripts/ingest_reference_message.py --date 2026-05-20 --text "..."
+    python scripts/ingest_forecaster_message.py --date 2026-05-20 --text "..."
 
 Gebruik (via stdin pipe):
-    cat referentie-forecaster_today.txt | python scripts/ingest_reference_message.py --date 2026-05-20
+    cat msg_today.txt | python scripts/ingest_forecaster_message.py --date 2026-05-20
 
-Bestand-layout:
+Bestand-layout (in de private archive-repo):
     data/ref_archive/
         2026-05-19.txt        ← raw SMS-tekst
         2026-05-19.meta.json  ← geparste metadata (datum, spots, verdict)
@@ -30,15 +30,14 @@ import sys
 from datetime import date, datetime
 from pathlib import Path
 
-# referentie-forecaster-archief leeft sinds 2026-05-22 in een aparte private repo
-# (mk2023-land/SurfWeerWorkflow-referentie-forecaster-archive). De hoofdrepo is publiek; de
-# referentie-forecaster-content niet. Default verwacht een naast-staande clone; override met
-# de REF_ARCHIVE_DIR env-var als je 'm ergens anders hebt staan.
+# Forecaster-referentie-archief leeft sinds 2026-05-22 in een aparte private
+# repo (auteursrechtelijk materiaal). Default verwacht een naast-staande
+# clone; override met de FORECASTER_ARCHIVE_DIR env-var voor een andere locatie.
 _default_archive = (
     Path(__file__).resolve().parent.parent.parent
     / 'SurfWeerWorkflow-referentie-forecaster-archive' / 'data' / 'ref_archive'
 )
-ARCHIVE_DIR = Path(os.environ.get('REF_ARCHIVE_DIR', _default_archive))
+ARCHIVE_DIR = Path(os.environ.get('FORECASTER_ARCHIVE_DIR', _default_archive))
 
 # Bekende spot-namen die referentie-forecaster gebruikt — voor extractie van per-spot windows
 SPOT_PATTERNS = {
@@ -143,7 +142,7 @@ def parse_metadata(text: str, msg_date: date) -> dict:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Ingest referentie-forecaster de referentie-forecaster SMS')
+    parser = argparse.ArgumentParser(description='Ingest forecaster-referentiebericht (SMS) in privé-archief')
     parser.add_argument(
         '--date', type=str, default=None,
         help='Datum van het bericht (YYYY-MM-DD). Default: vandaag.'
