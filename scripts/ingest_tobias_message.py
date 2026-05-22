@@ -24,12 +24,21 @@ Bestand-layout:
 """
 import argparse
 import json
+import os
 import re
 import sys
 from datetime import date, datetime
 from pathlib import Path
 
-ARCHIVE_DIR = Path(__file__).resolve().parent.parent / 'data' / 'ref_archive'
+# referentie-forecaster-archief leeft sinds 2026-05-22 in een aparte private repo
+# (mk2023-land/SurfWeerWorkflow-referentie-forecaster-archive). De hoofdrepo is publiek; de
+# referentie-forecaster-content niet. Default verwacht een naast-staande clone; override met
+# de REF_ARCHIVE_DIR env-var als je 'm ergens anders hebt staan.
+_default_archive = (
+    Path(__file__).resolve().parent.parent.parent
+    / 'SurfWeerWorkflow-referentie-forecaster-archive' / 'data' / 'ref_archive'
+)
+ARCHIVE_DIR = Path(os.environ.get('REF_ARCHIVE_DIR', _default_archive))
 
 # Bekende spot-namen die referentie-forecaster gebruikt — voor extractie van per-spot windows
 SPOT_PATTERNS = {

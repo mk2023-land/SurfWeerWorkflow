@@ -11,7 +11,7 @@ Dit systeem analyseert surfcondities voor Noordwijk door:
 1. **Data verzameling** uit meerdere bronnen (Open-Meteo multi-model: KNMI + ECMWF + GFS, Rijkswaterstaat DDAPI20 boeien)
 2. **Scoring** van surfcondities (0-100 punten) op basis van golf, wind, tij, swell richting, plus modifiers voor wave-age, energy-flux, Iribarren, pier-refractie en wind-wave interactie
 3. **5 alert types** detecteren (T1 swell arrival via boei-spectrum trends, T2 wind shift, T3 wind dip, T4 sustained groundswell-through-windsea, T5 tide-gated windows)
-4. **Notificaties** versturen via ntfy.sh (default, gratis push), SMTP-mail of Twilio-SMS, met Claude Sonnet 4.5 (Haiku als fallback) voor natuurlijke referentie-forecaster-stijl berichten
+4. **Notificaties** versturen via ntfy.sh (default, gratis push), SMTP-mail of Twilio-SMS, met Claude Sonnet 4.5 (Haiku als fallback) voor natuurlijke Nederlandse berichten in forecaster-stijl
 5. **Automatische runs** op GitHub Actions (4x per dag)
 
 ### Hoe het werkt
@@ -122,7 +122,7 @@ tests/
 
 scripts/
 ├── send_test_notification.py   # End-to-end test van notifier-pipeline
-├── ingest_reference_message.py    # referentie-forecaster-SMS archiveren als training-labels
+├── ingest_reference_message.py    # Forecaster-referentieberichten archiveren als training-labels
 └── run_validation_backtest.py  # Backtest validatie tegen historische SMS dataset
 
 research/                  # 9 onderzoeksrapporten + master plan
@@ -131,8 +131,10 @@ data/
 ├── seasonal_baseline.json # Seizoensbaseline (jaarlijks rebuild)
 ├── forecasts_log.jsonl    # Run-by-run audit log
 ├── bias_log.jsonl         # Forecast-vs-observation bias (Sprint 4 training)
-├── buoy_spectra_history.jsonl # T1 detector rolling buoy history
-└── ref_archive/        # User-geleverde referentie-forecaster-SMS + parse-metadata
+└── buoy_spectra_history.jsonl # T1 detector rolling buoy history
+
+# Forecaster-referentie-archief leeft in een aparte private repo
+# (auteursrechtelijk materiaal — niet in deze repo).
 
 .github/workflows/
 ├── check.yml              # Hoofd workflow (cron 4x/dag)
@@ -149,7 +151,7 @@ data/
 3. Genereer API key
 4. Sla op als GitHub Secret: `ANTHROPIC_API_KEY`
 
-Sonnet wordt gebruikt voor de daadwerkelijke tekst-generatie omdat het significant rijkere Nederlandse referentie-forecaster-stijl prose levert (wind-wave interactie expliciet benoemd, uncertainty gerendered, tij-tijden verweven in lopende zinnen). Bij Sonnet-overload (HTTP 529) schakelt de pipeline na exponential backoff automatisch over op Haiku. Verwachte kosten: €0,50–€1/maand bij 30–60 calls.
+Sonnet wordt gebruikt voor de daadwerkelijke tekst-generatie omdat het significant rijkere Nederlandse forecaster-stijl prose levert (wind-wave interactie expliciet benoemd, uncertainty gerendered, tij-tijden verweven in lopende zinnen). Bij Sonnet-overload (HTTP 529) schakelt de pipeline na exponential backoff automatisch over op Haiku. Verwachte kosten: €0,50–€1/maand bij 30–60 calls.
 
 ### Notifier setup
 
@@ -197,7 +199,7 @@ python scripts/run_validation_backtest.py
 - **State**: `data/state.json` (runtime state)
 - **Bias log**: `data/bias_log.jsonl` (forecast-vs-observation, voor Sprint 4 XGBoost training)
 - **Boei-spectrum history**: `data/buoy_spectra_history.jsonl` (rolling input voor T1 swell-arrival detector)
-- **referentie-forecaster archief**: `data/ref_archive/` (user-geleverde SMS + parse-metadata, training-labels)
+- **Forecaster-referentie-archief**: aparte private repo (user-geleverde SMS + parse-metadata, training-labels). Pad configureerbaar via `REF_ARCHIVE_DIR` env-var.
 
 De GitHub Actions cache bewaart de hele `data/` map (7-dagen TTL), zodat de jsonl-historie tussen runs gepersisteerd blijft.
 
@@ -365,10 +367,9 @@ MIT License - zie LICENSE bestand voor details.
 
 ## 🙏 Credits
 
-Gebaseerd op meteorologische analyse van referentie-forecaster van de referentie-forecaster.
 Gebruikt Open-Meteo multi-model forecast (KNMI + ECMWF + GFS), Rijkswaterstaat DDAPI20 WaterWebservices, Anthropic Claude (Sonnet 4.5 + Haiku 4.5 fallback), en ntfy.sh.
 
-Scoring-fysica gebaseerd op 9 onderzoeksrapporten in `research/`: industry models (Surfline/Stormsurf/Magicseaweed), pro forecaster methodology (Pat Caldwell NWS, WSL), academic ML (XGBoost bias-correctie peer-reviewed Dutch North Sea), en gap-analysis tegen referentie-forecaster-SMSes.
+Scoring-fysica gebaseerd op 9 onderzoeksrapporten in `research/`: industry models (Surfline/Stormsurf/Magicseaweed), pro forecaster methodology (Pat Caldwell NWS, WSL), academic ML (XGBoost bias-correctie peer-reviewed Dutch North Sea), en gap-analysis tegen Nederlandse forecaster-referentieberichten.
 
 ## 📞 Support
 

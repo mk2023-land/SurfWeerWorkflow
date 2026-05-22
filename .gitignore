@@ -43,10 +43,11 @@ data/bias_log.jsonl
 data/*.json
 data/*.jsonl
 
-# referentie-forecaster-archief MOET in git (training-labels voor Sprint 4 XGBoost).
-# Unignore expliciet ondanks data/*.json glob hierboven.
-!data/ref_archive/
-!data/ref_archive/**
+# referentie-forecaster-archief leeft in een aparte private repo sinds public-rollout:
+#   mk2023-land/SurfWeerWorkflow-referentie-forecaster-archive
+# (referentie-forecaster' SMS-content is auteursrechtelijk en mag niet publiek.)
+# Mocht de map nog lokaal bestaan, gewoon negeren:
+data/ref_archive/
 
 # Seasonal baseline MOET in git (rebuild-baseline.yml committeert 'm).
 # Zonder dit kan calculate_rarity_percentile geen alerts firen in CI.
