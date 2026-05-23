@@ -37,7 +37,7 @@ def _fallback_digest_template(
     windows: list[SurfWindow],
 ) -> str:
     """
-    Deterministische 4-daagse digest met rijke context — fallback bij LLM-faal.
+    Deterministische 5-daagse digest met rijke context — fallback bij LLM-faal.
 
     Per dag wordt opgenomen:
       - peak_hour conditions (golf, periode, windrichting+snelheid)
@@ -70,10 +70,10 @@ def _fallback_digest_template(
     now = datetime.now()
     date_today = now.strftime("%-d-%-m-%Y")
 
-    labels = ["Vandaag", "Morgen", "Overmorgen", "+3"]
+    labels = ["Vandaag", "Morgen", "Overmorgen", "+3", "+4"]
     parts: list[str] = []
 
-    for i, (date_obj, day_states, day_scores) in enumerate(days[:4]):
+    for i, (date_obj, day_states, day_scores) in enumerate(days[:5]):
         if not day_states:
             continue
         label = labels[i] if i < len(labels) else date_obj.strftime("%a %d/%m")

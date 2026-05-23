@@ -152,7 +152,7 @@ def _prepare_digest_input(
 
 def _build_lookahead(future_days: list) -> dict:
     """
-    Scan dagen 5-8 (na de 4-daagse digest-window) op aankomende swell.
+    Scan dagen 6-8 (na de 5-daagse digest-window) op aankomende swell.
 
     Returns dict met:
       - has_swell_arrival: bool — is er een dag met substantiële swell?
