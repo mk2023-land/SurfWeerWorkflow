@@ -290,6 +290,13 @@ class SurfAlertSystem:
             # specifieke logica. Lijst van enum-values als strings.
             run_log.alert_types_detected = [t.value for t in triggered_alerts]
 
+            # Decision-veld vroeg op run_log zetten zodat _archive_sent_sms
+            # (in de blokken hieronder) het juiste type ("digest"/"alert")
+            # in het archief vastlegt. Voorheen werd dit pas in
+            # _update_run_log gezet — ná de archief-call — wat resulteerde
+            # in alle archief-entries met decision="skip".
+            run_log.decision = decision.action
+
             # Stap 7: Genereer en verstuur notificatie (mail of SMS)
             if decision.has_alert:
                 logger.info("Generating and sending alert notification...")
@@ -314,6 +321,8 @@ class SurfAlertSystem:
                     )
                     self.alert_engine._save_state()
                     self.alert_engine.record_send(notify=True, llm=True)
+                    if run_log.sms_text_full:
+                        self._archive_sent_sms(run_log, run_log.sms_text_full)
                 else:
                     logger.warning(
                         "Alert send failed — state NIET bijgewerkt om ghost-"
@@ -344,12 +353,16 @@ class SurfAlertSystem:
                 elif os.getenv('MANUAL_RUN', '').lower() in ('true', '1', 'yes'):
                     # MANUAL_RUN=true (workflow_dispatch / lokale tests):
                     # verstuur wel maar pollueer last_digest_time NIET — anders
-                    # blokkeert die de eerstvolgende scheduled cron-run.
-                    logger.info("MANUAL_RUN=true → state.last_digest_time NIET geüpdatet")
+                    # blokkeert die de eerstvolgende scheduled cron-run. Ook
+                    # NIET archiveren — handmatige tests horen niet in de
+                    # trainings-set, alleen productie-digests.
+                    logger.info("MANUAL_RUN=true → state.last_digest_time NIET geüpdatet, geen archief-entry")
                     self.alert_engine.record_send(notify=True, llm=True)
                 else:
                     self.alert_engine.record_digest_sent()
                     self.alert_engine.record_send(notify=True, llm=True)
+                    if run_log.sms_text_full:
+                        self._archive_sent_sms(run_log, run_log.sms_text_full)
 
             else:
                 logger.info(f"No action: {decision.skip_reason}")
@@ -648,6 +661,43 @@ class SurfAlertSystem:
             run_log.to_dict(),
             max_lines=10000,
             keep_archives=3,
+        )
+
+    def _archive_sent_sms(self, run_log: RunLog, sms_text: str):
+        """
+        Persisteer een succesvol verzonden SMS naar het maand-archief in git.
+
+        Doel: trainings-set opbouwen voor latere model-fine-tuning. Naast
+        forecasts_log.jsonl (die door cache afhankelijk is) committeren we
+        de SMS-tekst + meetbare condities permanent naar git. Eén bestand
+        per kalendermaand (YYYY-MM.jsonl) om commits beheersbaar te houden.
+
+        Wordt alleen aangeroepen na .get('success') op een digest of alert.
+        """
+        from src.util_files import append_jsonl_with_rotation
+        ts = datetime.now()
+        month_file = Path('data/sms_archive') / f"{ts.strftime('%Y-%m')}.jsonl"
+        entry = {
+            'timestamp': ts.isoformat(),
+            'decision': run_log.decision,
+            'alert_types': run_log.alert_types_detected or [],
+            'sms_text': sms_text,
+            'validation_passed': run_log.llm_validation_passed,
+            'validation_issues': run_log.llm_validation_issues or [],
+            'scores_today_peak': run_log.scores_today_peak,
+            'scores_tomorrow_peak': run_log.scores_tomorrow_peak,
+            'buoy_ijg1_height': run_log.buoy_ijg1_height,
+            'buoy_ijg1_period': run_log.buoy_ijg1_period,
+            'buoy_a12_period': run_log.buoy_a12_period,
+            'windows_total': run_log.windows_total,
+            'windows_alertworthy': run_log.windows_alertworthy,
+            'bias_correction_applied': run_log.bias_correction_applied,
+        }
+        # Geen rotatie nodig — één file per maand stops vanzelf bij ~120
+        # entries (4 runs/dag × 30 dagen). max_lines=10000 puur defensief.
+        append_jsonl_with_rotation(
+            month_file, entry,
+            max_lines=10000, keep_archives=1,
         )
 
 

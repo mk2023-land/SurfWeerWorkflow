@@ -52,6 +52,13 @@ data/ref_archive/
 # Zonder dit kan calculate_rarity_percentile geen alerts firen in CI.
 !data/seasonal_baseline.json
 
+# SMS-archief: elke verstuurde SMS (digest + alert) wordt per maand
+# gepersisteerd in git voor latere model-training (Sprint 4). Public
+# want het is onze eigen output, geen referentie-forecaster-IP. Auto-commit vanuit
+# check.yml na succesvolle send.
+!data/sms_archive/
+!data/sms_archive/*.jsonl
+
 # IDE
 .vscode/
 .idea/
