@@ -59,15 +59,19 @@ jobs:
       # buoy_spectra_history.jsonl), digest-state (state.json) en forecasts-log.
       # GitHub Actions cache: 10 GB max per repo, entries expireren na 7d
       # zonder hit; daily runs houden alles vers.
-      # Split restore/save: deterministische key `surf-data-v1` zodat elke run
-      # dezelfde cache leest en schrijft (anders clobberen parallelle runs
-      # elkaars cooldowns/weekly counters). restore-keys behoudt fallback voor
-      # eerste run met v1-key.
+      #
+      # BELANGRIJK — unique key per run. GitHub Actions cache kan een
+      # bestaande key NIET overschrijven (save is een silent no-op met
+      # warning), dus een statische key bevriest de cache na de eerste save.
+      # Concrete bug die dit veroorzaakte: state.json bleef hangen op
+      # last_digest_time uit run #N, daarna stuurde elke ochtend-run
+      # opnieuw een digest. Concurrency-group hieronder voorkomt parallelle
+      # runs, dus geen race-condities tussen unique keys.
       - name: Restore persistent data cache
         uses: actions/cache/restore@v5
         with:
           path: data/
-          key: surf-data-v1
+          key: surf-data-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             surf-data-
 
@@ -134,4 +138,4 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: data/
-          key: surf-data-v1
+          key: surf-data-${{ github.run_id }}-${{ github.run_attempt }}
