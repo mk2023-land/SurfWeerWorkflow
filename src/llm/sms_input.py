@@ -7,6 +7,7 @@ Functies hier (`_prepare_alert_input`, `_prepare_digest_input`, ...) worden
 zowel intern door SMSGenerator gebruikt als extern door main.py voor
 validator-input — beide paden delen exact dezelfde shape.
 """
+import math
 from datetime import datetime
 from typing import Optional
 
@@ -258,7 +259,6 @@ def _build_lookahead(future_days: list) -> dict:
 
 def _circular_mean_deg(degrees: list[float]) -> float:
     """Cirkelgemiddelde van hoeken in graden. Voorkomt artefacten rond 0/360."""
-    import math
     if not degrees:
         return 0.0
     sin_sum = sum(math.sin(math.radians(d)) for d in degrees)
