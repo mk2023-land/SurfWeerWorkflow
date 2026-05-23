@@ -1,8 +1,8 @@
 # Noordwijk Surf Alert Systeem
 
-[![Surf Alert Check](https://github.com/kiliantargaryen/SurfWeerWorkflow/actions/workflows/check.yml/badge.svg)](https://github.com/kiliantargaryen/SurfWeerWorkflow/actions/workflows/check.yml)
+[![Surf Alert Check](https://github.com/mk2023-land/SurfWeerWorkflow/actions/workflows/check.yml/badge.svg)](https://github.com/mk2023-land/SurfWeerWorkflow/actions/workflows/check.yml)
 
-Geautomatiseerd surfweer alert systeem voor Noordwijk dat 4x per dag surfcondities analyseert en notificaties verstuurt (push via ntfy.sh, mail via SMTP, of SMS via Twilio) bij gunstige golven.
+Geautomatiseerd surfweer alert systeem voor Noordwijk. Stuurt één ochtenddigest (5-daagse outlook) en daarnaast push/email/SMS-alerts wanneer de algoritme-score boven drempel komt. Notificaties via ntfy.sh push (default), SMTP-mail, of Twilio-SMS.
 
 ## 📋 Overzicht
 
@@ -12,7 +12,7 @@ Dit systeem analyseert surfcondities voor Noordwijk door:
 2. **Scoring** van surfcondities (0-100 punten) op basis van golf, wind, tij, swell richting, plus modifiers voor wave-age, energy-flux, Iribarren, pier-refractie en wind-wave interactie
 3. **5 alert types** detecteren (T1 swell arrival via boei-spectrum trends, T2 wind shift, T3 wind dip, T4 sustained groundswell-through-windsea, T5 tide-gated windows)
 4. **Notificaties** versturen via ntfy.sh (default, gratis push), SMTP-mail of Twilio-SMS, met Claude Sonnet 4.5 (Haiku als fallback) voor natuurlijke Nederlandse berichten in forecaster-stijl
-5. **Automatische runs** op GitHub Actions (4x per dag)
+5. **Automatische runs** op GitHub Actions: 8 scheduled runs/dag — 5 ochtend-buffers (03:00-05:00 UTC) voor cron-jitter, 3 verspreid voor middag/avond/nacht. `is_morning_first_run()` dedupliceert zodat er per dag één ochtenddigest komt; alle runs kunnen alerts firen.
 
 ### Hoe het werkt
 
@@ -33,19 +33,19 @@ Scores ≥60 = surfbaar (shortboard, alert-candidate), ≥42 = longboard-only (a
 
 ```bash
 # Clone repository
-git clone <your-repo-url>
+git clone https://github.com/mk2023-land/SurfWeerWorkflow.git
 cd SurfWeerWorkflow
 
-# Install dependencies
-pip install -r requirements.txt
+# Install dependencies (uv aanbevolen — sneller en reproduceerbaar via uv.lock)
+uv sync --frozen
+# Of klassiek: pip install -r requirements.txt
 
 # Configureer environment variables
 cp .env.example .env
 # Edit .env met je API keys
 
-# Draai systeem (dry run, geen SMS)
-cd src
-python main.py --dry-run
+# Draai systeem (dry run — LLM-call wordt gemaakt, geen notificatie verstuurd)
+uv run python -m src.main --dry-run
 ```
 
 ### GitHub Actions setup
@@ -70,9 +70,10 @@ python main.py --dry-run
    - `MAX_ALERTS_PER_WEEK`: `8` (default)
 
 3. **Workflows activeren**:
-   - `check.yml`: Draait automatisch 4x per dag
-   - `rebuild-baseline.yml`: Jaarlijkse baseline update (handmatig)
-   - `run-validation.yml`: Backtest validatie (handmatig)
+   - `check.yml`: Hoofdpijplijn, 8x scheduled per dag + auto-commit van `data/sms_archive/` (contents:write permission nodig)
+   - `rebuild-baseline.yml`: Jaarlijkse baseline update (1 januari, of handmatig)
+   - `run-validation.yml`: Backtest validatie (op PR met src/-changes, of handmatig)
+   - `smoke-test.yml`: End-to-end dry-run (dagelijks 02:00 UTC + op PR)
 
 ## 📊 Architectuur
 
@@ -121,25 +122,28 @@ tests/
 └── test_orchestration.py    # Main-pipeline wiring tests
 
 scripts/
-├── send_test_notification.py   # End-to-end test van notifier-pipeline
-├── ingest_forecaster_message.py  # Forecaster-referentieberichten archiveren als training-labels
-└── run_validation_backtest.py  # Backtest validatie tegen historische SMS dataset
+├── send_test_notification.py        # End-to-end test van notifier-pipeline
+├── ingest_forecaster_message.py     # Forecaster-referentieberichten archiveren als training-labels (private repo)
+└── run_validation_backtest.py       # Backtest validatie tegen historische SMS dataset
 
 research/                  # 9 onderzoeksrapporten + master plan
 data/
-├── state.json             # Runtime state (cooldowns, weekly counts)
-├── seasonal_baseline.json # Seizoensbaseline (jaarlijks rebuild)
-├── forecasts_log.jsonl    # Run-by-run audit log
+├── state.json             # Runtime state (cooldowns, weekly counts, last_digest_time)
+├── seasonal_baseline.json # Seizoensbaseline (jaarlijks rebuild, committed)
+├── forecasts_log.jsonl    # Run-by-run audit log (gepersisteerd via cache)
 ├── bias_log.jsonl         # Forecast-vs-observation bias (Sprint 4 training)
-└── buoy_spectra_history.jsonl # T1 detector rolling buoy history
+├── buoy_spectra_history.jsonl # T1 detector rolling buoy history
+└── sms_archive/
+    └── YYYY-MM.jsonl      # Auto-commit per succesvolle digest/alert (model-training)
 
 # Forecaster-referentie-archief leeft in een aparte private repo
 # (auteursrechtelijk materiaal — niet in deze repo).
 
 .github/workflows/
-├── check.yml              # Hoofd workflow (cron 4x/dag)
-├── rebuild-baseline.yml   # Baseline update
-└── run-validation.yml     # Validatie workflow
+├── check.yml              # Hoofd workflow (8 cron-runs/dag, auto-commit sms_archive)
+├── rebuild-baseline.yml   # Baseline update (jaarlijks)
+├── run-validation.yml     # Backtest validatie (PR + handmatig)
+└── smoke-test.yml         # E2E dry-run (dagelijks + PR)
 ```
 
 ## 🔑 API Keys Setup
@@ -168,7 +172,7 @@ Andere kanalen (SMTP-mail of Twilio-SMS) staan beschreven in `.env.example`.
 ### Unit tests
 
 ```bash
-# Run alle tests (259 tests in totaal: scoring + bias correction + T1 + detectors +
+# Run alle tests (262 tests in totaal: scoring + bias correction + T1 + detectors +
 # engine + open-meteo + rws + LLM validator + LLM generator + notify + orchestration +
 # util_files)
 pytest tests/ -v
@@ -195,13 +199,14 @@ python scripts/run_validation_backtest.py
 ### Logs
 
 - **Surf alerts**: `data/surf_alert.log`
-- **Forecasts log**: `data/forecasts_log.jsonl` (JSON per run)
-- **State**: `data/state.json` (runtime state)
+- **Forecasts log**: `data/forecasts_log.jsonl` (JSON per run, incl. `sms_text_full`)
+- **State**: `data/state.json` (runtime state — cooldowns, weekly counts, last_digest_time)
 - **Bias log**: `data/bias_log.jsonl` (forecast-vs-observation, voor Sprint 4 XGBoost training)
 - **Boei-spectrum history**: `data/buoy_spectra_history.jsonl` (rolling input voor T1 swell-arrival detector)
+- **SMS-archief**: `data/sms_archive/YYYY-MM.jsonl` — elke verstuurde digest/alert permanent in git voor model-training, auto-commit door check.yml
 - **Forecaster-referentie-archief**: aparte private repo (user-geleverde SMS + parse-metadata, training-labels). Pad configureerbaar via `FORECASTER_ARCHIVE_DIR` env-var.
 
-De GitHub Actions cache bewaart de hele `data/` map (7-dagen TTL), zodat de jsonl-historie tussen runs gepersisteerd blijft.
+**Persistentie**: De GitHub Actions cache bewaart de hele `data/` map tussen runs (unique key per run + restore-keys fallback). Daarnaast wordt `data/sms_archive/` na elke succesvolle send naar git gepushed, zodat training-data permanent bewaard blijft ook als de cache zou expireren.
 
 ### Log formaat
 
@@ -209,22 +214,29 @@ Elke run wordt gelogd in `forecasts_log.jsonl`:
 
 ```json
 {
-  "timestamp": "2025-08-06T06:15:00",
+  "timestamp": "2026-05-23T06:14:50",
   "run_type": "scheduled",
-  "scores_today_peak": 82,
-  "scores_tomorrow_peak": 28,
-  "alert_types_detected": ["T4"],
-  "windows_total": 1,
-  "windows_alertworthy": 1,
-  "decision": "send_alert",
-  "sms_sent": "SUCCESS: ID=abc123, To=+31612345678, Msg=NWIJK ALERT...",
+  "scores_today_peak": 0,
+  "scores_tomorrow_peak": 0,
+  "alert_types_detected": [],
+  "windows_total": 0,
+  "windows_alertworthy": 0,
+  "decision": "digest",
+  "sms_sent": "SUCCESS (ntfy): id=OzHyegWrxpK5, msg=Nwijk za: Flat, swell nihil...",
+  "sms_text_full": "Nwijk za: Flat, swell nihil — hoogste golf 0,3m NW met 2,1s rond 23:00u, ...",
   "llm_used": true,
   "llm_validation_passed": true,
-  "buoy_ijg1_height": 1.2,
-  "buoy_ijg1_period": 9.4,
-  "buoy_a12_period": 10.1
+  "buoy_ijg1_height": 0.22,
+  "buoy_ijg1_period": 4.1,
+  "buoy_a12_period": 4.0,
+  "bias_correction_applied": true,
+  "rws_status": "ok",
+  "openmeteo_status": "ok",
+  "seasonal_baseline_loaded": true
 }
 ```
+
+Bij succesvolle digest/alert wordt een gestripte versie (zonder run-metadata) ook in `data/sms_archive/YYYY-MM.jsonl` opgeslagen voor model-training.
 
 ## 🔄 Rollout Strategie
 
@@ -276,7 +288,8 @@ SURF_THRESHOLDS = {
 ANTHROPIC_CONFIG = {
     'model': 'claude-sonnet-4-5',
     'fallback_model': 'claude-haiku-4-5',
-    'max_tokens': 800,
+    'max_tokens_alert': 300,
+    'max_tokens_digest': 1200,
     'temperature': 0.4,
 }
 ```
@@ -289,19 +302,23 @@ NWIJK ALERT 06-08 06:00-08:00u: groundswell 10s door windgolven heen,
 0,9m WNW, wind 6kn O aflandig, opgaand tij. Cam: surfweer.nl/webcams/noordwijk/
 ```
 
-### Digest (4-daagse outlook, push of mail — titel: "Surfweerbericht van ma 19 mei")
+### Digest (5-daagse outlook, push of mail — titel: "Surfweerbericht van za 23 mei")
 ```
-Vandaag rond 09:00 iets meer actie met 1,2m en 4,5s WZW, wind loopt op
-naar 15,6kn ZW zijaflandig, opkomend tij tot 14u. Modellen lopen nog wat
-uiteen over de details — geen alert maar wel longboard-vriendelijk.
-Morgen flat (0,4m). Donderdag rond 20:00 minimal (0,3m), na 19:30 valt
-de wind weg. Vrijdag rond 05:00 nog klein (0,2m). Cam: surfweer.nl/webcams/noordwijk/
+Nwijk za: flat, 0,3m NW windhoogte met 2,5s — niet aan beginnen. Wind
+draait van ZZW 's ochtends naar WZW middag en NW 's avonds, maar blijft
+te licht om iets op te bouwen. Nwijk zo: nog steeds flat, 0,3m NNW met
+2,6s, wind 4,4kn N 's ochtends, bouwt op naar 8kn N middag — ook niks.
+Nwijk ma: helemaal niks, 0,1m N met 2,4s, swell wordt geblokkeerd door
+de pier. Nwijk di: vlak, 0,0m, wind bouwt van ZZO 3,3kn 's ochtends op
+naar N 7,7kn 's avonds — komt net te laat om nog wat te doen vandaag.
+Nwijk wo: nog steeds flat, 0,0m, wind NO tot NNO rond 8-9kn — swell
+blijft weg, wachten op de volgende deining. Cam: surfweer.nl/webcams/noordwijk/
 ```
 
 ## 🛡️ Safety Features
 
 - **Output validatie**: LLM output wordt gevalideerd tegen hallucinatie (getallen, kompas-richtingen, board-claims, springtij-claims contextueel gecheckt)
-- **Fallback templates**: Bij validatie falen of LLM-error wordt deterministische 4-daagse template gebruikt
+- **Fallback templates**: Bij validatie falen of LLM-error wordt deterministische 5-daagse template gebruikt
 - **Sonnet → Haiku fallback**: Bij Anthropic 529 overload retry met exponential backoff + automatische switch naar Haiku
 - **Cooldown**: Minimaal 4u tussen alerts
 - **Weekly cap**: Max 8 alerts per week
