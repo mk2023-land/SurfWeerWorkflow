@@ -37,6 +37,11 @@ concurrency:
 jobs:
   check-surf-conditions:
     runs-on: ubuntu-latest
+    # contents:write nodig om data/sms_archive/YYYY-MM.jsonl te committen
+    # naar main — vangt het ML-trainingsmateriaal permanent in git i.p.v.
+    # afhankelijk van de Actions cache (die expireert).
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout repository
@@ -139,3 +144,26 @@ jobs:
         with:
           path: data/
           key: surf-data-${{ github.run_id }}-${{ github.run_attempt }}
+
+      # Commit SMS-archief naar git. Alleen op scheduled runs (geen handmatige
+      # tests), en alleen als er nieuwe entries zijn. Bewaart elke verstuurde
+      # digest+alert permanent voor latere model-training — onafhankelijk van
+      # cache-expiratie. Concurrency-group hierboven serializeert runs, dus
+      # geen race. `git pull --rebase` vangt overlap met rebuild-baseline op.
+      - name: Commit SMS archive to git
+        if: github.event_name == 'schedule'
+        run: |
+          if [ ! -d data/sms_archive ] || [ -z "$(ls -A data/sms_archive 2>/dev/null)" ]; then
+            echo "Geen archive files — niets te committen"
+            exit 0
+          fi
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add data/sms_archive/
+          if git diff --staged --quiet; then
+            echo "Archive ongewijzigd — niets te committen"
+            exit 0
+          fi
+          git pull --rebase --autostash origin main || true
+          git commit -m "SMS-archief: $(date -u +'%Y-%m-%dT%H:%MZ') run"
+          git push
