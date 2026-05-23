@@ -490,6 +490,7 @@ class RunLog:
     windows_alertworthy: int
     decision: str  # "alert", "digest", "skip" — zie Decision.action
     sms_sent: Optional[str] = None
+    sms_text_full: Optional[str] = None  # Volledige verzonden tekst (geen 100-char preview)
     llm_used: bool = False
     llm_validation_passed: bool = False
     llm_validation_issues: List[str] = field(default_factory=list)
@@ -515,6 +516,7 @@ class RunLog:
             'windows_alertworthy': self.windows_alertworthy,
             'decision': self.decision,
             'sms_sent': self.sms_sent,
+            'sms_text_full': self.sms_text_full,
             'llm_used': self.llm_used,
             'llm_validation_passed': self.llm_validation_passed,
             'llm_validation_issues': self.llm_validation_issues,
