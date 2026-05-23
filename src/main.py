@@ -295,6 +295,7 @@ class SurfAlertSystem:
                 logger.info("Generating and sending alert notification...")
                 result = self._handle_alert(decision.send_alerts[0])
                 run_log.sms_sent = format_send_result_for_logging(result)
+                run_log.sms_text_full = result.get('message') if isinstance(result, dict) else None
                 run_log.llm_used = True
                 # Fix #4: validation status uit handle_alert result.
                 if 'validation_passed' in result:
@@ -324,6 +325,7 @@ class SurfAlertSystem:
                 logger.info("Generating and sending digest notification...")
                 result = self._handle_digest(hour_states, hourly_scores, windows)
                 run_log.sms_sent = format_send_result_for_logging(result)
+                run_log.sms_text_full = result.get('message') if isinstance(result, dict) else None
                 run_log.llm_used = True
                 if 'validation_passed' in result:
                     run_log.llm_validation_passed = bool(result.get('validation_passed'))

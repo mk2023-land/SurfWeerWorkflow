@@ -58,7 +58,7 @@ def _prepare_digest_input(
     wind_spread_series: Optional[list[dict]] = None,
 ) -> dict:
     """
-    Multi-day digest: vandaag + 3 dagen vooruit. Per dag: peak_hour-condities,
+    Multi-day digest: vandaag + 4 dagen vooruit. Per dag: peak_hour-condities,
     beste window (indien surfable), tij-richting + eerstvolgende hoog/laag,
     en springtij-context.
 
@@ -66,10 +66,14 @@ def _prepare_digest_input(
     uur. Indien aanwezig wordt een dag-level `model_spread_warning` veld
     toegevoegd aan elk day_block zodat de LLM "modellen lopen nog uiteen"
     kan verwoorden.
+
+    Horizon was 4 dagen maar miste de surfable T+4 pulse die referentie-forecaster in zijn
+    SMS wel meeneemt. Verhoogd naar 5 dagen na benchmark 2026-05-23
+    (referentie-forecaster: woensdag heuphoog; systeem: stopte bij dinsdag).
     """
     days = _group_by_day(hour_states, scores)
     day_blocks: list[dict] = []
-    labels = ["vandaag", "morgen", "overmorgen", "+3"]
+    labels = ["vandaag", "morgen", "overmorgen", "+3", "+4"]
 
     # Map timestamp → spread-dict voor snelle lookup per dag
     spread_by_ts = {}
@@ -77,7 +81,7 @@ def _prepare_digest_input(
         for entry in wind_spread_series:
             spread_by_ts[entry['timestamp']] = entry
 
-    for i, (date_obj, day_states, day_scores) in enumerate(days[:4]):
+    for i, (date_obj, day_states, day_scores) in enumerate(days[:5]):
         if not day_states or not day_scores:
             continue
         label = labels[i] if i < len(labels) else date_obj.strftime("%a %d/%m")
@@ -104,13 +108,27 @@ def _prepare_digest_input(
                 # Warning vlag voor de LLM
                 if max_speed_std > 5.0 or max_dir_spread > 25.0:
                     day_block['model_spread_warning'] = True
+
+        # Onderdruk hedging-signalen voor onbetwist flat-dagen. Zelfs als
+        # windmodellen 5+ kn spreiding hebben verandert dat niets aan een
+        # 0,2m windhoogte → "modellen onzeker" is misleidend voor T+0 als
+        # de dag sowieso niet surfbaar is. Drempel: peak Hs < 0,4m én niet
+        # surfbaar. Boven die drempel (borderline dagen) blijft hedging
+        # relevant. Toegevoegd na benchmark 2026-05-23 (zaterdag, peak 0,3m,
+        # systeem schreef "modellen nog onzeker over de details").
+        peak_hs = (day_block.get('peak_height_hour') or {}).get('wave_height_m') or 0.0
+        if not day_block.get('is_surfable', False) and peak_hs < 0.4:
+            if day_block.get('confidence_label') == 'laag':
+                day_block['confidence_label'] = 'matig'
+            day_block.pop('model_spread_warning', None)
+
         day_blocks.append(day_block)
 
-    # Lookahead: scan dagen 5-8 (na de digest-window) op aankomende swell.
-    # We hebben 8 dagen forecast (192u Open-Meteo) maar tonen er maar 4 in
+    # Lookahead: scan dagen 6-8 (na de digest-window) op aankomende swell.
+    # We hebben 8 dagen forecast (192u Open-Meteo) maar tonen er maar 5 in
     # de digest. Als er VERDER in de week iets aankomt, geven we Claude
     # voldoende info om een korte vooruitblik-zin te schrijven aan het einde.
-    lookahead = _build_lookahead(days[4:8])
+    lookahead = _build_lookahead(days[5:8])
 
     now = datetime.now()
     _, moon_label, is_spring = moon_phase_info(now)
@@ -207,7 +225,7 @@ def _build_lookahead(future_days: list) -> dict:
         return empty
 
     _, offset, date_obj, hs, tp, wave_dir_deg = best
-    days_ahead = 4 + offset  # 4 = morgen+3 = laatste digest-dag
+    days_ahead = 5 + offset  # 5 = laatste digest-dag (+4), offset 0 = +5
     if hs >= 1.5 and tp >= 9.0:
         quality = "stevig"
     elif hs >= 1.0:
@@ -236,6 +254,65 @@ def _build_lookahead(future_days: list) -> dict:
             "day_labels_short": [day_short],
         },
     }
+
+
+def _circular_mean_deg(degrees: list[float]) -> float:
+    """Cirkelgemiddelde van hoeken in graden. Voorkomt artefacten rond 0/360."""
+    import math
+    if not degrees:
+        return 0.0
+    sin_sum = sum(math.sin(math.radians(d)) for d in degrees)
+    cos_sum = sum(math.cos(math.radians(d)) for d in degrees)
+    return (math.degrees(math.atan2(sin_sum, cos_sum)) + 360) % 360
+
+
+def _wind_summary_for_day(day_states: list[HourState]) -> dict:
+    """
+    Wind-dagdelen voor de LLM. referentie-forecaster benoemt vaak avondwind die op zichzelf
+    geen surf geeft maar mogelijk de volgende dag wel ("dinsdag-avond NNO
+    4bft, komt te laat om iets te geven, maar woensdag lukt dat wel").
+
+    Bands in NL-tijd (HourState.timestamp is Europe/Amsterdam):
+      - morning: 06-12u
+      - midday:  12-17u
+      - evening: 17-22u
+
+    Veld `is_building_to_evening`=true bij avond ≥ ochtend + 5kn (signal dat
+    iets meteorologisch verandert; LLM mag duiden).
+    """
+    bands = {
+        'morning': (6, 12),
+        'midday':  (12, 17),
+        'evening': (17, 22),
+    }
+    summary: dict = {}
+    for band_name, (start_h, end_h) in bands.items():
+        band_states = [
+            s for s in day_states
+            if start_h <= s.timestamp.hour < end_h
+        ]
+        if not band_states:
+            summary[band_name] = None
+            continue
+        avg_speed = sum(s.wind.speed_kn for s in band_states) / len(band_states)
+        avg_dir = _circular_mean_deg(
+            [float(s.wind.direction_deg) for s in band_states]
+        )
+        gusts = [s.wind.gusts_kn for s in band_states if s.wind.gusts_kn is not None]
+        max_gust = max(gusts) if gusts else None
+        summary[band_name] = {
+            'avg_speed_kn': round(avg_speed, 1),
+            'dominant_direction_compass': degrees_to_compass(avg_dir),
+            'max_gust_kn': round(max_gust, 1) if max_gust is not None else None,
+        }
+
+    morning_kn = (summary.get('morning') or {}).get('avg_speed_kn') or 0.0
+    evening_kn = (summary.get('evening') or {}).get('avg_speed_kn') or 0.0
+    diff = evening_kn - morning_kn
+    summary['speed_change_morning_to_evening_kn'] = round(diff, 1)
+    summary['is_building_to_evening'] = diff >= 5.0
+    summary['is_dropping_to_evening'] = diff <= -5.0
+    return summary
 
 
 def _group_by_day(
@@ -337,6 +414,7 @@ def _summarize_day(
         "is_surfable": best_score.total_score >= 60,
         "peak_height_hour": peak_height_conditions,  # hier zit dé golfhoogte-piek
         "tide_summary": _tide_summary_for_day(day_states, peak_height_state),
+        "wind_summary": _wind_summary_for_day(day_states),
         "confidence": round(day_confidence, 2),
         "confidence_label": confidence_label,
     }
@@ -387,6 +465,7 @@ def _summarize_day(
         result["tide_summary"],
         other_windows=result["other_windows"],
         all_day_conditions=all_day_conditions,
+        wind_summary=result.get("wind_summary"),
     )
 
     return result
@@ -398,6 +477,7 @@ def _build_allowed_citations(
     tide_summary: dict,
     other_windows: Optional[list] = None,
     all_day_conditions: Optional[list] = None,
+    wind_summary: Optional[dict] = None,
 ) -> dict:
     """
     Bouw een whitelist van getallen, tijden en richtingen die de LLM voor
@@ -407,6 +487,11 @@ def _build_allowed_citations(
     `all_day_conditions` is een lijst _hour_state_to_conditions() dicts voor
     ALLE daglicht-uren van de dag — wind kan binnen één dag draaien, dus
     de whitelist moet alle uren dekken, niet alleen peak.
+
+    `wind_summary` (optioneel): per-dagdeel wind-gemiddelden uit
+    `_wind_summary_for_day`. Bandgemiddelden (morning/midday/evening) worden
+    als citeerbare wind-speeds + richtingen toegevoegd zodat de LLM "avond
+    bouwt op naar X kn Y" mag schrijven zonder hallucinatie-flag.
     """
     # Start altijd met peak — backwards-compat als all_day_conditions ontbreekt.
     seed = list(all_day_conditions) if all_day_conditions else [peak_height_conditions]
@@ -469,6 +554,17 @@ def _build_allowed_citations(
         times_hhmm.add(tide_summary["next_high_time"])
     if tide_summary.get("next_low_time"):
         times_hhmm.add(tide_summary["next_low_time"])
+
+    # Wind-summary bandgemiddelden + richtingen mogen óók geciteerd worden.
+    if wind_summary:
+        for band_name in ('morning', 'midday', 'evening'):
+            band = wind_summary.get(band_name)
+            if not band:
+                continue
+            wind_speeds_kn.add(band.get('avg_speed_kn'))
+            wind_dirs.add(band.get('dominant_direction_compass'))
+            if band.get('max_gust_kn') is not None:
+                gusts_kn.add(band.get('max_gust_kn'))
 
     def _clean(seq):
         return sorted({v for v in seq if v is not None})
