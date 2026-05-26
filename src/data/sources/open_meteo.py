@@ -132,7 +132,13 @@ class OpenMeteoClient:
 
     def __init__(self):
         self.timeout = 30.0
-        self.max_retries = 3
+        self.max_retries = 5
+        # Backoff in seconden tussen pogingen (4 gaps voor 5 pogingen).
+        # Open-Meteo 502/503-storingen duren regelmatig minuten — de oude
+        # exp-backoff (1-4s) viel historisch volledig binnen dezelfde
+        # outage-window (zie run 26453407698, 2026-05-26). Cron-runs zijn
+        # 6+ uur uit elkaar, dus ~8 min max-wachttijd is acceptabel.
+        self._retry_backoff_s = (30, 60, 120, 300)
         self.base_url = API_ENDPOINTS['open_meteo_forecast']
         self.marine_url = API_ENDPOINTS['open_meteo_marine']
         self.archive_url = API_ENDPOINTS['open_meteo_archive']
@@ -156,15 +162,31 @@ class OpenMeteoClient:
                 return response.json()
 
             except httpx.HTTPError as e:
-                logger.warning(f"Open-Meteo request failed (attempt {attempt + 1}/{self.max_retries}): {e}")
+                # 4xx (behalve 429) zijn permanente fouten — retry is zinloos,
+                # fail fast zodat we niet 8 min wachten op een code-bug.
+                if isinstance(e, httpx.HTTPStatusError):
+                    status = e.response.status_code
+                    if 400 <= status < 500 and status != 429:
+                        logger.error(
+                            f"Open-Meteo non-retryable {status}: {e}"
+                        )
+                        raise
+
+                logger.warning(
+                    f"Open-Meteo request failed "
+                    f"(attempt {attempt + 1}/{self.max_retries}): {e}"
+                )
 
                 if attempt == self.max_retries - 1:
                     raise
 
-                # Exponential backoff met jitter — voorkomt thundering-herd
+                # Lange backoff met 10% jitter — voorkomt thundering-herd
                 # wanneer parallelle marine+forecast-calls tegelijkertijd in
                 # retry-state belanden.
-                await asyncio.sleep(2 ** attempt + random.uniform(0, 0.5))
+                base = self._retry_backoff_s[attempt]
+                sleep_s = base + random.uniform(0, base * 0.1)
+                logger.info(f"Open-Meteo retry in {sleep_s:.1f}s")
+                await asyncio.sleep(sleep_s)
 
         raise Exception("Max retries exceeded")
 
