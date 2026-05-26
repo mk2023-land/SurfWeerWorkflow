@@ -172,7 +172,16 @@ EXTRA SIGNALEN
 - `tide_context.spring_tide=true` voor de hele forecast OF
   `tide_summary.spring_neap_label="springtij"` voor díe dag → noem
   "springtij". Anders NIET noemen.
-- `peak_height_hour.swell_refracts_around_ijmuiden=true` → noem pier-blokkade.
+- `peak_height_hour.swell_refracts_around_ijmuiden=true` → noem dat de
+  swell-richting ongunstig is voor Noordwijk. NOOIT "pier" zeggen — er
+  is geen pier IN Noordwijk en de IJmuiden-pier op 25 km is te ver weg
+  om geometrisch te blokkeren. Het echte mechanisme is kust-oriëntatie:
+  de Hollandse kust loopt SW-NE, dus N/NNO swell komt schuin aan en
+  refracteert weg / verliest hoogte. Schrijf bv. "swell schuin op de
+  kust", "N-richting refracteert weg", "ongunstige hoek voor Noordwijk".
+  Eén keer per dag is genoeg — bij meerdere N/NNO-dagen op rij niet bij
+  elke dag herhalen, groep het in een algemene zin of laat het bij
+  dagen waar het het meest verschil maakt.
 - `peak_height_hour.swell_type="groundswell"` → benoem groundswell + periode.
 - `model_spread_warning=true` op een dag → noem dat "modellen nog uiteen"
   of "voorspelling nog onzeker" voor díe dag. Niet kwantitatief uitleggen.
