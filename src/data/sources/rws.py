@@ -246,16 +246,33 @@ class RWSClient:
         unit = (waarneming.get('AquoMetadata', {}).get('Eenheid') or {}).get('Code')
 
         out = []
+        sentinel_count = 0
         for m in waarneming.get('MetingenLijst', []) or []:
             tijd = m.get('Tijdstip')
             waarde = (m.get('Meetwaarde') or {}).get('Waarde_Numeriek')
             if tijd is None or waarde is None:
                 continue
+            val = float(waarde)
+            # RWS DDAPI20 markeert "geen meting" met sentinel-waarden
+            # (typisch 999.99, 999.0, -999.99). Voor 26-mei-2026 zagen
+            # we 999.99 binnen Hm0-rows op de meest-recente timestamp —
+            # die werd door _RWS_HM0_MAX_M=15 wel gedropt, maar pas in
+            # de merge-stap. Hier filteren we ze direct uit zodat
+            # downstream consumers (bias_log _match_pairs, etc.) geen
+            # zicht meer hebben op sentinel-vervuiling.
+            if abs(val) >= 999.0 and abs(val) <= 1000.0:
+                sentinel_count += 1
+                continue
             out.append({
                 'timestamp': _parse_rws_timestamp(tijd),
-                'value': float(waarde),
+                'value': val,
                 'unit': unit,
             })
+        if sentinel_count:
+            logger.info(
+                f"RWS {grootheid}@{location_code}: {sentinel_count} "
+                f"sentinel-waarden (~999.99) gefilterd"
+            )
         out.sort(key=lambda x: x['timestamp'])
         return out
 
@@ -406,7 +423,29 @@ class RWSClient:
         }
         hm0_rows = rows_by_code.get(GROOTHEID_HM0, [])
         if not hm0_rows:
-            logger.warning(f"Geen Hm0 voor {station_code}; geen merged punten")
+            # Fail-fast diagnostiek: dump per-grootheid telling én de exacte
+            # POST-body die we naar DDAPI20 stuurden, zodat een stille
+            # data-blackout (sensor offline / API-shift / auth-issue) niet
+            # onopgemerkt blijft in productie. Eerder logde dit één enkele
+            # regel "Geen Hm0 voor IJG1" wat te weinig was om de oorzaak te
+            # vinden zonder lokaal probe-script (mei 2026 IJG1-incident).
+            sample_body = {
+                'Locatie': {'Code': rws_code},
+                'AquoPlusWaarnemingMetadata': {'AquoMetadata': {
+                    'Compartiment': {'Code': 'OW'},
+                    'Grootheid': {'Code': GROOTHEID_HM0},
+                }},
+                'Periode': {
+                    'Begindatumtijd': start.isoformat(timespec='milliseconds'),
+                    'Einddatumtijd': end.isoformat(timespec='milliseconds'),
+                },
+            }
+            per_code_counts = {c: len(rows_by_code.get(c, [])) for c in quantities}
+            logger.warning(
+                f"RWS station {station_code} ({rws_code}): Hm0 leeg → 0 merged "
+                f"punten. URL={self.period_url} body={json.dumps(sample_body)} "
+                f"per_grootheid_counts={per_code_counts}"
+            )
             return []
 
         # Per-timestamp lookups voor elke beschikbare grootheid.

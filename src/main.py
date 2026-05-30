@@ -290,12 +290,17 @@ class SurfAlertSystem:
             # specifieke logica. Lijst van enum-values als strings.
             run_log.alert_types_detected = [t.value for t in triggered_alerts]
 
-            # Decision-veld vroeg op run_log zetten zodat _archive_sent_sms
-            # (in de blokken hieronder) het juiste type ("digest"/"alert")
-            # in het archief vastlegt. Voorheen werd dit pas in
-            # _update_run_log gezet — ná de archief-call — wat resulteerde
-            # in alle archief-entries met decision="skip".
-            run_log.decision = decision.action
+            # Decision-veld + boei-snapshot velden VROEG op run_log zetten
+            # zodat _archive_sent_sms (in de blokken hieronder) zowel het
+            # juiste type ("digest"/"alert") ALS de actuele IJG1/A12 buoy-
+            # snapshot in het archief vastlegt. Voorheen werd dit pas in
+            # _update_run_log na de notificatie-blokken gezet — resultaat:
+            # alle archief-entries met decision="skip" en buoy_*=None,
+            # ondanks dat de boei-data wel in rws_data zat. Issue mei 2026:
+            # bias_log + forecasts_log toonden IJG1-records, maar sms_archive
+            # bleef null. Daarom _update_run_log NU hier — daarna in stap 8
+            # geen tweede call meer nodig (idempotent want zelfde input).
+            self._update_run_log(run_log, hourly_scores, alertworthy_windows, decision, rws_data)
 
             # Stap 7: Genereer en verstuur notificatie (mail of SMS)
             if decision.has_alert:
@@ -368,8 +373,11 @@ class SurfAlertSystem:
                 logger.info(f"No action: {decision.skip_reason}")
                 run_log.sms_sent = None
 
-            # Stap 8: Update run log
-            self._update_run_log(run_log, hourly_scores, alertworthy_windows, decision, rws_data)
+            # Stap 8: run_log al gepopuleerd vóór de notify-blokken
+            # (zie commentaar boven _update_run_log call). Geen tweede call
+            # nodig — alle velden zijn final op het moment dat we hier
+            # aankomen. Logging van completion staat hier voor consistentie
+            # met eerdere release-versies.
 
             logger.info(f"Run completed successfully in {(datetime.now() - start_time).total_seconds():.1f}s")
 
