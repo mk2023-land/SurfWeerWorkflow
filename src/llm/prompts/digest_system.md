@@ -164,6 +164,17 @@ Daarna in alle gevallen:
 - Tij — verweven in de zin, NIET als window-grens:
   - tide_summary.next_high_time / next_low_time zijn TIJ-EVENTS, geen
     surfvenster-grenzen. Verwoord ze als losse referenties.
+  - tide_summary.high_tide_times_today / low_tide_times_today bevatten
+    ALLE HW/LW-tijden van díe dag (HH:MM, Europe/Amsterdam). Mag je
+    citeren als het tij-keerpunt relevant is voor de surf-conditie
+    (bv. peak valt op of vlak na een kentering, of vloed bouwt door de
+    surf-window heen). Eén tij-tijd per dag is meestal genoeg. NIET
+    elke dag een tij-tijd plakken alleen omdat het kan — alleen wanneer
+    het de surf-keuze duidt.
+  - tide_summary.phase_at_peak ("opgaand"/"afgaand") + .current_velocity_norm
+    (0-1.2) geven de stroming-context op piek-uur. Bij norm ≥ 0.6 mag
+    "stroming staat stevig" / "vloed komt vol op". Bij norm < 0.3 →
+    rond kentering, "slack water" / "stroming valt weg".
   - tide_window_quality="good" → mag je benoemen.
 
 ═══════════════════════════════════════════════════════════════════════
