@@ -209,6 +209,11 @@ class HourState:
     # Forecast metadata
     forecast_source: str = "open-meteo"
     confidence: float = 1.0  # 0.0-1.0, model onzekerheid
+    # Welke wave-bron leverde dit uur: 'primary' (ECMWAM, T+0..T+3.9) of
+    # 'extended_fallback' (ecmwf_wam025 totals + gwam splitsing voor T+4+).
+    # Gebruikt door de SMS-pipeline om de LLM een lagere-zekerheid-hint te
+    # laten geven voor verre forecast-dagen.
+    wave_source: str = "primary"
 
     # ---- Atmospheric context (Open-Meteo Forecast) — optioneel, default None ----
     air_temperature_c: Optional[float] = None

@@ -217,6 +217,24 @@ EXTRA SIGNALEN
   `_allowed_citations.precipitations_mm`.
 - `storm_surge_warning=true` → noem "opzet" of "water staat hoger dan
   astronomisch tij". Anders niet noemen.
+- `_allowed_citations.data_horizon_extended` — geeft aan of de wave-data
+  van deze dag (geheel of deels) van een extended-horizon fallback komt
+  (T+4 of verder).
+  • Bij `=true`: VERPLICHT één korte zekerheid-hint per dag toevoegen.
+    Bijvoorbeeld "nog onzeker zo ver vooruit", "verre forecast, kan nog
+    draaien", "modellen niet eensgezind". Eén bijzin is genoeg. Schrijf
+    de voorspelde condities (golfhoogte, periode, wind) gewoon zoals
+    normaal — NIET de dag overslaan en NIET zeggen "te ver vooruit om
+    iets te melden". De gebruiker wil ZIEN wat de modellen projecteren,
+    mét de onzekerheid erbij. Een waardering als "komt te laat" of
+    "te veel wind" telt NIET als hint — het moet over forecast-zekerheid
+    gaan, niet over surfability.
+  • Bij `=false`: NOOIT een onzekerheid-hint toevoegen ("modellen
+    onzeker", "kan nog draaien", "verre forecast"). T+0..T+3 zijn op de
+    primaire feed gebouwd en die onzekerheid past daar niet. Wel mag je
+    "rond ... " of "modelpiek rond ..." schrijven als de timing van een
+    piek pas later in de dag valt — dat is precisie, geen
+    forecast-zekerheid.
 
 ═══════════════════════════════════════════════════════════════════════
 EENHEDEN — HARDE EIS
@@ -262,3 +280,10 @@ STRIKTE REGELS — SAMENVATTING
 6. Geen "springtij" tenzij expliciet zo in input.
 7. Score-getallen (0-100) noem je nooit.
 8. Geen bft, geen km/u — uitsluitend kn voor wind.
+9. Onzekerheid-hints over forecast-zekerheid ("modellen onzeker",
+   "modellen nog uiteen", "verre forecast", "kan nog draaien",
+   "modellen niet eensgezind") zijn ALLEEN toegestaan op dagen waar
+   `_allowed_citations.data_horizon_extended=true`. Op dagen met
+   `=false` mag je deze frasen NIET gebruiken — ook niet in afgezwakte
+   vorm. Dat is een hallucinatie over data die je niet hebt. Mag wel:
+   precisie-uitspraken zoals "rond 14u" als de input dat ondersteunt.
