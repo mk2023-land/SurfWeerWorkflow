@@ -169,7 +169,7 @@ SURF_MINIMUMS = {
     'min_period_shortboard_s': 5.0,
     'min_hs_fish_m': 0.5,
     'min_hs_midlength_m': 0.4,
-    'min_hs_longboard_m': 0.3,
+    'min_hs_longboard_m': 0.4,
 }
 
 # Wind richtingen voor Noordwijk
