@@ -215,12 +215,24 @@ class OpenMeteoClient:
         'invert_barometer_height',
     )
 
+    # Extended-horizon fallback modellen. ECMWF WAM 0.25° dekt T+0..T+15
+    # voor totals (wave_height/period/direction) maar levert GEEN swell/
+    # wind_wave splitsing. DWD GWAM 25km dekt T+0..T+7 met volledige split-
+    # set (swell_*, wind_wave_*, peak_period). Combinatie: ecmwf voor totals
+    # + gwam voor splitsing → bruikbare data tot T+7 zonder de Open-Meteo
+    # default-horizon (~T+3) als harde knip.
+    #
+    # Live getest 2026-05-30: zie scripts/probe_marine_models.py.
+    _FALLBACK_TOTALS_MODEL = 'ecmwf_wam025'
+    _FALLBACK_SPLIT_MODEL = 'gwam'
+
     async def fetch_marine_data(
         self,
         lat: float = None,
         lon: float = None,
         hours: int = 168,  # 7 dagen
         models: Optional[List[str]] = None,
+        fill_extended_horizon: bool = True,
     ) -> List[Dict[str, Any]]:
         """
         Haal marine data op (golfhoogtes, periodes, richtingen).
@@ -234,6 +246,14 @@ class OpenMeteoClient:
                 ``wave_height_ewam`` in de output-row meegegeven.
 
                 Default: ``None`` (geen extra models, single-source).
+            fill_extended_horizon: Default True. Wanneer de primaire bron
+                (ECMWAM/Open-Meteo default) trailing None-uren heeft binnen
+                het opgevraagde window, vul deze aan met een 2e API-call
+                naar ``ecmwf_wam025`` (totals, T+0..T+15) en ``gwam`` (split-
+                set, T+0..T+7). Voorkomt dat het digest "flat" rapporteert
+                voor T+4/T+5 alleen omdat de default horizon op T+3 stopt.
+                Disable alleen voor backtests waar je een specifieke bron
+                wilt isoleren.
 
         Returns:
             Lijst van uurlijkse data points. Per row staan de basis-velden
@@ -242,6 +262,12 @@ class OpenMeteoClient:
             invert_barometer_height). Bij ``models=['ewam']`` worden ook
             ``wave_height_ewam``, ``wave_period_ewam``, ``wave_direction_ewam``
             (en gelijksoortige suffixed keys) toegevoegd als optionele keys.
+
+            Elke row krijgt ``wave_source`` (str): ``'primary'`` voor uren
+            uit de default ECMWAM-call, ``'extended_fallback'`` voor uren
+            die zijn gevuld vanuit ecmwf_wam025+gwam. Downstream-callers
+            kunnen daarop filteren of in de digest melden "T+4 op
+            extended-horizon model — lagere zekerheid".
         """
         if lat is None:
             lat = NOORDWIJK.lat
@@ -297,6 +323,10 @@ class OpenMeteoClient:
                 'ocean_current_direction': _get('ocean_current_direction', i),
                 'sea_level_height_msl': _get('sea_level_height_msl', i),
                 'invert_barometer_height': _get('invert_barometer_height', i),
+                # Bron-tag: 'primary' = ECMWAM/Open-Meteo default. Wordt
+                # downstream overschreven op 'extended_fallback' wanneer de
+                # row uit ecmwf_wam025+gwam komt (zie _fill_extended_horizon).
+                'wave_source': 'primary',
             }
 
             # Multi-model suffixed velden (bv. DWD EWAM). Open-Meteo gebruikt
@@ -319,7 +349,163 @@ class OpenMeteoClient:
             f"Retrieved {len(result)} hours of marine data "
             f"(fields={len(all_fields)}, extra_models={models or 'none'})"
         )
+
+        # Extended-horizon fill: vervang trailing None-rows met data uit
+        # ecmwf_wam025+gwam. Alleen voor de "kale" call (geen extra models)
+        # waar de fallback semantisch klopt — bij models=['ewam'] etc. is de
+        # caller bewust een specifiek model aan het sourcen, niet vullen.
+        if fill_extended_horizon and not models and result:
+            result = await self._fill_extended_horizon(result, lat, lon)
+
         return result
+
+    async def _fill_extended_horizon(
+        self,
+        primary_rows: List[Dict[str, Any]],
+        lat: float,
+        lon: float,
+    ) -> List[Dict[str, Any]]:
+        """
+        Vul trailing None-uren (wave_height is None) in primary_rows aan met
+        data uit fallback-modellen.
+
+        Strategie:
+        - ecmwf_wam025: bron voor wave_height/period/direction (totals,
+          T+0..T+15). Zelfde model-familie als ECMWAM zodat values
+          consistent zijn met de primary serie.
+        - gwam: bron voor swell_wave_* en wind_wave_* (de splitsing waar
+          ecmwf_wam025 alleen None-kolommen levert). 25km global model;
+          waardes liggen ~30% onder ECMWAM, maar voor "is er signaal
+          überhaupt" T+4..T+6 is dat goed genoeg.
+
+        Geen extrapolatie, geen mock — alleen echte model-output van een
+        ander model. Bron-tag wordt gezet op 'extended_fallback' zodat
+        downstream zichtbaar is dat deze rows van een ander model komen.
+
+        Bij API-fail van de fallback-call: log warning en retourneer
+        primary_rows ongewijzigd (trailing None blijft). Geen exception
+        propagation — het digest moet door kunnen draaien, ook als alleen
+        de eerste 3 dagen data hebben.
+        """
+        # Detect trailing None-tail (eerste index waar wave_height None is
+        # vanaf het einde). Als de primary geen gaten heeft, niets doen.
+        gap_start = None
+        for i, row in enumerate(primary_rows):
+            if row.get('wave_height') is None:
+                gap_start = i
+                break
+        if gap_start is None:
+            logger.debug(
+                "Extended-horizon fill skipped: primary heeft geen gaten "
+                f"({len(primary_rows)} uren volledig)"
+            )
+            return primary_rows
+
+        gap_count = sum(
+            1 for row in primary_rows[gap_start:]
+            if row.get('wave_height') is None
+        )
+        logger.info(
+            f"Extended-horizon fill: primary heeft {gap_count} None-uren "
+            f"vanaf index {gap_start} ({primary_rows[gap_start]['timestamp']}); "
+            f"haal {self._FALLBACK_TOTALS_MODEL} + {self._FALLBACK_SPLIT_MODEL} op"
+        )
+
+        # 1 API call met BEIDE fallback-modellen — Open-Meteo retourneert
+        # dan per veld een suffixed kolom (wave_height_ecmwf_wam025,
+        # wave_height_gwam, swell_wave_height_gwam, …). Single roundtrip.
+        fallback_fields = list(self._MARINE_BASE_FIELDS)
+        params = {
+            'latitude': lat,
+            'longitude': lon,
+            'hourly': ','.join(fallback_fields),
+            'timezone': TIMEZONE,
+            'forecast_days': 7,
+            'models': f"{self._FALLBACK_TOTALS_MODEL},{self._FALLBACK_SPLIT_MODEL}",
+        }
+        try:
+            data = await self._request_with_retry(self.marine_url, params)
+        except Exception as e:
+            logger.warning(
+                f"Extended-horizon fallback API call faalde ({e!r}); "
+                "trailing None-uren blijven leeg"
+            )
+            return primary_rows
+
+        hourly = data.get('hourly', {}) or {}
+        times = hourly.get('time', []) or []
+
+        # Index op timestamp-string (Open-Meteo lokale tz, ISO sans-Z).
+        # Beide bronnen zitten in dezelfde response, dus 1 index volstaat.
+        ts_to_idx = {t: i for i, t in enumerate(times)}
+
+        def _ts_key(dt: datetime) -> str:
+            # primary_rows hebben datetime; Open-Meteo string is "YYYY-MM-DDTHH:00"
+            # zonder tz-offset (kwam binnen met timezone=Europe/Amsterdam zonder Z).
+            return dt.strftime('%Y-%m-%dT%H:%M')
+
+        def _col(field: str, model: str, i: int):
+            col = hourly.get(f"{field}_{model}")
+            if not col or i >= len(col):
+                return None
+            return col[i]
+
+        totals_model = self._FALLBACK_TOTALS_MODEL
+        split_model = self._FALLBACK_SPLIT_MODEL
+
+        filled = 0
+        for row in primary_rows[gap_start:]:
+            if row.get('wave_height') is not None:
+                continue  # Primary had hier al data (verlate fill mid-tail).
+            ts_str = _ts_key(row['timestamp'])
+            idx = ts_to_idx.get(ts_str)
+            if idx is None:
+                continue
+
+            # Totals uit ecmwf_wam025 (hoogste kwaliteit, T+15 horizon)
+            wh = _col('wave_height', totals_model, idx)
+            wp = _col('wave_period', totals_model, idx)
+            wd = _col('wave_direction', totals_model, idx)
+            # Split-set uit gwam (lagere resolutie, T+7 horizon)
+            sh = _col('swell_wave_height', split_model, idx)
+            sp = _col('swell_wave_period', split_model, idx)
+            sd = _col('swell_wave_direction', split_model, idx)
+            wwh = _col('wind_wave_height', split_model, idx)
+            wwp = _col('wind_wave_period', split_model, idx)
+            wwpp = _col('wind_wave_peak_period', split_model, idx)
+            wwd = _col('wind_wave_direction', split_model, idx)
+
+            # Fall back op gwam totals als ecmwf nog niet beschikbaar is
+            # (gebeurt voorbij T+15, of bij specifieke storingen).
+            if wh is None:
+                wh = _col('wave_height', split_model, idx)
+                wp = _col('wave_period', split_model, idx)
+                wd = _col('wave_direction', split_model, idx)
+
+            if wh is None:
+                continue  # Echt geen data — skip, blijft None
+
+            row['wave_height'] = wh
+            row['wave_period'] = wp
+            row['wave_direction'] = wd
+            row['swell_wave_height'] = sh
+            row['swell_wave_period'] = sp
+            row['swell_wave_direction'] = sd
+            row['wind_wave_height'] = wwh
+            row['wind_wave_period'] = wwp
+            row['wind_wave_peak_period'] = wwpp
+            row['wind_wave_direction'] = wwd
+            row['wave_source'] = 'extended_fallback'
+
+            # Sanity-check (zelfde behandeling als primary).
+            _sanity_check_row(row)
+            filled += 1
+
+        logger.info(
+            f"Extended-horizon fill: {filled}/{gap_count} uren gevuld "
+            f"(totals={totals_model}, split={split_model})"
+        )
+        return primary_rows
 
     async def fetch_marine_data_ewam(
         self,

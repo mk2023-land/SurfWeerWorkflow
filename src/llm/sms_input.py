@@ -10,6 +10,9 @@ validator-input — beide paden delen exact dezelfde shape.
 import math
 from datetime import datetime
 from typing import Optional
+from zoneinfo import ZoneInfo
+
+_AMSTERDAM = ZoneInfo('Europe/Amsterdam')
 
 from src.data.models import (
     AlertCandidate,
@@ -554,6 +557,12 @@ def _build_allowed_citations(
         times_hhmm.add(tide_summary["next_high_time"])
     if tide_summary.get("next_low_time"):
         times_hhmm.add(tide_summary["next_low_time"])
+    # Tobias-stijl: alle HW/LW-tijden van DEZE dag mogen geciteerd worden,
+    # niet alleen de "next" (die kan op laat-op-de-dag al morgen zijn).
+    for t in (tide_summary.get("high_tide_times_today") or []):
+        times_hhmm.add(t)
+    for t in (tide_summary.get("low_tide_times_today") or []):
+        times_hhmm.add(t)
 
     # Wind-summary bandgemiddelden + richtingen mogen óók geciteerd worden.
     if wind_summary:
@@ -715,12 +724,80 @@ def _hour_state_to_conditions(state: HourState) -> dict:
     }
 
 
+def _to_amsterdam_hhmm(dt: Optional[datetime]) -> Optional[str]:
+    """Format een datetime als HH:MM in Europe/Amsterdam wall-clock.
+
+    Verwacht ofwel een tz-aware datetime (wordt geconverteerd) of een naive
+    die al in Europe/Amsterdam-tijd is (wordt rechtstreeks gestrftime'd).
+    RWS-tijden komen aware UTC+01:00 (Dutch standard, geen DST) — naïef
+    strftime levert daardoor in zomer de verkeerde wall-clock (1u te vroeg).
+    """
+    if dt is None:
+        return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(_AMSTERDAM)
+    return dt.strftime("%H:%M")
+
+
+def _dedupe_tide_events(events: list[datetime], cluster_minutes: int = 30) -> list[datetime]:
+    """Cluster events binnen `cluster_minutes` tot één representatief tijdstip.
+
+    De RWS-fase-detectie merkt op een vlakke piek soms 2 opeenvolgende 10-min
+    punten als HW/LW (bv. 04:40 én 04:50). Hier collapse'n we die tot het
+    eerste tijdstip per cluster — voor Tobias-stijl SMS is één HW-tijd per
+    halve cyclus genoeg.
+    """
+    sorted_ev = sorted(events)
+    out: list[datetime] = []
+    for ev in sorted_ev:
+        if out and abs((ev - out[-1]).total_seconds()) < cluster_minutes * 60:
+            continue
+        out.append(ev)
+    return out
+
+
 def _tide_summary_for_day(day_states: list[HourState], peak_state: HourState) -> dict:
-    """Eerstvolgende hoog- en laagtij + huidige tij-richting op piek-moment."""
+    """Tij-context voor een specifieke dag.
+
+    Levert:
+    - `phase_at_peak`: opgaand/afgaand/onbekend op piek-uur (currents-richting)
+    - `level_m_at_peak`: tij-hoogte (m NAP) op piek-uur
+    - `next_high_time` / `next_low_time`: eerstvolgende HW/LW vanaf peak-uur,
+      in Europe/Amsterdam wall-clock (kan tomorrow zijn als dag's laatste HW
+      al voorbij is)
+    - `high_tide_times_today` / `low_tide_times_today`: ALLE HW/LW-tijden
+      die op deze kalenderdag vallen (Europe/Amsterdam), als HH:MM-lijst.
+      Tobias citeert vaak exacte tij-keerpunten ("vloed komt vol inzetten
+      15u", "laagtij 10u"); deze velden geven de LLM die data per dag.
+    - `daily_range_m`: HW-LW range (m); driver voor spring/doodtij-label
+    - `spring_neap_label`: "springtij" / "doodtij" / None
+    - `current_velocity_norm`: 0-1.2 schatting van horizontale tij-stroming
+      op piek-uur (slack-water → 0, mid-cycle springtij → ~1.2). Geen
+      kn/ms — alleen relatieve intensiteit voor LLM-kwalificatie.
+    """
     tide = peak_state.tide
-    # next_high/next_low zijn al berekend per HourState; pak de eerste van deze dag.
-    next_high = peak_state.tide.next_high
-    next_low = peak_state.tide.next_low
+
+    # Verzamel ALLE unieke HW- en LW-tijden waar uren in deze dag
+    # naartoe kijken (next_high/next_low per HourState). Per dag levert dit
+    # de eigen HW/LW + (na de dag's laatste HW) de eerste van morgen — we
+    # filteren op kalenderdatum zodat we alleen TIJDEN VAN VANDAAG houden.
+    day_dates = {s.timestamp.date() for s in day_states}
+
+    def _on_this_day(dt: datetime) -> bool:
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(_AMSTERDAM)
+        return dt.date() in day_dates
+
+    high_today_raw = sorted({s.tide.next_high for s in day_states
+                             if s.tide.next_high and _on_this_day(s.tide.next_high)})
+    low_today_raw = sorted({s.tide.next_low for s in day_states
+                            if s.tide.next_low and _on_this_day(s.tide.next_low)})
+    high_today = _dedupe_tide_events(high_today_raw)
+    low_today = _dedupe_tide_events(low_today_raw)
+
+    high_tide_times_today = [t for t in (_to_amsterdam_hhmm(h) for h in high_today) if t]
+    low_tide_times_today = [t for t in (_to_amsterdam_hhmm(l) for l in low_today) if t]
+
     # Daily range geeft springtij-context (≥2.0m = springtij, sterke stroming).
     spring_label = None
     if tide.daily_range_m is not None:
@@ -728,11 +805,25 @@ def _tide_summary_for_day(day_states: list[HourState], peak_state: HourState) ->
             spring_label = "springtij"
         elif tide.daily_range_m < 1.6:
             spring_label = "doodtij"
+
+    # Tidal-current intensity op peak (0-1.2). Geeft de LLM een handvat om
+    # "stroming staat stevig" vs. "slack" te onderscheiden zonder zelf
+    # currents-kn te verzinnen.
+    try:
+        current_velocity_norm = round(
+            tide.tidal_current_intensity(peak_state.timestamp), 2
+        )
+    except Exception:
+        current_velocity_norm = None
+
     return {
         "phase_at_peak": tide.phase,                       # opgaand/afgaand/onbekend
         "level_m_at_peak": round(tide.level_m, 2),
-        "next_high_time": next_high.strftime("%H:%M") if next_high else None,
-        "next_low_time": next_low.strftime("%H:%M") if next_low else None,
+        "next_high_time": _to_amsterdam_hhmm(tide.next_high),
+        "next_low_time": _to_amsterdam_hhmm(tide.next_low),
+        "high_tide_times_today": high_tide_times_today,
+        "low_tide_times_today": low_tide_times_today,
         "daily_range_m": round(tide.daily_range_m, 2) if tide.daily_range_m else None,
         "spring_neap_label": spring_label,
+        "current_velocity_norm": current_velocity_norm,
     }
