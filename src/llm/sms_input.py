@@ -462,6 +462,15 @@ def _summarize_day(
             _hour_state_to_conditions(s) for s, _ in daylight_states_with_scores
         ]
 
+    # Data-horizon: is deze dag (deels) op extended-fallback model gebouwd?
+    # Triggered LLM-zekerheid-hint in de prompt. We accepteren 'primary' OR
+    # 'extended_fallback' per uur; als er enige _fallback uur in zit telt de
+    # hele dag als extended (de hint is dan zinvol).
+    day_wave_sources = [
+        getattr(s, 'wave_source', 'primary') for s in day_states
+    ]
+    extended_horizon = any(src == 'extended_fallback' for src in day_wave_sources)
+
     result["_allowed_citations"] = _build_allowed_citations(
         peak_height_conditions,
         result.get("best_window"),
@@ -469,6 +478,7 @@ def _summarize_day(
         other_windows=result["other_windows"],
         all_day_conditions=all_day_conditions,
         wind_summary=result.get("wind_summary"),
+        extended_horizon=extended_horizon,
     )
 
     return result
@@ -481,6 +491,7 @@ def _build_allowed_citations(
     other_windows: Optional[list] = None,
     all_day_conditions: Optional[list] = None,
     wind_summary: Optional[dict] = None,
+    extended_horizon: bool = False,
 ) -> dict:
     """
     Bouw een whitelist van getallen, tijden en richtingen die de LLM voor
@@ -591,6 +602,11 @@ def _build_allowed_citations(
         "sst_c": _clean(ssts_c),
         "precipitations_mm": _clean(precipitations_mm),
         "visibilities_m": _clean(visibilities_m),
+        # True wanneer de wave-data voor deze dag (geheel of deels) van een
+        # extended-horizon fallback model komt (ECMWF WAM 0.25° + DWD GWAM
+        # i.p.v. de primaire ECMWAM-feed). Geeft de LLM toestemming om een
+        # korte zekerheid-hint toe te voegen voor verre forecast-dagen.
+        "data_horizon_extended": bool(extended_horizon),
     }
 
 

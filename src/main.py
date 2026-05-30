@@ -506,6 +506,7 @@ class SurfAlertSystem:
                     ocean_current_direction_deg=marine.get('ocean_current_direction'),
                     sea_level_height_msl_m=marine.get('sea_level_height_msl'),
                     storm_surge_cm=latest_surge_cm,
+                    wave_source=marine.get('wave_source', 'primary'),
                 )
 
                 hour_states.append(hour_state)
