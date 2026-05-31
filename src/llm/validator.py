@@ -407,32 +407,38 @@ class SMSValidator:
         # baseert beslissing om zee in te gaan op deze SMS, een vals
         # "modellen onzeker" op T+0 kan een feitelijk solide voorspelling
         # ondermijnen.
-        cert_phrases = [
-            'modellen onzeker', 'modellen nog uiteen', 'modellen oneens',
-            'modellen niet eensgezind', 'verre forecast', 'kan nog draaien',
-            'nog onzeker zo ver',
+        # Regex-based detectie (vangt variaties: "modellen onzeker",
+        # "modellen nog onzeker", "modellen niet eensgezind", "nog onzeker
+        # zo ver vooruit", etc.). Substring-matching faalde op "Modellen
+        # nog onzeker" omdat de exacte string "modellen onzeker" niet
+        # letterlijk voorkwam.
+        cert_patterns = [
+            (r'modellen?\s+(?:nog\s+)?(?:onzeker|oneens|uiteen|niet\s+eensgezind)',
+             'modellen-onzeker variant'),
+            (r'verre\s+forecast', 'verre forecast'),
+            (r'kan\s+nog\s+draaien', 'kan nog draaien'),
+            (r'\bnog\s+onzeker\b', 'nog onzeker'),
+            (r'forecast\s+kan\s+nog', 'forecast kan nog'),
         ]
         # Split SMS in dag-blokken op "Nwijk <weekdag>:" zodat we per dag
         # de toestemming kunnen checken.
-        # Map weekdag-prefix → date string door volgorde te volgen.
         days = structured_input.get('days') or []
         day_blocks = re.split(r'(?=Nwijk\s+\w+:)', sms_text)
-        # Eerste blok kan intro/leeg zijn; filter
         day_blocks = [b for b in day_blocks if re.match(r'Nwijk\s+\w+:', b)]
         for i, block in enumerate(day_blocks):
             if i >= len(days):
-                break  # SMS heeft meer dag-blokken dan input — apart issue
+                break
             day = days[i] or {}
             cit = day.get('_allowed_citations') or {}
             if cit.get('data_horizon_extended'):
-                continue  # mag wel, hint is hier expliciet toegestaan
+                continue  # extended horizon — hint is hier expliciet toegestaan
             block_l = block.lower()
-            for phrase in cert_phrases:
-                if phrase in block_l:
+            for pattern, label in cert_patterns:
+                if re.search(pattern, block_l):
                     issues.append(
-                        f"Forecast-certainty frase '{phrase}' op primary dag "
-                        f"(data_horizon_extended=false) — hallucinatie, "
-                        f"LLM heeft geen grond voor model-onzekerheid op T+0..T+3"
+                        f"Forecast-certainty frase ({label}) op primary dag "
+                        f"{day.get('date','?')} — hallucinatie, LLM heeft "
+                        f"geen grond voor model-onzekerheid op T+0..T+3"
                     )
                     break  # één issue per blok is genoeg
 
