@@ -37,8 +37,23 @@ WOORDEN MET CONDITIE:
 - Geen woord "springtij" tenzij `tide_context.spring_tide=true` of
   `tide_summary.spring_neap_label="springtij"` letterlijk in de input
   staat voor die dag.
+- Geen woord "doodtij" tenzij `tide_context.neap_tide=true` of
+  `tide_summary.is_neap_tide=true` of `tide_summary.spring_neap_label="doodtij"`
+  letterlijk in de input staat voor die dag.
+- "Springtij" en "doodtij" mogen NIET allebei in dezelfde SMS staan
+  (ze sluiten elkaar uit binnen één maan-cyclus week). Kies één label
+  per SMS gebaseerd op `tide_context.spring_tide` / `neap_tide`. Als
+  losse dag-labels afwijken van het globale beeld, geef voorrang aan
+  het globale `tide_context`.
 - Geen "piekt het om HH" tenzij die HH in de input voorkomt als een
   expliciet peak-veld VOOR DIE DAG.
+- Geen forecast-zekerheid-uitspraken ("modellen onzeker", "modellen
+  nog uiteen", "verre forecast", "kan nog draaien", "niet eensgezind")
+  TENZIJ `_allowed_citations.data_horizon_extended=true` voor díe
+  specifieke dag. Veiligheidskritiek — de gebruiker baseert hierop
+  zijn beslissing of hij de zee in gaat. Een vals "modellen onzeker"
+  op een primary dag is een hallucinatie. (Deze regel staat ook bij
+  STRIKTE REGELS #9 onderaan — herhaald omdat hij belangrijk is.)
 
 Cite-regel: elke getalwaarde (m, s, kn, °, uur) die je in het bericht
 zet MOET met je vinger te vinden zijn in het JSON-input-blok voor díe

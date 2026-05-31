@@ -297,6 +297,97 @@ class SMSValidator:
             if not self._input_mentions_spring_tide(structured_input):
                 issues.append("Springtij geclaimd maar niet in input")
 
+        # 7b. "Doodtij" alleen als input dat zegt (symmetrisch met springtij).
+        # Voorkomt LLM die "doodtij" gebruikt als generieke "weinig tij"-term
+        # waar de werkelijke fase iets anders is.
+        if 'doodtij' in sms_text.lower():
+            if not self._input_mentions_neap_tide(structured_input):
+                issues.append("Doodtij geclaimd maar niet in input")
+
+        # 7b-2. PER-DAG check voor doodtij/springtij. _input_mentions_* zijn
+        # globaal — als één dag spring/neap is, accepteren ze die term overal
+        # in de SMS. Hier strikter: doodtij/springtij mag alleen genoemd
+        # worden in het dag-blok waar het label er expliciet voor staat
+        # (of waar het globale tide_context geldt). Voorkomt run-4-pattern
+        # van "Springtij deze week" + "Doodtij maandag" door elkaar — die
+        # zijn semantisch tegenstrijdig.
+        tc_global = structured_input.get('tide_context') or {}
+        global_spring = bool(tc_global.get('spring_tide'))
+        global_neap = bool(tc_global.get('neap_tide'))
+        days_for_tide = structured_input.get('days') or []
+        tide_blocks = re.split(r'(?=Nwijk\s+\w+:)', sms_text)
+        tide_blocks = [b for b in tide_blocks if re.match(r'Nwijk\s+\w+:', b)]
+        for i, block in enumerate(tide_blocks):
+            if i >= len(days_for_tide):
+                break
+            day = days_for_tide[i] or {}
+            ts = day.get('tide_summary') or {}
+            day_label = ts.get('spring_neap_label')
+            day_spring = (day_label == 'springtij') or ts.get('is_spring_tide') is True
+            day_neap = (day_label == 'doodtij') or ts.get('is_neap_tide') is True
+            block_l = block.lower()
+            if 'springtij' in block_l and not (day_spring or global_spring):
+                issues.append(
+                    f"Springtij genoemd op dag {day.get('date','?')} "
+                    f"maar niet in input voor die dag (label={day_label})"
+                )
+            if 'doodtij' in block_l and not (day_neap or global_neap):
+                issues.append(
+                    f"Doodtij genoemd op dag {day.get('date','?')} "
+                    f"maar niet in input voor die dag (label={day_label})"
+                )
+
+        # 7b-3. Springtij EN doodtij in dezelfde SMS — vrijwel altijd
+        # tegenstrijdig (één week kan niet beide globaal zijn). Tenzij de
+        # input WEL beide bevat (uitzonderlijk, bv. data-glitch).
+        sms_lower = sms_text.lower()
+        if 'springtij' in sms_lower and 'doodtij' in sms_lower:
+            input_has_both = (
+                self._input_mentions_spring_tide(structured_input)
+                and self._input_mentions_neap_tide(structured_input)
+            )
+            if not input_has_both:
+                issues.append(
+                    "Springtij EN doodtij in dezelfde SMS — semantisch "
+                    "tegenstrijdig en niet door input ondersteund"
+                )
+
+        # 7c. Forecast-certainty frasen ALLEEN op dagen waar
+        # _allowed_citations.data_horizon_extended=true (T+4+ fallback model).
+        # Op primary dagen (T+0..T+3) is "modellen onzeker" een hallucinatie
+        # over data die de LLM niet heeft. Veiligheidskritiek: gebruiker
+        # baseert beslissing om zee in te gaan op deze SMS, een vals
+        # "modellen onzeker" op T+0 kan een feitelijk solide voorspelling
+        # ondermijnen.
+        cert_phrases = [
+            'modellen onzeker', 'modellen nog uiteen', 'modellen oneens',
+            'modellen niet eensgezind', 'verre forecast', 'kan nog draaien',
+            'nog onzeker zo ver',
+        ]
+        # Split SMS in dag-blokken op "Nwijk <weekdag>:" zodat we per dag
+        # de toestemming kunnen checken.
+        # Map weekdag-prefix → date string door volgorde te volgen.
+        days = structured_input.get('days') or []
+        day_blocks = re.split(r'(?=Nwijk\s+\w+:)', sms_text)
+        # Eerste blok kan intro/leeg zijn; filter
+        day_blocks = [b for b in day_blocks if re.match(r'Nwijk\s+\w+:', b)]
+        for i, block in enumerate(day_blocks):
+            if i >= len(days):
+                break  # SMS heeft meer dag-blokken dan input — apart issue
+            day = days[i] or {}
+            cit = day.get('_allowed_citations') or {}
+            if cit.get('data_horizon_extended'):
+                continue  # mag wel, hint is hier expliciet toegestaan
+            block_l = block.lower()
+            for phrase in cert_phrases:
+                if phrase in block_l:
+                    issues.append(
+                        f"Forecast-certainty frase '{phrase}' op primary dag "
+                        f"(data_horizon_extended=false) — hallucinatie, "
+                        f"LLM heeft geen grond voor model-onzekerheid op T+0..T+3"
+                    )
+                    break  # één issue per blok is genoeg
+
         # 8. Lengte cap — Tobias' eigen SMS'jes zitten op 1400-1700 tekens.
         # Voor ntfy maakt het niet uit. SMS_VALIDATOR_MAX_LEN (src.config) als
         # centrale waarde — gedeeld met notifier-laag.
@@ -461,6 +552,21 @@ class SMSValidator:
         for day in structured_input.get('days') or []:
             ts = (day or {}).get('tide_summary') or {}
             if ts.get('spring_neap_label') == 'springtij':
+                return True
+        return False
+
+    def _input_mentions_neap_tide(self, structured_input: dict) -> bool:
+        """Check of doodtij ergens in de input expliciet is gezegd."""
+        tc = structured_input.get('tide_context') or {}
+        if tc.get('neap_tide') is True:
+            return True
+        if tc.get('spring_tide_label') == 'doodtij':
+            return True
+        for day in structured_input.get('days') or []:
+            ts = (day or {}).get('tide_summary') or {}
+            if ts.get('spring_neap_label') == 'doodtij':
+                return True
+            if ts.get('is_neap_tide') is True:
                 return True
         return False
 
