@@ -352,6 +352,54 @@ class SMSValidator:
                     "tegenstrijdig en niet door input ondersteund"
                 )
 
+        # 5b. PER-DAG wave/periode/wind validatie (safety-kritiek).
+        # De globale checks (1-3) mergen ALLE dagen + lookahead in één
+        # whitelist — een 2,2m piek op T+5 maakt dan "2,2m" overal in de
+        # SMS valide, ook op een T+4 dag waar het model max 1,6m geeft.
+        # Hier extra: split SMS in dag-blokken en check elk getal tegen
+        # DAT DAG'S allowed_citations. Wezenlijk strikter dan globaal.
+        days_pd = structured_input.get('days') or []
+        blocks_pd = re.split(r'(?=Nwijk\s+\w+:)', sms_text)
+        blocks_pd = [b for b in blocks_pd if re.match(r'Nwijk\s+\w+:', b)]
+        for i, block in enumerate(blocks_pd):
+            if i >= len(days_pd):
+                break
+            day = days_pd[i] or {}
+            day_cit = day.get('_allowed_citations') or {}
+            day_date = day.get('date', '?')
+            day_heights = day_cit.get('wave_heights_m') or []
+            day_periods = day_cit.get('wave_periods_s') or []
+            day_winds = list(day_cit.get('wind_speeds_kn') or [])
+            day_winds += list(day_cit.get('wind_gusts_kn') or [])
+
+            # Wave-heights in dit blok
+            for m in re.finditer(r'(\d+[\.,]\d+|\d+)\s*m(?![/a-zA-Z])', block):
+                val = _parse_nl_decimal(m.group(1))
+                if day_heights and not _within(val, day_heights, tol=0.15):
+                    issues.append(
+                        f"Wave height {val}m op dag {day_date} niet in DAG-"
+                        f"specifieke allowed {day_heights} — citatie van "
+                        f"andere dag/lookahead, mag niet hier staan"
+                    )
+
+            # Wave-periods in dit blok
+            for m in re.finditer(r'(\d+[\.,]\d+|\d+)\s*s(?=[\s\.,;:!?]|$)', block):
+                val = _parse_nl_decimal(m.group(1))
+                if day_periods and not _within(val, day_periods, tol=0.5):
+                    issues.append(
+                        f"Wave period {val}s op dag {day_date} niet in DAG-"
+                        f"specifieke allowed {day_periods}"
+                    )
+
+            # Wind-speeds in dit blok (inclusief gusts)
+            for m in re.finditer(r'(\d+[\.,]\d+|\d+)\s*kn(?:open)?\b', block):
+                val = _parse_nl_decimal(m.group(1))
+                if day_winds and not _within(val, day_winds, tol=1.0):
+                    issues.append(
+                        f"Wind speed {val}kn op dag {day_date} niet in DAG-"
+                        f"specifieke allowed {sorted(day_winds)}"
+                    )
+
         # 7c. Forecast-certainty frasen ALLEEN op dagen waar
         # _allowed_citations.data_horizon_extended=true (T+4+ fallback model).
         # Op primary dagen (T+0..T+3) is "modellen onzeker" een hallucinatie
