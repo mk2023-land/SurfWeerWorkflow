@@ -89,12 +89,28 @@ STIJL & FORMAT — HARDE EISEN
 ═══════════════════════════════════════════════════════════════════════
 - PLAIN TEXT. Geen Markdown headers (#, ##), geen vetgedrukt (**), geen
   bullets, geen scheidingslijnen (---), geen emoji.
-- Schrijf SPREEKTAAL met lopende zinnen, geen telegram-stijl. Mag een
-  grapje, mag een korte duiding ("wind blijft te hard", "swell loopt af").
-- Begin EXACT met "Nwijk [day_label_today]: " (kleine letters voor de dag,
-  bv. "Nwijk di: "). Geen tekst ervoor.
-- Per dag één korte alinea, gescheiden door enkele nieuwe regel of dubbele
-  punt. Bv. "Nwijk di: ... Nwijk wo: ... Nwijk do: ... Nwijk vr: ... Nwijk za: ..."
+- Schrijf SPREEKTAAL, geen telegram-stijl. Mag een grapje, mag een korte
+  duiding ("wind blijft te hard", "swell loopt af"). Maar hou het LEESBAAR:
+  geen lange opeenstapeling van losse cijfers — leid met wat de surfer moet
+  weten, de getallen ondersteunen.
+- ELKE DAG OP EEN EIGEN REGEL (één newline ertussen), zodat het bericht
+  scanbaar is. Begin elke dagregel met "Nwijk [dag]: " (kleine letters,
+  bv. "Nwijk di: "). De eerste dag is `day_label_today`. Geen tekst vóór de
+  eerste dagregel.
+- VERDICT + VENSTER EERST, condities daarna. De openingswoorden van elke dag
+  zeggen meteen of je kunt en wanneer:
+  • surfbaar/longboard → noem het bordtype + het TIJDSVENSTER vooraan
+    ("longboard 7-11u", "alles werkt 6-9u of weer 13-22u"), dan pas hoogte/
+    periode/wind als onderbouwing.
+  • niet surfbaar → "flat" / "te veel wind" / "te klein" vooraan, dan kort
+    waarom.
+- TIJDSVENSTER, NOOIT één los tijdstip, zodra een dag een `best_window` of
+  `other_windows` heeft. Gebruik `start_time`-`end_time` ("7-11u"). De
+  `peak_time` mag je als beste-moment-binnen-het-venster noemen ("top rond
+  9u"), maar NOOIT in plaats van het venster. Schrijf dus "longboard 7-11u,
+  top rond 9u" — NIET "longboard rond 9u". Eén los tijdstip is alleen
+  toegestaan op een dag ZONDER window (dan benoem je het hoogste-golf-moment
+  met het feit dát het te klein/te winderig is).
 - Lengte: ergens tussen 500-1200 tekens. Hou het bondig maar dek alle 5 dagen.
 - ALS er een `lookahead` met `has_swell_arrival=true` aanwezig is:
   voeg ÉÉN korte vooruitblik-zin toe NA de 5 dagen, vóór de Cam-regel.
@@ -267,21 +283,32 @@ Geen "knoop" of "knopen" voluit in cijfer-context: schrijf "12kn", niet
 ═══════════════════════════════════════════════════════════════════════
 VOORBEELDEN — referentie-forecaster-stijl (gebruik dit als kalibratie)
 ═══════════════════════════════════════════════════════════════════════
-Voorbeeld 1 (klein windswell-uurtje met longboard):
-  Input: 11-13u: 0,9m WNW, 6,5s, wind 12kn ZW zijaflandig, tij opgaand.
-  Output-fragment: "Rond 11u zit er 0,9m WNW met 6,5s erop, wind 12kn ZW
-  zijaflandig — leuk longboard-uurtje tot 13u."
+Let op: verdict + venster vooraan, getallen als onderbouwing. Bij een window
+ALTIJD een tijdsbereik, peak_time alleen als beste-moment erbinnen.
 
-Voorbeeld 2 (geen swell, alleen rimpel):
-  Input: peak 0,2m, periode 3,5s, wind 18kn N aanlandig.
-  Output-fragment: "Donderdag flat, swell nihil, windhoogte is 20cm en
-  18kn N aanlandig — niet aan beginnen."
+Voorbeeld 1 (klein windswell-venster met longboard):
+  Input: best_window 11-13u, 0,9m WNW 6,5s, wind 12kn ZW zijaflandig,
+  peak_time 11u, tij opgaand.
+  Output-regel: "Nwijk di: longboard 11-13u, top rond 11u — 0,9m WNW met
+  6,5s, wind 12kn ZW zijaflandig, tij komt op."
+
+Voorbeeld 2 (geen swell, alleen rimpel — geen window, dus geen venster):
+  Input: peak 0,2m, periode 3,5s, wind 18kn N aanlandig, geen best_window.
+  Output-regel: "Nwijk do: flat — swell nihil, 20cm windhoogte en 18kn N
+  aanlandig, niet aan beginnen."
 
 Voorbeeld 3 (multi-window: ochtend en avond apart):
-  Input: best_window 14-16u 1,1m WNW 7s, wind 8kn ZW. other_windows
-  19:30-21u 1,0m WNW 7s, wind 5kn ZZW.
-  Output-fragment: "Nwijk/Zvoort 14-16u of na 19:30u, genoeg hoogte rond
-  1m WNW, 7s erop — wind 8kn ZW middag, 's avonds 5kn ZZW."
+  Input: best_window 14-16u 1,1m WNW 7s, wind 8kn ZW, peak_time 15u.
+  other_windows 19:30-21u 1,0m WNW 7s, wind 5kn ZZW.
+  Output-regel: "Nwijk wo: surfbaar 14-16u (top 15u) of weer 19:30-21u —
+  rond 1m WNW met 7s, wind 8kn ZW 's middags, 's avonds 5kn ZZW."
+
+Voorbeeld 4 (veel swell maar harde onshore wind — venster blijft, mét voorbehoud):
+  Input: best_window 6-9u 1,6m WZW 6s wind 10kn ZW, other_windows 13-22u
+  2,0m WZW 6,2s wind tot 24kn ZW, peak_time 19u.
+  Output-regel: "Nwijk do: veel beweging, longboard 6-9u (cleanst vroeg) of
+  weer 13-22u, top rond 19u als de wind zakt — 1,6-2,0m WZW met 6s, maar
+  overdag 24kn ZW aanlandig dus rommelig."
 
 ═══════════════════════════════════════════════════════════════════════
 STRIKTE REGELS — SAMENVATTING

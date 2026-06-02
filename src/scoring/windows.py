@@ -233,13 +233,23 @@ def analyze_windows(
     seasonal_baseline: dict = None
 ) -> list[SurfWindow]:
     """
-    Analyseer alle surf windows in de forecast — zowel shortboard-surfable
-    (peak ≥ SURF_THRESHOLDS['surfable']) als longboard-only
-    (peak ≥ SURF_THRESHOLDS['longboard'] maar < surfable).
+    Analyseer alle surf windows in de forecast.
 
-    Een longboard-cluster dat een surfable-cluster volledig bevat wordt
-    overgeslagen om dubbeltelling te voorkomen — alleen "echte" longboard-
-    windows (die niet upgrade-baar zijn naar surfable) komen erbij.
+    Eén venster = een aaneengesloten span van RIJDBARE uren
+    (score ≥ SURF_THRESHOLDS['longboard']). De `kind` van het venster volgt
+    uit de piek binnen die span: 'surfable' als de piek ≥ surfable-drempel
+    (shortboard-rideable), anders 'longboard' (alleen longboard/fish).
+
+    Waarom de span op de longboard-drempel ligt en niet op de surfable-drempel:
+    een dag als "1,5-2m WZW, hele dag longboard-baar met een paar uur dat de
+    60-drempel haalt" hoort als ÉÉN venster ("6-9u, top vroeg") naar buiten te
+    komen, niet als losse 1-uurs surfable-pieken. De oude dual-pass logica
+    bouwde aparte surfable-clusters (≥60) én longboard-clusters (≥42) en gooide
+    vervolgens élke longboard-cluster weg die toevallig één surfable-uur bevatte
+    — waardoor een 10-uurs longboard-span verdween en alleen het losse 60+-uur
+    overbleef. Resultaat: cryptische enkel-tijdstippen i.p.v. tijdsvensters.
+    Door de span op de longboard-drempel te leggen en `kind` op de piek te
+    bepalen verdwijnt die dubbeltelling én blijft het venster intact.
 
     Args:
         hourly_scores: Uurlijkse scores
@@ -247,58 +257,44 @@ def analyze_windows(
         seasonal_baseline: Seizoensbaseline data
 
     Returns:
-        Gecombineerde lijst SurfWindow objecten met `kind` ∈ {'surfable', 'longboard'}.
+        Lijst SurfWindow objecten met `kind` ∈ {'surfable', 'longboard'}.
     """
     if triggers_dict is None:
         triggers_dict = {}
 
     surfable_threshold = SURF_THRESHOLDS['surfable']
     longboard_threshold = SURF_THRESHOLDS['longboard']
-    min_golf_surfable = SURF_THRESHOLDS['min_golf_surfable']
     min_golf_longboard = SURF_THRESHOLDS['min_golf_longboard']
 
-    def _build(clusters, kind):
-        out = []
-        for cluster in clusters:
-            cluster_triggers = set()
-            for score in cluster:
-                if score.timestamp in triggers_dict:
-                    cluster_triggers.update(triggers_dict[score.timestamp])
-            out.append(create_surf_window(
-                scores=cluster,
-                triggers=list(cluster_triggers),
-                seasonal_baseline=seasonal_baseline,
-                kind=kind,
-            ))
-        return out
-
-    surfable_clusters = cluster_consecutive_hours(
-        hourly_scores, min_score=surfable_threshold, min_golf=min_golf_surfable
-    )
-    surfable_windows = _build(surfable_clusters, 'surfable')
-
-    longboard_clusters = cluster_consecutive_hours(
+    # Eén pass op de longboard-drempel levert de rijdbare spans. Een surfable-uur
+    # (≥60, golf ≥ min_golf_surfable=15) zit per definitie óók boven de
+    # longboard-drempel (≥42, golf ≥ min_golf_longboard=5), dus geen enkel
+    # surfbaar uur gaat verloren door alleen deze pass te draaien.
+    clusters = cluster_consecutive_hours(
         hourly_scores, min_score=longboard_threshold, min_golf=min_golf_longboard
     )
-    surfable_hours = {s.timestamp for w in surfable_windows for s in w.hourly_scores}
 
-    # Een longboard-cluster wordt alleen toegevoegd als peak NIET surfable is —
-    # anders is het al gedekt door de surfable-window.
-    longboard_only_windows = []
-    for cluster in longboard_clusters:
+    windows = []
+    for cluster in clusters:
+        cluster_triggers = set()
+        for score in cluster:
+            if score.timestamp in triggers_dict:
+                cluster_triggers.update(triggers_dict[score.timestamp])
         peak_score = max(s.total_score for s in cluster)
-        if peak_score >= surfable_threshold:
-            continue  # dit is een surfable window, al gedekt
-        # Check geen overlap met surfable hours (kan voorkomen rond drempel-flanks)
-        if any(s.timestamp in surfable_hours for s in cluster):
-            continue
-        longboard_only_windows.extend(_build([cluster], 'longboard'))
+        kind = 'surfable' if peak_score >= surfable_threshold else 'longboard'
+        windows.append(create_surf_window(
+            scores=cluster,
+            triggers=list(cluster_triggers),
+            seasonal_baseline=seasonal_baseline,
+            kind=kind,
+        ))
 
-    all_windows = surfable_windows + longboard_only_windows
+    n_surfable = sum(1 for w in windows if w.kind == 'surfable')
     logger.info(
-        f"Found {len(surfable_windows)} surfable + {len(longboard_only_windows)} longboard-only windows"
+        f"Found {len(windows)} windows ({n_surfable} surfable, "
+        f"{len(windows) - n_surfable} longboard-only)"
     )
-    return all_windows
+    return windows
 
 
 def filter_alertworthy_windows(windows: list[SurfWindow]) -> list[SurfWindow]:
