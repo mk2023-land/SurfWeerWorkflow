@@ -123,14 +123,36 @@ def iribarren_factor(
     return 1.00
 
 
+def _offshore_groom(cos_offshore: Optional[float], wind_speed_kn: Optional[float]) -> float:
+    """
+    Grooming-fractie (0.0-1.0) van aflandige wind die een zee opschoont.
+
+    Aflandige/zij-aflandige wind strijkt het oppervlak glad: windzee + swell
+    naast elkaar wordt dan een opschoning ("clean windlijn", Tobias) i.p.v.
+    chaotische chop. 0.0 = geen grooming (aanlandig, glassy <3kn, of >22kn die
+    de boel juist afblaast); 1.0 = volledige grooming bij volle side-offshore.
+    cos_offshore: +1 pure offshore, 0 cross-shore, −1 onshore (zie wind.py).
+    """
+    if (cos_offshore is None or wind_speed_kn is None
+            or cos_offshore <= 0.0 or wind_speed_kn < 3.0 or wind_speed_kn > 22.0):
+        return 0.0
+    return min(1.0, cos_offshore / 0.30)  # vol effect vanaf side-offshore (cos≥0.30)
+
+
 def mixed_sea_penalty(
     spectrum: WaveSpectrum,
     angle_threshold_deg: float = 30.0,
     min_height_m: float = 0.4,
+    cos_offshore: Optional[float] = None,
+    wind_speed_kn: Optional[float] = None,
 ) -> tuple:
     """
     Detecteer 'mixed sea' — twee swell-componenten uit duidelijk verschillende
     richtingen. Resultaat is rommelig wave-veld zonder dominante set-richting.
+
+    Aflandige wind heft de penalty (deels) op: de wind groomt de coëxistentie
+    van windzee + swell tot een clean windlijn i.p.v. chop. Zonder wind-context
+    (cos_offshore/wind_speed_kn None) is het gedrag ongewijzigd t.o.v. vroeger.
 
     Returns: (is_mixed: bool, penalty: float in pt).
     """
@@ -147,7 +169,10 @@ def mixed_sea_penalty(
     raw = abs(p1.direction_deg - p2.direction_deg) % 360
     angle = min(raw, 360 - raw)
     if angle >= angle_threshold_deg:
-        return (True, -3.0)
+        penalty = -3.0 * (1.0 - _offshore_groom(cos_offshore, wind_speed_kn))
+        if penalty < -0.05:
+            return (True, penalty)
+        return (False, 0.0)
     return (False, 0.0)
 
 
@@ -170,12 +195,21 @@ def wave_quality_spread_factor(directional_spread_deg: Optional[float]) -> float
     return 0.88
 
 
-def partition_energy_components(wave_spectrum: WaveSpectrum) -> dict:
+def partition_energy_components(
+    wave_spectrum: WaveSpectrum,
+    cos_offshore: Optional[float] = None,
+    wind_speed_kn: Optional[float] = None,
+) -> dict:
     """
     Per-partition wave-energy decompositie.
 
     Returns dict met swell_energy_kwm, wind_sea_energy_kwm, swell_height_m,
     wind_sea_height_m, dominant_period_s, effective_height_m.
+
+    Bij aflandige, gematigde wind wordt de windzee-downweging (0.65×) verzacht
+    richting 1.0: de wind strijkt de windzee tot rideable face i.p.v. chop, dus
+    die hoort dan vollediger mee te tellen in de effectieve hoogte. Zonder
+    wind-context blijft de oude 0.65×-weging gelden.
     """
     decomposition = decompose_spectrum(wave_spectrum)
 
@@ -210,8 +244,13 @@ def partition_energy_components(wave_spectrum: WaveSpectrum) -> dict:
     swell_energy = wave_energy_flux(swell_h, swell_T) if swell_h > 0 and swell_T > 0 else 0.0
     wind_energy = wave_energy_flux(wind_h, wind_T) if wind_h > 0 and wind_T > 0 else 0.0
 
+    wind_sea_mult = PARTITION_WEIGHTS['wind_sea_multiplier']
+    groom = _offshore_groom(cos_offshore, wind_speed_kn)
+    if groom > 0.0:
+        # Verzacht de downweging richting volledige weging bij offshore grooming.
+        wind_sea_mult = wind_sea_mult + (PARTITION_WEIGHTS['swell_multiplier'] - wind_sea_mult) * groom
     swell_e_h_sq = swell_h ** 2 * PARTITION_WEIGHTS['swell_multiplier']
-    wind_e_h_sq = wind_h ** 2 * PARTITION_WEIGHTS['wind_sea_multiplier']
+    wind_e_h_sq = wind_h ** 2 * wind_sea_mult
     eff_height = math.sqrt(swell_e_h_sq + wind_e_h_sq)
 
     # Fallback bij geen partities: gebruik Hs met multiplier 0.90.

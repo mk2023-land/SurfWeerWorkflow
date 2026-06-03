@@ -17,6 +17,7 @@ from src.data.models import (
     WindState,
 )
 from src.scoring.hourly import score_golf_component, score_hour, score_wind_component
+from src.scoring.wave_modifiers import mixed_sea_penalty
 
 # Deterministisch timestamp midden op de dag (zomertijd 11:00 NL = 09:00 UTC).
 # Voorkomt flaky tests bij datetime.now() — score_hour past sinds blok 3 een
@@ -1568,6 +1569,71 @@ class TestRarityPercentileWeekLookup:
             f"(p70={self._BASELINE['week_52']['p70']}); "
             f"kreeg week1={pct_week_1}, week52={pct_week_52}"
         )
+
+
+class TestOffshoreGrooming:
+    """
+    Regressie voor de wo-avond 'clean windlijn' (2026-06-03, Tobias-benchmark).
+
+    Aflandige, gematigde wind groomt een kleine mixed sea (windzee + swell uit
+    verschillende richtingen) tot een rideable clean windlijn i.p.v. chop:
+    - mixed_sea_penalty wordt opgeheven,
+    - de windzee telt vollediger mee in de effectieve hoogte → hogere golf-score.
+    Aanlandige wind, harde wind (>22kn) en ontbrekende wind-context laten het
+    oude (pessimistische) gedrag intact, zodat echte chop-dagen niet vals-positief
+    worden.
+    """
+
+    def _mixed_spectrum(self):
+        swell = SpectralPeak(
+            frequency_mhz=185, period_s=5.4, height_m=0.7,
+            direction_deg=250, type=SwellType.WIND_SWELL,
+        )
+        windsea = SpectralPeak(
+            frequency_mhz=370, period_s=2.7, height_m=0.45,
+            direction_deg=200, type=SwellType.WIND_SEA,
+        )
+        return WaveSpectrum(
+            timestamp=_FIXED_TS, significant_height_total=0.85,
+            mean_period=4.8, mean_direction=240, peaks=[swell, windsea],
+        )
+
+    def test_mixed_penalty_suppressed_offshore(self):
+        is_mixed, pen = mixed_sea_penalty(
+            self._mixed_spectrum(), cos_offshore=0.5, wind_speed_kn=13.0
+        )
+        assert not is_mixed
+        assert pen == 0.0
+
+    def test_mixed_penalty_kept_onshore(self):
+        is_mixed, pen = mixed_sea_penalty(
+            self._mixed_spectrum(), cos_offshore=-0.5, wind_speed_kn=13.0
+        )
+        assert is_mixed
+        assert pen == -3.0
+
+    def test_mixed_penalty_unchanged_without_wind_context(self):
+        # Backward-compat: oude callers zonder wind-context → ongewijzigd gedrag.
+        is_mixed, pen = mixed_sea_penalty(self._mixed_spectrum())
+        assert is_mixed
+        assert pen == -3.0
+
+    def test_mixed_penalty_kept_when_too_windy(self):
+        # >22kn blaast de zee af i.p.v. te groomen → penalty blijft staan.
+        is_mixed, pen = mixed_sea_penalty(
+            self._mixed_spectrum(), cos_offshore=0.5, wind_speed_kn=26.0
+        )
+        assert is_mixed
+        assert pen == -3.0
+
+    def test_golf_higher_with_offshore_grooming(self):
+        spec = self._mixed_spectrum()
+        golf_offshore = score_golf_component(spec, cos_offshore=0.5, wind_speed_kn=13.0)
+        golf_onshore = score_golf_component(spec, cos_offshore=-0.5, wind_speed_kn=13.0)
+        golf_nocontext = score_golf_component(spec)
+        assert golf_offshore > golf_onshore
+        # Onshore en geen-context moeten identiek zijn (geen grooming).
+        assert golf_nocontext == pytest.approx(golf_onshore, abs=0.01)
 
 
 if __name__ == "__main__":
