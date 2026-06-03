@@ -81,3 +81,5 @@ Thumbs.db
 
 # GitHub Actions runner files
 .github/workflows/*.bak
+# CI-artefact van run_validation_backtest.py
+tests/validation_output.json
