@@ -12,8 +12,6 @@ from datetime import datetime
 from typing import Optional
 from zoneinfo import ZoneInfo
 
-_AMSTERDAM = ZoneInfo('Europe/Amsterdam')
-
 from src.data.models import (
     AlertCandidate,
     HourState,
@@ -32,6 +30,8 @@ from .sms_formatting import (
     peak_block,
     wind_label_for_noordwijk,
 )
+
+_AMSTERDAM = ZoneInfo('Europe/Amsterdam')
 
 
 def _prepare_alert_input(alert: AlertCandidate) -> dict:
@@ -812,7 +812,7 @@ def _tide_summary_for_day(day_states: list[HourState], peak_state: HourState) ->
     low_today = _dedupe_tide_events(low_today_raw)
 
     high_tide_times_today = [t for t in (_to_amsterdam_hhmm(h) for h in high_today) if t]
-    low_tide_times_today = [t for t in (_to_amsterdam_hhmm(l) for l in low_today) if t]
+    low_tide_times_today = [t for t in (_to_amsterdam_hhmm(lt) for lt in low_today) if t]
 
     # Daily range geeft springtij-context (≥2.0m = springtij, sterke stroming).
     spring_label = None

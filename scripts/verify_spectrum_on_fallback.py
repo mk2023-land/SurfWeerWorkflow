@@ -2,6 +2,7 @@
 voor extended_fallback rows (gemixt totals=ecmwf + split=gwam).
 """
 import asyncio
+
 from src.data.sources.open_meteo import _get_openmeteo_client
 
 

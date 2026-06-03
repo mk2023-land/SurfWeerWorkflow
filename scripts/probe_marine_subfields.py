@@ -1,17 +1,12 @@
 """Check welke subfields beschikbaar zijn per model voor de volle 7 dagen."""
 import json
-import urllib.request
 import urllib.parse
-from collections import defaultdict
+import urllib.request
 
 LAT = 52.241
 LON = 4.428
 URL = "https://marine-api.open-meteo.com/v1/marine"
-FIELDS = (
-    "wave_height,wave_period,wave_direction,"
-    "swell_wave_height,swell_wave_period,swell_wave_direction,"
-    "wind_wave_height,wind_wave_period,wind_wave_peak_period,wind_wave_direction"
-).split(",")
+FIELDS = ["wave_height", "wave_period", "wave_direction", "swell_wave_height", "swell_wave_period", "swell_wave_direction", "wind_wave_height", "wind_wave_period", "wind_wave_peak_period", "wind_wave_direction"]
 
 
 def fetch(model):

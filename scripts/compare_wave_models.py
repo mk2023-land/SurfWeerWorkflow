@@ -6,8 +6,8 @@ Doel: bevestigen dat een fallback-model:
 - alle subfields (swell, wind_wave) heeft
 """
 import json
-import urllib.request
 import urllib.parse
+import urllib.request
 
 LAT = 52.241
 LON = 4.428
@@ -41,13 +41,15 @@ def main():
 
     times = default["hourly"]["time"]
     print(f"{'time':<18}  {'default':>10}  {'gwam':>10}  {'ecwam':>10}")
+    def fmt(v):
+        return f"{v:>10.2f}" if v is not None else f"{'None':>10}"
+
     # Sample every 6h
     for i in range(0, len(times), 6):
         t = times[i]
         d = default["hourly"]["wave_height"][i]
         g = gwam["hourly"]["wave_height"][i]
         e = ecwam["hourly"]["wave_height"][i]
-        fmt = lambda v: f"{v:>10.2f}" if v is not None else f"{'None':>10}"
         print(f"{t:<18}  {fmt(d)}  {fmt(g)}  {fmt(e)}")
 
     print("\n--- T+4..T+6 details voor ecmwf_wam025 ---")

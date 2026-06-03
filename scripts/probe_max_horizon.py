@@ -1,7 +1,7 @@
 """Test max forecast horizon (forecast_days param) per model."""
 import json
-import urllib.request
 import urllib.parse
+import urllib.request
 
 LAT = 52.241
 LON = 4.428

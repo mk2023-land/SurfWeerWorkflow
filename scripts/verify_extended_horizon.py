@@ -27,7 +27,7 @@ async def main():
         print(f"{day:<12} {d['wh_ok']}/{d['total']:<10} {srcs}")
 
     # Specifieke check: T+4 noon
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
     today = datetime.now().date()
     t_plus_4 = today + timedelta(days=4)
     print(f"\n--- Sample rows op T+4 ({t_plus_4}) ---")

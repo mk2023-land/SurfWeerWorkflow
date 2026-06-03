@@ -158,14 +158,19 @@ class ValidationRunner:
             if abs((weather['timestamp'] - marine['timestamp']).total_seconds()) > 3600:
                 continue
 
+            # Archief-API geeft incidenteel None voor wind/golf-velden; zonder
+            # wind-richting/-snelheid is een uur niet te scoren → overslaan.
+            if weather.get('wind_speed') is None or weather.get('wind_direction') is None:
+                continue
+
             try:
                 from src.data.models import HourState, TideState, WaveSpectrum, WindState
 
                 wave_spectrum = WaveSpectrum(
                     timestamp=weather['timestamp'],
-                    significant_height_total=marine.get('wave_height', 0.0),
-                    mean_period=marine.get('wave_period', 0.0),
-                    mean_direction=int(marine.get('wave_direction', 0.0)),
+                    significant_height_total=marine.get('wave_height') or 0.0,
+                    mean_period=marine.get('wave_period') or 0.0,
+                    mean_direction=int(marine.get('wave_direction') or 0),
                     peaks=[]
                 )
 
