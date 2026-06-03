@@ -12,8 +12,8 @@ from pathlib import Path
 
 sys.path.insert(0, '/home/merlijn/Merlijn/SurfWeerWorkflow')
 
-from src.data.sources.rws import fetch_all_rws_data
 from src.data.models import RunLog
+from src.data.sources.rws import fetch_all_rws_data
 
 
 async def main():
@@ -35,12 +35,6 @@ async def main():
         decision='digest',
     )
     run_log.sms_text_full = 'TEST SMS body'
-
-    # Importeer de echte methodes via een lichte SurfAlertSystem-instantie.
-    # We mocken alleen wat noodzakelijk is (state-load, etc.) door het systeem
-    # in dry_run + via __new__ te bouwen (geen volledige __init__).
-    from src.main import SurfAlertSystem
-    sys_obj = SurfAlertSystem.__new__(SurfAlertSystem)
 
     # Repliceer _update_run_log voor de buoy-velden (lichtgewicht test).
     if rws_data.get('primary_buoy', {}).get('spectra'):

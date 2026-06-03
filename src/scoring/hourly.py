@@ -74,15 +74,22 @@ _dominant_period_partition_based = dominant_period_partition_based
 logger = logging.getLogger(__name__)
 
 
-def score_golf_component(wave_spectrum: WaveSpectrum) -> float:
+def score_golf_component(
+    wave_spectrum: WaveSpectrum,
+    cos_offshore: Optional[float] = None,
+    wind_speed_kn: Optional[float] = None,
+) -> float:
     """
     Bereken golf score (max SCORING_WEIGHTS['golf_max']).
 
     Partition-aware: effective_height_m combineert swell + 0.65×wind-zee
     kwadratisch. Periode-factor uit zwaarste partitie. T4 groundswell-door-
     windsea bonus (+8, +4 extra bij Tp≥11s) en clean-swell bonus (+1).
+
+    Bij aflandige, gematigde wind telt de windzee vollediger mee (grooming),
+    zie partition_energy_components.
     """
-    partitions = partition_energy_components(wave_spectrum)
+    partitions = partition_energy_components(wave_spectrum, cos_offshore, wind_speed_kn)
     eff_height = partitions['effective_height_m']
 
     if eff_height < 0.5:
@@ -147,13 +154,15 @@ def score_hour(state: HourState, context: Optional[dict] = None) -> ScoreBreakdo
             swell_dir_bonus=0.0,
         )
 
-    golf_score = score_golf_component(state.wave_spectrum)
+    # Offshore-context vóór de golf-component: aflandige grooming laat de
+    # windzee vollediger meetellen in de effectieve hoogte (referentie-forecaster' clean windlijn).
+    cos_offshore = _wind_direction_cosine(state.wind.direction_deg, NOORDWIJK.beach_normal_deg)
+    golf_score = score_golf_component(state.wave_spectrum, cos_offshore, state.wind.speed_kn)
 
     # Bereken alle 6 golf-modifiers afzonderlijk en combineer via weighted-sum.
     we_factor = wave_energy_factor(Hs, Tp)
     age_factor = wave_age_factor(Tp, state.wind.speed_kn)
     iri_factor = iribarren_factor(Hs, Tp, tide_normalized=state.tide.normalized_level)
-    cos_offshore = _wind_direction_cosine(state.wind.direction_deg, NOORDWIJK.beach_normal_deg)
     face_q = wave_face_quality(state.wind.speed_kn, cos_offshore)
 
     trend = 1.0
@@ -187,7 +196,11 @@ def score_hour(state: HourState, context: Optional[dict] = None) -> ScoreBreakdo
     )
     golf_score *= combined_factor
 
-    is_mixed_sea, mixed_pen = mixed_sea_penalty(state.wave_spectrum)
+    is_mixed_sea, mixed_pen = mixed_sea_penalty(
+        state.wave_spectrum,
+        cos_offshore=cos_offshore,
+        wind_speed_kn=state.wind.speed_kn,
+    )
     if is_mixed_sea:
         golf_score = max(0.0, golf_score + mixed_pen)
 

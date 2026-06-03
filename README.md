@@ -123,7 +123,7 @@ tests/
 
 scripts/
 ├── send_test_notification.py        # End-to-end test van notifier-pipeline
-├── ingest_forecaster_message.py     # Forecaster-referentieberichten archiveren als training-labels (private repo)
+├── ingest_reference_message.py         # referentie-forecaster-referentieberichten archiveren als training-labels (private repo ~/Merlijn/referentie-forecaster)
 └── run_validation_backtest.py       # Backtest validatie tegen historische SMS dataset
 
 research/                  # 9 onderzoeksrapporten + master plan
@@ -204,7 +204,7 @@ python scripts/run_validation_backtest.py
 - **Bias log**: `data/bias_log.jsonl` (forecast-vs-observation, voor Sprint 4 XGBoost training)
 - **Boei-spectrum history**: `data/buoy_spectra_history.jsonl` (rolling input voor T1 swell-arrival detector)
 - **SMS-archief**: `data/sms_archive/YYYY-MM.jsonl` — elke verstuurde digest/alert permanent in git voor model-training, auto-commit door check.yml
-- **Forecaster-referentie-archief**: aparte private repo (user-geleverde SMS + parse-metadata, training-labels). Pad configureerbaar via `FORECASTER_ARCHIVE_DIR` env-var.
+- **referentie-forecaster-referentie-archief**: aparte private repo `~/Merlijn/referentie-forecaster` (user-geleverde SMS + parse-metadata, training-labels + `PATTERNS.md` referentie-forecaster-vs-systeem benchmark). Pad configureerbaar via `REF_ARCHIVE_DIR` env-var.
 
 **Persistentie**: De GitHub Actions cache bewaart de hele `data/` map tussen runs (unique key per run + restore-keys fallback). Daarnaast wordt `data/sms_archive/` na elke succesvolle send naar git gepushed, zodat training-data permanent bewaard blijft ook als de cache zou expireren.
 

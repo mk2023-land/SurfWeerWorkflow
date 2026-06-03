@@ -9,7 +9,7 @@ Draait alleen data-fetch + scoring + window-analyse — GEEN LLM, GEEN notify.
 import asyncio
 from collections import defaultdict
 
-from src.config import SURF_THRESHOLDS, SURF_MINIMUMS
+from src.config import SURF_MINIMUMS, SURF_THRESHOLDS
 from src.main import SurfAlertSystem
 from src.scoring.daylight import is_daylight_noordwijk
 from src.scoring.hourly import compute_wind_spread_per_hour, score_hour_series
@@ -27,8 +27,8 @@ async def main():
 
     om = await sys._fetch_openmeteo() if hasattr(sys, "_fetch_openmeteo") else None
     if om is None:
-        from src.data.sources.open_meteo import fetch_all_openmeteo_data
         from src.config import NOORDWIJK
+        from src.data.sources.open_meteo import fetch_all_openmeteo_data
         om = await fetch_all_openmeteo_data(NOORDWIJK.lat, NOORDWIJK.lon)
 
     rws = {}
@@ -58,7 +58,8 @@ async def main():
     windows = analyze_windows(scores, {}, seasonal_baseline=sys.seasonal_baseline if hasattr(sys, "seasonal_baseline") else None)
 
     score_by_ts = {s.timestamp: s for s in scores}
-    LB = SURF_THRESHOLDS["longboard"]; SF = SURF_THRESHOLDS["surfable"]
+    LB = SURF_THRESHOLDS["longboard"]
+    SF = SURF_THRESHOLDS["surfable"]
     by_day = defaultdict(list)
     for st in hour_states:
         by_day[st.timestamp.date()].append(st)
@@ -83,8 +84,10 @@ async def main():
             wdir = comp(ws.mean_direction)
             wind = st.wind
             flag = ""
-            if sc.total_score >= SF: flag = "  <<SURFABLE"
-            elif sc.total_score >= LB: flag = "  <longboard"
+            if sc.total_score >= SF:
+                flag = "  <<SURFABLE"
+            elif sc.total_score >= LB:
+                flag = "  <longboard"
             src = "" if st.wave_source == "primary" else f" [{st.wave_source}]"
             print(f"  {h:02d}u  {hs:0.2f}m {wdir:>3} {per:0.1f}s | "
                   f"wind {wind.speed_kn:0.1f}kn {comp(wind.direction_deg):>3} | "

@@ -3,9 +3,9 @@
 Throwaway research script — niet ingelijfd in productie.
 """
 import json
-import urllib.request
-import urllib.parse
 import urllib.error
+import urllib.parse
+import urllib.request
 from collections import defaultdict
 
 LAT = 52.241
@@ -74,7 +74,7 @@ def summarize(model):
         use_col = col or suffix_col
         if use_col:
             by_day = defaultdict(lambda: [0, 0])
-            for t, v in zip(times, use_col):
+            for t, v in zip(times, use_col, strict=False):
                 day = t[:10]
                 by_day[day][0] += 1
                 if v is not None:

@@ -7,16 +7,16 @@ dezelfde dag. Een 6-maands archief geeft genoeg data voor supervised
 learning op surfability-categorisering.
 
 Gebruik (interactief):
-    python scripts/ingest_forecaster_message.py
+    python scripts/ingest_reference_message.py
     [plak SMS, Ctrl+D / Cmd+D om af te sluiten]
 
 Gebruik (CLI argument):
-    python scripts/ingest_forecaster_message.py --date 2026-05-20 --text "..."
+    python scripts/ingest_reference_message.py --date 2026-05-20 --text "..."
 
 Gebruik (via stdin pipe):
-    cat msg_today.txt | python scripts/ingest_forecaster_message.py --date 2026-05-20
+    cat msg_today.txt | python scripts/ingest_reference_message.py --date 2026-05-20
 
-Bestand-layout (in de private archive-repo):
+Bestand-layout (in de private archive-repo ~/Merlijn/referentie-forecaster):
     data/ref_archive/
         2026-05-19.txt        ← raw SMS-tekst
         2026-05-19.meta.json  ← geparste metadata (datum, spots, verdict)
@@ -30,14 +30,14 @@ import sys
 from datetime import date, datetime
 from pathlib import Path
 
-# Forecaster-referentie-archief leeft sinds 2026-05-22 in een aparte private
-# repo (auteursrechtelijk materiaal). Default verwacht een naast-staande
-# clone; override met de FORECASTER_ARCHIVE_DIR env-var voor een andere locatie.
+# referentie-forecaster-referentie-archief leeft sinds 2026-05-22 in een aparte private repo
+# (auteursrechtelijk materiaal): ~/Merlijn/referentie-forecaster. Default verwacht die naast
+# de hoofdrepo; override met de REF_ARCHIVE_DIR env-var voor een andere locatie.
 _default_archive = (
     Path(__file__).resolve().parent.parent.parent
-    / 'SurfWeerWorkflow-referentie-forecaster-archive' / 'data' / 'ref_archive'
+    / 'referentie-forecaster' / 'data' / 'ref_archive'
 )
-ARCHIVE_DIR = Path(os.environ.get('FORECASTER_ARCHIVE_DIR', _default_archive))
+ARCHIVE_DIR = Path(os.environ.get('REF_ARCHIVE_DIR', _default_archive))
 
 # Bekende spot-namen die referentie-forecaster gebruikt — voor extractie van per-spot windows
 SPOT_PATTERNS = {
