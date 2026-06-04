@@ -150,6 +150,44 @@ class TestSwellArrivalDetectorB2Fix:
         assert result is None, "Zonder spectrum in 10-14h venster moet T1 None zijn"
 
 
+class TestWindShiftWindow:
+    """C-fix: WindShiftDetector vergelijkt over een 6-uurs venster [i, i+6],
+    niet de oude 11-uurs span [i-5, i+6] die randen oversloeg."""
+
+    @staticmethod
+    def _hour(ts: datetime, direction_deg: int, speed_kn: float) -> HourState:
+        return HourState(
+            timestamp=ts,
+            location_name="Noordwijk",
+            wave_spectrum=_make_spec(ts, 9.0, 1.2),  # swell >= 0.7 aanwezig
+            wind=WindState(speed_kn=speed_kn, direction_deg=direction_deg, gusts_kn=speed_kn + 2),
+            tide=TideState(
+                level_m=0.0, phase="opgaand",
+                next_high=ts + timedelta(hours=2), next_low=ts + timedelta(hours=8),
+                daily_range_m=2.0,
+            ),
+            forecast_source="test", confidence=1.0,
+        )
+
+    def _forecast(self, dirs: list[int], speed_kn: float = 10.0) -> list[HourState]:
+        return [self._hour(_NOW + timedelta(hours=h), d, speed_kn) for h, d in enumerate(dirs)]
+
+    def test_offshore_shift_over_6h_triggers(self):
+        """Onshore (270° W) → offshore (110° OZO) over precies 6u, zwakke wind,
+        swell aanwezig → T2 vuurt. Minimale lengte 7 bewijst de off-by-one-fix."""
+        from src.alerts.detectors import WindShiftDetector
+        fc = self._forecast([270, 250, 220, 190, 160, 130, 110])  # len 7
+        result = WindShiftDetector().detect(forecast=fc)
+        assert result is not None
+        assert result.alert_type == AlertType.WIND_SHIFT
+
+    def test_no_shift_no_alert(self):
+        """Stabiele onshore wind → geen shift → geen alert."""
+        from src.alerts.detectors import WindShiftDetector
+        fc = self._forecast([270, 272, 268, 271, 269, 270, 271])
+        assert WindShiftDetector().detect(forecast=fc) is None
+
+
 class TestB9PrimaryAlertSelection:
     """
     B9 regressie: select_primary_alert_type kiest deterministisch via

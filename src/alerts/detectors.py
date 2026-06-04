@@ -142,13 +142,15 @@ class WindShiftDetector:
         Returns:
             AlertCandidate of None
         """
-        if len(forecast) < 6:
+        if len(forecast) < 7:
             return None
 
-        # Loop over forecast op zoek naar shift
-        for i in range(5, len(forecast) - 6):
-            hour_before = forecast[i - 5]
-            forecast[i]
+        # Loop over forecast op zoek naar een shift binnen een 6-uurs venster.
+        # Voorheen vergeleek dit forecast[i-5] met forecast[i+6] — een 11-uurs
+        # span (niet de gedocumenteerde 6u) die bovendien de eerste en laatste
+        # uren oversloeg. Nu: elk aaneengesloten 6u-venster [i, i+6].
+        for i in range(0, len(forecast) - 6):
+            hour_before = forecast[i]
             hour_after = forecast[i + 6]
 
             # Bereken richting verschil (account voor 0/360 wraparound)
