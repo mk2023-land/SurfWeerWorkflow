@@ -118,11 +118,14 @@ class TestFallbackDigestTemplate:
             scores.append(_make_score(ts, total=65.0 if hs >= 0.5 else 10.0))
         return states, scores
 
-    def test_fallback_includes_surfweerbericht_header(self):
-        d0 = datetime(2026, 5, 20)
+    def test_fallback_starts_with_nwijk_and_day_abbr(self):
+        d0 = datetime(2026, 5, 20)  # woensdag
         s, sc = self._make_day(d0, hs=0.9)
         sms = self.gen._fallback_digest_template(s, sc, [])
-        assert sms.startswith("Surf-update Noordwijk van "), sms
+        # Verdict-eerst format: per-dag regel begint met 'Nwijk <dag>:' zodat
+        # de digest-format-validator (vereist dagafkorting) ook de fallback toelaat.
+        assert sms.startswith("Nwijk"), sms
+        assert "Nwijk wo:" in sms, sms
 
     def test_fallback_includes_webcam(self):
         d0 = datetime(2026, 5, 20)
@@ -165,15 +168,15 @@ class TestFallbackDigestTemplate:
             states.extend(ds)
             scores.extend(sc)
         sms = self.gen._fallback_digest_template(states, scores, [])
-        # Vandaag, Morgen, Overmorgen, +3 als labels
-        assert "Vandaag" in sms
-        assert "Morgen" in sms
-        assert "Overmorgen" in sms
-        assert "+3" in sms
-        # Minstens 1 'flat' regel (morgen en +3)
+        # base 2026-05-20 = wo → dagen wo, do, vr, za als per-dag labels
+        assert "Nwijk wo:" in sms
+        assert "Nwijk do:" in sms
+        assert "Nwijk vr:" in sms
+        assert "Nwijk za:" in sms
+        # Minstens 1 'flat' regel (do en za)
         assert sms.lower().count("flat") >= 1
-        # Stevige wind-marker
-        assert "(sterk)" in sms  # wind_kn=18 → "(sterk)"
+        # Stevige wind-marker (wind_kn=18 → ' sterk')
+        assert "sterk" in sms
 
     def test_window_renders_as_range(self):
         d0 = datetime(2026, 5, 20)
@@ -191,7 +194,8 @@ class TestFallbackDigestTemplate:
             kind='surfable',
         )
         sms = self.gen._fallback_digest_template(s, sc, [w])
-        assert "11:00-14:00" in sms
+        # Compact tijdformat: hele uren zonder minuten, 'u' aan het eind.
+        assert "11-14u" in sms
 
     def test_multi_window_joined_with_ook(self):
         """Twee windows in dezelfde dag worden gejoind met ' ook '."""
