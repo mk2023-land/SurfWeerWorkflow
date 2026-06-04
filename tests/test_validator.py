@@ -152,6 +152,27 @@ class TestRangeExpressions:
         assert any('6' in i and 'period' in i.lower() for i in result.issues), \
             f"Verwacht period 6s-issue, kreeg: {result.issues}"
 
+    def test_period_word_seconden_is_validated(self):
+        """D-fix: periode uitgeschreven als 'seconden'/'sec' (referentie-forecaster-proza) mag
+        niet aan de validator ontsnappen — eerder matchte alleen 'Xs'."""
+        allowed = {
+            'wave_heights_m': [1.0], 'wave_periods_s': [7],
+            'wind_speeds_kn': [], 'wind_directions_compass': [],
+            'wave_directions_compass': ['W'], 'times_hhmm': [],
+        }
+        cam = " Cam: surfweer.nl/webcams/noordwijk/"
+        # 12 niet in allowed (7) → moet gevangen worden, ook uitgeschreven.
+        for txt in ("periode 12 seconden", "periode 12 sec"):
+            r = self.v.validate_sms("Nwijk do: 1,0m W, " + txt + "." + cam,
+                                    _make_days_input(allowed))
+            assert not r.passed and any('period' in i.lower() for i in r.issues), \
+                f"{txt!r} ontsnapte: {r.issues}"
+        # Legitieme '7 seconden' (in allowed) mag GEEN false-positive geven.
+        r_ok = self.v.validate_sms("Nwijk do: 1,0m W, periode 7 seconden." + cam,
+                                   _make_days_input(allowed))
+        assert not any('period' in i.lower() for i in r_ok.issues), \
+            f"False-positive op legitieme 7 seconden: {r_ok.issues}"
+
 
 class TestTideTimeTolerance:
     """Tide-time tolerance: 15min default, 30min bij rond/omstreeks."""

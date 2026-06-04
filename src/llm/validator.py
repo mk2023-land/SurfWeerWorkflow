@@ -129,7 +129,7 @@ class SMSValidator:
         # 2. Wave periods "Xs" — ranges eerst ("6-8s"), dan losse waarden.
         period_spans: list[tuple] = []
         for match in re.finditer(
-            r'(\d+[\.,]?\d*)\s*[-–—]\s*(\d+[\.,]?\d*)\s*s(?=[\s\.,;:!?]|$)',
+            r'(\d+[\.,]?\d*)\s*[-–—]\s*(\d+[\.,]?\d*)\s*(?:s|sec|seconden)(?=[\s\.,;:!?]|$)',
             sms_text,
         ):
             period_spans.append((match.start(), match.end()))
@@ -140,7 +140,7 @@ class SMSValidator:
                         f"Wave period {val}s not in allowed periods {allowed['wave_periods_s']}"
                     )
 
-        for match in re.finditer(r'(\d+[\.,]\d+|\d+)\s*s(?=[\s\.,;:!?]|$)', sms_text):
+        for match in re.finditer(r'(\d+[\.,]\d+|\d+)\s*(?:s|sec|seconden)(?=[\s\.,;:!?]|$)', sms_text):
             if any(not (match.end() <= cs or match.start() >= ce)
                    for cs, ce in period_spans):
                 continue
@@ -383,7 +383,7 @@ class SMSValidator:
                     )
 
             # Wave-periods in dit blok
-            for m in re.finditer(r'(\d+[\.,]\d+|\d+)\s*s(?=[\s\.,;:!?]|$)', block):
+            for m in re.finditer(r'(\d+[\.,]\d+|\d+)\s*(?:s|sec|seconden)(?=[\s\.,;:!?]|$)', block):
                 val = _parse_nl_decimal(m.group(1))
                 if day_periods and not _within(val, day_periods, tol=0.5):
                     issues.append(
