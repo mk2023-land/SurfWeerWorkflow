@@ -152,21 +152,28 @@ jobs:
       # digest+alert permanent voor latere model-training — onafhankelijk van
       # cache-expiratie. Concurrency-group hierboven serializeert runs, dus
       # geen race. `git pull --rebase` vangt overlap met rebuild-baseline op.
-      - name: Commit SMS archive to git
+      #
+      # Naast het SMS-archief committen we ook data/state.json en
+      # data/monthly_budget.json. Die dedup-state (cooldown, weekly-cap,
+      # last_digest_time) leefde voorheen ALLEEN in de Actions-cache; bij
+      # cache-eviction (7d/10GB LRU) viel het systeem terug op "first run"
+      # → cooldown weg + weekly-cap reset → dubbele digest/alert mogelijk.
+      # Door state in git te committen is de cache nog slechts een optimalisatie
+      # en git de duurzame bron van waarheid. Beide files veranderen alleen bij
+      # een echte send, dus de commit-frequentie blijft gelijk aan het archief.
+      - name: Commit state + SMS archive to git
         if: github.event_name == 'schedule'
         run: |
-          if [ ! -d data/sms_archive ] || [ -z "$(ls -A data/sms_archive 2>/dev/null)" ]; then
-            echo "Geen archive files — niets te committen"
-            exit 0
-          fi
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
-          git add data/sms_archive/
+          for f in data/sms_archive data/state.json data/monthly_budget.json; do
+            [ -e "$f" ] && git add "$f"
+          done
           if git diff --staged --quiet; then
-            echo "Archive ongewijzigd — niets te committen"
+            echo "State + archief ongewijzigd — niets te committen"
             exit 0
           fi
-          git commit -m "SMS-archief: $(date -u +'%Y-%m-%dT%H:%MZ') run"
+          git commit -m "State + SMS-archief: $(date -u +'%Y-%m-%dT%H:%MZ') run"
           # Push met retry: bij een race (remote bewoog ná onze checkout, bv.
           # door rebuild-baseline of een handmatige commit) rebasen we onze
           # commit opnieuw bovenop main en pushen we nogmaals. Zonder retry
