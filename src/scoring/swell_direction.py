@@ -1,12 +1,17 @@
 """
 Swell-richting scoring + pier-refractie.
 
-Continue cosine-curve t.o.v. beach_normal (315° NW), gemoduleerd door
-Gaussian pier-transmission rond shadow center (10° NNO).
+Continue cosine-curve t.o.v. beach_normal (uit config, Noordwijk = 285° WNW),
+gemoduleerd door Gaussian pier-transmission rond shadow center (10° NNO).
+
+beach_normal kwam hier voorheen als hardcoded 315° binnen — dat sprak de
+config (`NOORDWIJK.beach_normal_deg=285`) en `wind.py` (dat de config wél
+gebruikt) tegen. Eén geometrische strand-oriëntatie hoort uit één bron te
+komen; nu lezen we de config.
 """
 import math
 
-from src.config import PIER_REFRACTION
+from src.config import NOORDWIJK, PIER_REFRACTION
 
 
 def pier_transmission_factor(swell_direction_deg: int, period_s: float = 7.0) -> float:
@@ -35,12 +40,15 @@ def pier_transmission_factor(swell_direction_deg: int, period_s: float = 7.0) ->
     return max(t_min, min(1.0, transmission))
 
 
-def _cos_to_beach(direction: float, beach_normal: float = 315.0) -> float:
+def _cos_to_beach(direction: float, beach_normal: float | None = None) -> float:
     """
     Cosine van hoek tussen swell-richting en beach-normal (FROM).
 
     +1.0 = perfect aan-strand. Continue, geen sprongen op bucket-grenzen.
+    Default beach_normal komt uit de config (Noordwijk = 285° WNW).
     """
+    if beach_normal is None:
+        beach_normal = NOORDWIJK.beach_normal_deg
     diff_rad = math.radians(direction - beach_normal)
     return math.cos(diff_rad)
 
@@ -49,11 +57,11 @@ def score_swell_direction_bonus(swell_direction_deg: int, period_s: float = 7.0)
     """
     Swell-richting bonus voor Noordwijk (max 10 punten).
 
-    Continue cosine-curve t.o.v. beach_normal (315° NW), multiplicatief met
-    pier-transmission. Bonus min=5 (recht uit land), max=10 (perfect NW).
+    Continue cosine-curve t.o.v. beach_normal (config, 285° WNW), multiplicatief
+    met pier-transmission. Bonus min=5 (recht uit land), max=10 (perfect aan-strand).
     """
     direction = swell_direction_deg % 360
     transmission = pier_transmission_factor(direction, period_s)
-    cos = _cos_to_beach(float(direction), beach_normal=315.0)
+    cos = _cos_to_beach(float(direction))
     raw = 5.0 + 5.0 * max(0.0, cos)
     return raw * transmission

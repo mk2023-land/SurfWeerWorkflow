@@ -333,10 +333,11 @@ class TestSwellDirectionBonus:
         assert 0.0 <= score <= 1.5
 
     def test_ok_direction_partial_bonus(self):
-        """OK richting (ZW) geeft gedeeltelijke bonus."""
+        """Schuine richting (ZZW=210, ~75° van WNW-normal) geeft een
+        gedeeltelijke bonus tussen min (5) en max (10)."""
         from src.scoring.hourly import score_swell_direction_bonus
-        score = score_swell_direction_bonus(240)  # ZW
-        assert 3 <= score <= 7
+        score = score_swell_direction_bonus(210)  # ZZW, schuin op WNW-strand
+        assert 5.5 <= score <= 7.0
 
 
 class TestValidatieCases:
@@ -522,9 +523,9 @@ class TestValidatieCases:
         score = score_hour(hour_state)
 
         # Fix #11: continue cosine-based richting-bonus + pier-transmission.
-        # NNO=10° heeft cos(10-315) ≈ 0.574 → raw ≈ 7.87. Met Tp=10s long-
-        # period bonus is transmission ~0.23, dus bonus ≈ 1.85pt.
-        # Nog steeds sterk gereduceerd t.o.v. perfect NW (~10pt) maar niet
+        # NNO=10° heeft cos(10-285) ≈ 0.087 → raw ≈ 5.44. Met Tp=10s long-
+        # period bonus is transmission ~0.235, dus bonus ≈ 1.28pt.
+        # Nog steeds sterk gereduceerd t.o.v. perfect WNW (~10pt) maar niet
         # exact 0 — fysisch realistisch (NNO refracteert deels rond pier).
         assert score.swell_dir_bonus < 2.5  # Sterk gereduceerde bonus voor NNO
 
@@ -1458,9 +1459,9 @@ class TestSwellDirectionContinuous:
         assert abs(b44 - b46) < 0.3
 
     def test_perfect_beach_normal_max_bonus(self):
-        """315° (NW = beach_normal) → cos(0)=1 → raw=10."""
+        """285° (WNW = beach_normal uit config) → cos(0)=1 → raw=10."""
         from src.scoring.hourly import score_swell_direction_bonus
-        b = score_swell_direction_bonus(315, period_s=7.0)
+        b = score_swell_direction_bonus(285, period_s=7.0)
         assert 9.8 <= b <= 10.01
 
     def test_offshore_direction_min_bonus(self):
