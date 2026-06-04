@@ -55,7 +55,14 @@ class TwilioNotifier:
             self.client: Optional[Client] = None
         else:
             try:
-                self.client = Client(self.account_sid, self.auth_token)
+                # Expliciete HTTP-timeout: zonder dit kan een hangende
+                # Twilio-API de hele cron-run laten vastlopen (ntfy/mail
+                # hebben al een timeout).
+                from twilio.http.http_client import TwilioHttpClient
+                http_client = TwilioHttpClient(timeout=15)
+                self.client = Client(
+                    self.account_sid, self.auth_token, http_client=http_client
+                )
                 logger.info(f"Twilio klaar: van={self.from_number} naar={self.to_number}")
             except Exception as e:
                 logger.error(f"Twilio init mislukt: {e}")

@@ -154,23 +154,29 @@ def calculate_rarity_percentile(
     if not week_baseline:
         return 50.0
 
-    # Interpoleer percentile op basis van score
-    p50 = week_baseline.get('p50', 50)
-    p70 = week_baseline.get('p70', 70)
-    p90 = week_baseline.get('p90', 90)
+    # Interpoleer percentile op basis van score. Noemers kunnen 0 zijn voor
+    # luwe weken waar de archive-baseline vrijwel uit nul-scores bestaat
+    # (p50=p70=p90=0) — dan zou een naïeve deling crashen. Bij een
+    # gecollapste bucket vallen we terug op het midden van de band.
+    p50 = week_baseline.get('p50', 50) or 0
+    p70 = week_baseline.get('p70', 70) or 0
+    p90 = week_baseline.get('p90', 90) or 0
 
     if score <= p50:
         # Lineair interpoleren 0-50
-        percentile = (score / p50) * 50
+        percentile = (score / p50) * 50 if p50 > 0 else (0.0 if score <= 0 else 50.0)
     elif score <= p70:
         # Lineair interpoleren 50-70
-        percentile = 50 + ((score - p50) / (p70 - p50)) * 20
+        span = p70 - p50
+        percentile = 50 + ((score - p50) / span) * 20 if span > 0 else 60.0
     elif score <= p90:
         # Lineair interpoleren 70-90
-        percentile = 70 + ((score - p70) / (p90 - p70)) * 20
+        span = p90 - p70
+        percentile = 70 + ((score - p70) / span) * 20 if span > 0 else 80.0
     else:
         # Boven 90e percentile
-        percentile = 90 + ((score - p90) / (100 - p90)) * 10
+        span = 100 - p90
+        percentile = 90 + ((score - p90) / span) * 10 if span > 0 else 100.0
 
     return min(100.0, max(0.0, percentile))
 

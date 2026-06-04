@@ -19,7 +19,14 @@ _DAY_NL_SHORT = ['ma', 'di', 'wo', 'do', 'vr', 'za', 'zo']
 
 
 def degrees_to_compass(deg: float) -> str:
-    """Vertaal hoek (graden) naar 16-punts kompasrichting (NL)."""
+    """Vertaal hoek (graden) naar 16-punts kompasrichting (NL).
+
+    Geeft '?' bij een ontbrekende richting (None) i.p.v. te crashen — de
+    fallback-template is de laatste vangnet-laag en mag niet sneuvelen op een
+    golfpiek zonder richtingsveld.
+    """
+    if deg is None:
+        return "?"
     idx = int(((deg % 360) + 11.25) / 22.5) % 16
     return _COMPASS_16[idx]
 

@@ -616,6 +616,25 @@ class SurfAlertSystem:
             validation_passed = False
             validation_issues = list(format_ok.issues)
 
+            # Her-valideer de fallback zelf: bij een lege/degenererende digest
+            # (bv. geen rijdbare dagen → "Nwijk: geen data.") faalt óók de
+            # fallback de format-check. Dan NIETS verzenden i.p.v. een door de
+            # eigen validator afgekeurd bericht de deur uit te sturen.
+            fallback_ok = self.sms_validator.validate_digest_format(sms_text)
+            if not fallback_ok:
+                logger.error(
+                    "Digest-fallback faalt óók format-validatie %s — niet "
+                    "verzonden. Tekst: %r", fallback_ok.issues, sms_text,
+                )
+                return {
+                    'success': False,
+                    'channel': self.notifier.channel,
+                    'error': 'digest_format_invalid_after_fallback',
+                    'validation_passed': False,
+                    'validation_issues': list(fallback_ok.issues),
+                    'message': sms_text,
+                }
+
         if not self.dry_run:
             result = self.notifier.send_digest(sms_text)
             result.setdefault('validation_passed', validation_passed)

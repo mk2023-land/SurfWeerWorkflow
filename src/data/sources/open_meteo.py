@@ -161,7 +161,11 @@ class OpenMeteoClient:
                 response.raise_for_status()
                 return response.json()
 
-            except httpx.HTTPError as e:
+            except (httpx.HTTPError, ValueError) as e:
+                # ValueError vangt json.JSONDecodeError: Open-Meteo geeft bij
+                # gateway-hikken soms status 200 met lege/HTML body. Dat is
+                # transient → zelfde retry-pad als netwerkfouten i.p.v. een
+                # ongevangen crash die de hele fetch sloopt.
                 # 4xx (behalve 429) zijn permanente fouten — retry is zinloos,
                 # fail fast zodat we niet 8 min wachten op een code-bug.
                 if isinstance(e, httpx.HTTPStatusError):

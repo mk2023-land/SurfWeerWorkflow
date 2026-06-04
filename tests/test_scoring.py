@@ -1636,5 +1636,15 @@ class TestOffshoreGrooming:
         assert golf_nocontext == pytest.approx(golf_onshore, abs=0.01)
 
 
+def test_rarity_percentile_zero_baseline_no_crash():
+    """Regressie: luwe week met gecollapste baseline (p50=p70=p90=0) mag
+    geen ZeroDivisionError geven — dit pad zit live in analyze_windows."""
+    from src.scoring.windows import calculate_rarity_percentile
+    bl = {"week_23": {"p50": 0, "p70": 0, "p90": 0}}
+    when = datetime(2026, 6, 4)  # iso-week 23
+    assert calculate_rarity_percentile(0, bl, when=when) == 0.0
+    assert 0.0 <= calculate_rarity_percentile(10, bl, when=when) <= 100.0
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

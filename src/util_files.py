@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 from pathlib import Path
 from typing import Union
 
@@ -72,9 +73,15 @@ def append_jsonl_with_rotation(
         if line_count >= max_lines:
             _rotate(path, keep_archives)
 
-    # Stap 2: append de nieuwe regel.
+    # Stap 2: append de nieuwe regel. Eén write() van de volledige regel +
+    # flush/fsync: het sms-archief wordt naar git gecommit, dus een halve
+    # regel zou een corrupte trainings-entry pushen. fsync dwingt de bytes
+    # naar disk vóór we teruggeven, zodat een kill ná deze functie geen
+    # half-geschreven JSON achterlaat.
     with open(path, 'a', encoding='utf-8') as f:
         f.write(json.dumps(line_dict, default=str) + '\n')
+        f.flush()
+        os.fsync(f.fileno())
 
 
 def _rotate(path: Path, keep_archives: int) -> None:

@@ -35,6 +35,10 @@ concurrency:
 jobs:
   check-surf-conditions:
     runs-on: ubuntu-latest
+    # Harde bovengrens: zonder dit draait een hangende externe call (RWS,
+    # Open-Meteo, Anthropic, Twilio) tot de GitHub-default van 6u en blokkeert
+    # — met cancel-in-progress:false — de volgende cron-slots in de wachtrij.
+    timeout-minutes: 15
     # contents:write nodig om data/sms_archive/YYYY-MM.jsonl te committen
     # naar main — vangt het ML-trainingsmateriaal permanent in git i.p.v.
     # afhankelijk van de Actions cache (die expireert).
@@ -162,6 +166,18 @@ jobs:
             echo "Archive ongewijzigd — niets te committen"
             exit 0
           fi
-          git pull --rebase --autostash origin main || true
           git commit -m "SMS-archief: $(date -u +'%Y-%m-%dT%H:%MZ') run"
-          git push
+          # Push met retry: bij een race (remote bewoog ná onze checkout, bv.
+          # door rebuild-baseline of een handmatige commit) rebasen we onze
+          # commit opnieuw bovenop main en pushen we nogmaals. Zonder retry
+          # bleef de commit lokaal en ging de archief-entry permanent verloren.
+          for i in 1 2 3; do
+            if git pull --rebase --autostash origin main && git push; then
+              echo "Archief gepusht (poging $i)"
+              exit 0
+            fi
+            echo "Push poging $i mislukt — opnieuw na 5s"
+            sleep 5
+          done
+          echo "::error::SMS-archief push faalde na 3 pogingen"
+          exit 1
