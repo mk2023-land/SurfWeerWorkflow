@@ -206,6 +206,9 @@ class SMSGenerator:
                 structured_input, max_tokens=max_tokens, kind='digest',
             )
             if text:
+                # Volledige digest-tekst op INFO (alleen zichtbaar bij DEBUG) —
+                # voor inhoudelijke QA van de referentie-forecaster-stijl (venster/tij/hoogte).
+                logger.info(f"Digest volledig ({len(text)} chars):\n{text}")
                 return text
             # _generate_with_retry gaf None → API-fout of validatie 3× gefaald.
             self.last_fallback_reason = self._retry_outcome or 'empty_response'
