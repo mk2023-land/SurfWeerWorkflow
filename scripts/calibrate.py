@@ -106,9 +106,42 @@ def load_our_snapshots() -> dict[str, dict]:
     return chosen
 
 
-def build_pairs() -> list[dict]:
+PAIRS_PATH = Path(os.getenv('referentie-forecaster_PAIRS_PATH', 'data/training/referentie-forecaster_pairs.jsonl'))
+
+
+def load_materialized_pairs() -> list[dict]:
+    """Lees de canonieke paren die ingest_reference_message.py schrijft (label +
+    onze snapshot). Alleen écht gepairde dagen (snapshot aanwezig)."""
+    if not PAIRS_PATH.exists():
+        return []
+    out = []
+    for line in PAIRS_PATH.read_text(encoding='utf-8').splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            p = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if p.get('paired') and p.get('our_verdict') and p.get('referentie-forecaster_verdict') in VERDICTS:
+            out.append({
+                'date': p['date'],
+                'referentie-forecaster': p['referentie-forecaster_verdict'],
+                'our_verdict': p['our_verdict'],
+                'our_peak_score': p.get('our_peak_score'),
+                'features': p.get('features') or {},
+            })
+    return out
+
+
+def build_pairs() -> tuple[list[dict], dict, dict]:
+    # 1) Canonieke gematerialiseerde paren (ingest --labels-json) hebben voorrang.
+    mat = load_materialized_pairs()
     labels = load_referentie-forecaster_labels()
     ours = load_our_snapshots()
+    if mat:
+        return mat, labels, ours
+    # 2) Fallback: on-the-fly join van regex-labels met snapshots (zwakker).
     pairs = []
     for d, tob in labels.items():
         if d in ours:

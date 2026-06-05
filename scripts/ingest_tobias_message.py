@@ -141,6 +141,78 @@ def parse_metadata(text: str, msg_date: date) -> dict:
     }
 
 
+# Hoofdrepo-paden (script leeft in <repo>/scripts/).
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+FEATURES_PATH = _REPO_ROOT / 'data' / 'forecast_features.jsonl'
+PAIRS_PATH = _REPO_ROOT / 'data' / 'training' / 'referentie-forecaster_pairs.jsonl'
+
+_VALID_VERDICTS = {'flat', 'longboard', 'surfable'}
+
+
+def _load_our_snapshot(forecast_date: str) -> dict | None:
+    """Onze beste feature-snapshot voor Noordwijk op `forecast_date` (de
+    nowcast met day_offset==0 indien aanwezig, anders dichtstbij)."""
+    if not FEATURES_PATH.exists():
+        return None
+    cands = []
+    for line in FEATURES_PATH.read_text(encoding='utf-8').splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            r = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if r.get('spot') == 'noordwijk' and r.get('forecast_date') == forecast_date:
+            cands.append(r)
+    if not cands:
+        return None
+    cands.sort(key=lambda r: (abs(r.get('day_offset', 99)), r.get('run_timestamp', '')))
+    return cands[0]
+
+
+def write_training_pairs(noordwijk_days: list[dict]) -> list[dict]:
+    """Voor elke gelabelde forecast-dag: join met onze feature-snapshot en
+    schrijf een trainingspaar (label + onze features/score) naar
+    data/training/referentie-forecaster_pairs.jsonl. Dagen zonder snapshot worden overgeslagen
+    (gerapporteerd). Idempotent per (date): vervangt een bestaand paar."""
+    PAIRS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    existing = {}
+    if PAIRS_PATH.exists():
+        for line in PAIRS_PATH.read_text(encoding='utf-8').splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                p = json.loads(line)
+                existing[p['date']] = p
+            except (json.JSONDecodeError, KeyError):
+                continue
+    made = []
+    for day in noordwijk_days:
+        d = day.get('date')
+        verdict = day.get('verdict')
+        if not d or verdict not in _VALID_VERDICTS:
+            continue
+        snap = _load_our_snapshot(d)
+        pair = {
+            'date': d,
+            'referentie-forecaster_verdict': verdict,
+            'referentie-forecaster_windows': day.get('windows') or [],
+            'paired': snap is not None,
+            'our_verdict': (snap or {}).get('our_verdict'),
+            'our_peak_score': (snap or {}).get('our_peak_score'),
+            'features': snap,
+        }
+        existing[d] = pair
+        if snap is not None:
+            made.append(pair)
+    with PAIRS_PATH.open('w', encoding='utf-8') as f:
+        for d in sorted(existing):
+            f.write(json.dumps(existing[d], ensure_ascii=False) + '\n')
+    return made
+
+
 def main():
     parser = argparse.ArgumentParser(description='Ingest forecaster-referentiebericht (SMS) in privé-archief')
     parser.add_argument(
@@ -150,6 +222,17 @@ def main():
     parser.add_argument(
         '--text', type=str, default=None,
         help='SMS-tekst inline. Anders gelezen van stdin.'
+    )
+    parser.add_argument(
+        '--force', action='store_true',
+        help='Overschrijf een bestaand bericht zonder prompt (gecorrigeerde labels).'
+    )
+    parser.add_argument(
+        '--labels-json', type=str, default=None,
+        help='JSON met Noordwijk-labels per forecast-dag (door Claude volgens '
+             'de vaste rubriek geëxtraheerd): '
+             '[{"date":"YYYY-MM-DD","verdict":"flat|longboard|surfable",'
+             '"windows":["06-08u"]}]. Maakt direct trainingsparen.'
     )
     args = parser.parse_args()
 
@@ -182,7 +265,11 @@ def main():
     txt_path = ARCHIVE_DIR / f"{msg_date.isoformat()}.txt"
     meta_path = ARCHIVE_DIR / f"{msg_date.isoformat()}.meta.json"
 
-    if txt_path.exists():
+    if txt_path.exists() and not args.force:
+        if not sys.stdin.isatty():
+            print(f"⚠ {txt_path.name} bestaat al — gebruik --force om te "
+                  f"overschrijven (of corrigeer interactief).", file=sys.stderr)
+            return 1
         print(f"⚠ {txt_path.name} bestaat al — overschrijven? [y/N] ", end='')
         if input().strip().lower() != 'y':
             print("Afgebroken.")
@@ -191,11 +278,39 @@ def main():
     txt_path.write_text(text, encoding='utf-8')
 
     meta = parse_metadata(text, msg_date)
+
+    # Canonieke Noordwijk-labels (door Claude volgens de vaste rubriek geleverd).
+    # Dit is de BETROUWBARE labelbron — de regex-heuristiek hierboven pakt
+    # Noordwijk vaak niet uit referentie-forecaster' groeperende proza. Slaat de labels op in
+    # de meta én maakt direct trainingsparen met onze feature-snapshots.
+    noordwijk_days = []
+    made_pairs = []
+    if args.labels_json:
+        try:
+            noordwijk_days = json.loads(args.labels_json)
+        except json.JSONDecodeError as e:
+            print(f"✗ --labels-json is geen geldige JSON: {e}", file=sys.stderr)
+            return 1
+        meta['noordwijk_days'] = noordwijk_days
+        # Back-compat: zet ook het verdict van de bericht-dag in verdicts_per_spot.
+        for day in noordwijk_days:
+            if day.get('date') == msg_date.isoformat() and day.get('verdict') in _VALID_VERDICTS:
+                meta.setdefault('verdicts_per_spot', {})['Noordwijk'] = day['verdict']
+        made_pairs = write_training_pairs(noordwijk_days)
+
     meta_path.write_text(json.dumps(meta, indent=2, ensure_ascii=False),
                          encoding='utf-8')
 
     print(f"✓ Opgeslagen: {txt_path}")
     print(f"✓ Metadata:   {meta_path}")
+    if args.labels_json:
+        n_lbl = len(noordwijk_days)
+        n_pair = len(made_pairs)
+        print(f"✓ Noordwijk-labels: {n_lbl} dag(en); trainingsparen gemaakt: {n_pair}")
+        for day in noordwijk_days:
+            d = day.get('date'); v = day.get('verdict')
+            paired = any(p['date'] == d for p in made_pairs)
+            print(f"    {d}: {v:10s} {'↔ gepaird met onze snapshot' if paired else '(nog geen snapshot → alleen label)'}")
     print()
     print(f"Datum:            {meta['date']}")
     print(f"Lengte:           {meta['char_count']} tekens")
