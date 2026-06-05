@@ -507,6 +507,12 @@ class RunLog:
     rws_status: str = 'unknown'         # 'ok' | 'partial' | 'failed' | 'unknown'
     openmeteo_status: str = 'unknown'   # 'ok' | 'partial' | 'failed' | 'unknown'
     seasonal_baseline_loaded: bool = False
+    # Alert-detectie kon draaien maar miste kritieke input (bv. geen boei-data
+    # of lege forecast), waardoor sommige detectors NIET konden vuren. Anders
+    # dan `error` is dit géén harde fout: de run slaagt, maar de gebruiker wil
+    # weten dat de "zoektocht naar alerts" beperkt was — i.t.t. "geen surf".
+    alert_search_degraded: bool = False
+    alert_search_degraded_reason: Optional[str] = None
     error: Optional[str] = None
 
     def to_dict(self) -> Dict:
@@ -532,6 +538,8 @@ class RunLog:
             'rws_status': self.rws_status,
             'openmeteo_status': self.openmeteo_status,
             'seasonal_baseline_loaded': self.seasonal_baseline_loaded,
+            'alert_search_degraded': self.alert_search_degraded,
+            'alert_search_degraded_reason': self.alert_search_degraded_reason,
             'error': self.error
         }
 

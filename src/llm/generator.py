@@ -53,6 +53,23 @@ def _classify_api_error(e: Exception) -> str:
         return 'auth_error'
     return 'api_error'
 
+
+# Mensvriendelijke NL-labels per fallback-reden. Eén bron zodat de digest- én
+# de alert-tak in main.py dezelfde tekst tonen (voorheen lokaal gedupliceerd).
+_FALLBACK_REASON_LABELS = {
+    'credits_exhausted': 'Claude-credits op',
+    'auth_error': 'Claude API-key ongeldig',
+    'no_api_key': 'geen Claude API-key',
+    'api_error': 'Claude API onbereikbaar',
+    'validation_failed': 'Claude-tekst kwam niet door de check',
+    'empty_response': 'Claude gaf lege tekst',
+}
+
+
+def fallback_reason_label(reason: str) -> str:
+    """Mensvriendelijke NL-omschrijving van een ``last_fallback_reason``."""
+    return _FALLBACK_REASON_LABELS.get(reason, reason)
+
 from src.config import ANTHROPIC_CONFIG
 from src.data.models import (
     AlertCandidate,
@@ -133,8 +150,15 @@ class SMSGenerator:
     # ---------- public API ----------
 
     def generate_alert_sms(self, alert: AlertCandidate) -> str:
+        # Spiegelt generate_digest_sms: zet last_fallback_reason zodat main.py
+        # ook bij een ALERT de gebruiker kan waarschuwen dat Claude niet de
+        # tekst leverde (geen key / credits op / API-fout / validatie 3× faal).
+        # Voorheen viel deze tak stil terug op de template zonder enige melding.
         if not self.client:
+            self.last_fallback_reason = 'no_api_key'
             return self._fallback_alert_template(alert)
+        self.last_fallback_reason = None
+        self._retry_outcome = None
         try:
             structured_input = self._prepare_alert_input(alert)
             max_tokens = ANTHROPIC_CONFIG.get(
@@ -143,9 +167,17 @@ class SMSGenerator:
             text = self._generate_with_retry(
                 structured_input, max_tokens=max_tokens, kind='alert',
             )
-            return text or self._fallback_alert_template(alert)
+            if text:
+                return text
+            # _generate_with_retry gaf None → API-fout of validatie 3× gefaald.
+            self.last_fallback_reason = self._retry_outcome or 'empty_response'
+            return self._fallback_alert_template(alert)
         except Exception as e:
-            logger.error(f"Failed to generate alert SMS with Claude: {e}")
+            self.last_fallback_reason = _classify_api_error(e)
+            logger.error(
+                f"Failed to generate alert SMS with Claude "
+                f"({self.last_fallback_reason}): {e}"
+            )
             return self._fallback_alert_template(alert)
 
     def generate_digest_sms(

@@ -266,7 +266,7 @@ class TestSeasonalBaselineWiring:
         recorded = {}
         original = main_mod.analyze_windows
 
-        def _capture(hourly_scores, triggers_dict, **kwargs):
+        def _capture(hourly_scores, triggers_dict=None, **kwargs):
             recorded['seasonal_baseline'] = kwargs.get('seasonal_baseline')
             return original(hourly_scores, triggers_dict, **kwargs)
 
@@ -556,5 +556,80 @@ class TestRunLogAudit:
             'bias_correction_applied', 'rws_status', 'openmeteo_status',
             'seasonal_baseline_loaded', 'llm_validation_passed',
             'llm_validation_issues', 'alert_types_detected',
+            'alert_search_degraded', 'alert_search_degraded_reason',
         ):
             assert key in d, f"Audit-field {key!r} ontbreekt in to_dict()"
+
+
+# ---------------------------------------------------------------------------
+# Trigger-wiring — bewijst dat alerts NU daadwerkelijk kunnen firen.
+# ---------------------------------------------------------------------------
+
+class TestAlertTriggerWiring:
+    """⭐ KRITIEK: de detector-output wordt NU aan de window-objecten gekoppeld.
+
+    De bug: run() bouwde windows met een lege triggers_dict en koppelde de
+    detector-output nooit terug aan de SurfWindow-objecten (de oude post-hoc
+    loop schreef alleen naar een losse dict). SurfWindow.is_alertworthy eist
+    >=1 trigger → was ALTIJD False → er kon NOOIT een alert firen
+    (data/state.json hield last_alert_time permanent op null).
+    """
+
+    def test_forecast_windows_receive_detected_triggers(self, patched_system, monkeypatch):
+        from src import main as main_mod
+        from src.data.models import AlertType, SurfWindow
+
+        baseline = _baseline_low_p70()
+        monkeypatch.setattr(
+            main_mod.SeasonalBaselineBuilder,
+            'load_baseline', lambda self: baseline,
+        )
+
+        # Lever één surfable window in de forecast-regio, met triggers=[] zoals
+        # de echte analyze_windows ze oplevert. Timestamps uit de echte scores
+        # zodat de forecast-regio-check (window.start >= forecast[0]) klopt.
+        def _fake_analyze(hourly_scores, triggers_dict=None, **kwargs):
+            forecast_scores = hourly_scores[12:24]
+            assert forecast_scores, "verwacht forecast-scores in de stub-run"
+            return [SurfWindow(
+                start=forecast_scores[0].timestamp,
+                end=forecast_scores[-1].timestamp,
+                peak_score=80,            # >= 75
+                median_score=78,
+                peak_hour=forecast_scores[0].timestamp,
+                triggers=[],              # <-- leeg, exact zoals de echte bouw
+                stability=1.0,            # >= 0.6
+                rarity_percentile=95.0,   # >= 70
+                hourly_scores=list(forecast_scores),
+                kind='surfable',
+            )]
+
+        monkeypatch.setattr(main_mod, 'analyze_windows', _fake_analyze)
+
+        # Forceer dat minstens één detector triggert.
+        monkeypatch.setattr(
+            main_mod.AlertDetectorEngine, 'detect_all',
+            lambda self, forecast, history, buoy, windows: {AlertType.WIND_DIP},
+        )
+
+        captured = {}
+        original_eval = patched_system.alert_engine.evaluate_forecast
+
+        def _spy_eval(forecast, history, buoy_history, windows, is_digest_time):
+            captured['windows'] = list(windows)
+            return original_eval(forecast, history, buoy_history, windows, is_digest_time)
+
+        patched_system.alert_engine.evaluate_forecast = _spy_eval
+
+        _run_async(patched_system.run())
+
+        windows = captured.get('windows') or []
+        assert windows, "geen windows bereikten evaluate_forecast"
+        assert any(w.triggers for w in windows), (
+            "geen enkel window kreeg triggers — wiring-bug terug: is_alertworthy "
+            "kan nooit True worden en er gaat nooit een alert uit"
+        )
+        assert any(w.is_alertworthy for w in windows), (
+            "window niet alert-worthy ondanks peak>=75/rarity>=70/stability>=0.6 "
+            "en een getriggerd type — de is_alertworthy-keten is gebroken"
+        )

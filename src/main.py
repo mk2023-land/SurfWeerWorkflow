@@ -22,7 +22,7 @@ from src.data.sources.open_meteo import (
     fetch_all_openmeteo_data,
 )
 from src.data.sources.rws import fetch_all_rws_data, tide_state_at
-from src.llm.generator import SMSGenerator
+from src.llm.generator import SMSGenerator, fallback_reason_label
 from src.llm.validator import SMSValidator
 from src.notify import format_send_result_for_logging, get_notifier
 from src.scoring.hourly import (
@@ -61,6 +61,10 @@ class SurfAlertSystem:
         self.sms_validator = SMSValidator()
         self.notifier = get_notifier()
         self._last_wind_spread_full: Optional[list[dict]] = None
+        # Reden waarom de alert-detectie deze run gedegradeerd was (lege
+        # forecast / geen boei-data), of None. Gezet in run(), gelezen door
+        # _handle_digest om er een waarschuwingsregel op de digest te zetten.
+        self._alert_search_degraded_reason: Optional[str] = None
         # Fix #1: seasonal baseline wordt in run() geladen — placeholder hier
         # zodat een vroege error niet op een ontbrekend attribuut faalt.
         self.seasonal_baseline: Optional[dict] = None
@@ -221,12 +225,14 @@ class SurfAlertSystem:
             # default 50. Zonder dit kon `is_alertworthy.rarity_percentile>=70`
             # NOOIT True worden → geen enkele alert kon firen.
             logger.info("Analyzing surf windows...")
-            triggers_dict = {}  # timestamp → AlertType lijst
             windows = analyze_windows(
-                hourly_scores, triggers_dict,
+                hourly_scores,
                 seasonal_baseline=self.seasonal_baseline,
             )
-            alertworthy_windows = filter_alertworthy_windows(windows)
+            # alertworthy-filtering gebeurt PAS NA de alert-detectie hieronder:
+            # de detectors leveren de triggers die elk window nodig heeft om
+            # `is_alertworthy` (eist >=1 trigger) te kunnen halen. Filteren we
+            # hier al, dan is het altijd leeg (windows hebben nog triggers=[]).
 
             # Stap 5: Voer alert detectie uit
             logger.info("Running alert detection...")
@@ -268,19 +274,50 @@ class SurfAlertSystem:
             except Exception as e:
                 logger.warning(f"Bias log write failed: {e}")
 
+            # Degradatie-signaal: de detectie KAN draaien maar mist kritieke
+            # input. Dan is "geen alert" niet hetzelfde als "geen surf" — de
+            # gebruiker wil expliciet horen dat de alert-zoektocht beperkt was.
+            # We zetten alleen de vlag; surfacing gebeurt via een digest-prefix
+            # (zie _handle_digest), zodat de niet-fatale degradatie niet de
+            # harde failure-push misbruikt.
+            if not forecast:
+                run_log.alert_search_degraded = True
+                run_log.alert_search_degraded_reason = 'lege forecast (geen modeldata vooruit)'
+            elif not any(buoy_history.values()):
+                run_log.alert_search_degraded = True
+                run_log.alert_search_degraded_reason = 'geen boei-data (RWS) — swell-detectors uit'
+            self._alert_search_degraded_reason = run_log.alert_search_degraded_reason
+            if run_log.alert_search_degraded:
+                logger.warning(
+                    f"Alert-detectie gedegradeerd: {run_log.alert_search_degraded_reason}"
+                )
+
             triggered_alerts = detector_engine.detect_all(
                 forecast, history, buoy_history, windows
             )
 
+            # KOPPEL de getriggerde alert-types aan de windows in de forecast-
+            # regio. Zonder deze stap droeg elk window `triggers=[]` (windows
+            # werden met een lege triggers_dict gebouwd), waardoor
+            # `SurfWindow.is_alertworthy` — die >=1 trigger eist — ALTIJD False
+            # was en er NOOIT een alert kon firen (state.json hield
+            # last_alert_time=null). De oude post-hoc loop schreef alleen naar
+            # een losse triggers_dict en raakte de window-objecten nooit aan.
+            # We koppelen alleen aan forecast-windows (start >= forecast[0])
+            # zodat historische condities geen alert kunnen veroorzaken.
+            if triggered_alerts and forecast:
+                forecast_start = forecast[0].timestamp
+                trigger_list = list(triggered_alerts)
+                for window in windows:
+                    if window.start >= forecast_start:
+                        window.triggers = list(trigger_list)
+
+            # Filter PAS NU — na trigger-koppeling kan dit niet-leeg zijn.
+            alertworthy_windows = filter_alertworthy_windows(windows)
+
             # Stap 6: Neem beslissing
             logger.info("Making decision...")
             is_digest_time = self.alert_engine.is_morning_first_run()
-
-            # Voeg triggers toe aan windows
-            for window in windows:
-                for hour_score in window.hourly_scores:
-                    if triggered_alerts:
-                        triggers_dict[hour_score.timestamp] = list(triggered_alerts)
 
             decision = self.alert_engine.evaluate_forecast(
                 forecast, history, buoy_history, windows, is_digest_time
@@ -571,19 +608,36 @@ class SurfAlertSystem:
                 "anti-hallucinatie passed.", format_ok.issues,
             )
 
+        # Nood-template-waarschuwing — spiegelt _handle_digest. generate_alert_sms
+        # zet last_fallback_reason zodra Claude niet de tekst leverde (geen key,
+        # API-fout, credits op, of validatie 3× afgekeurd). De gebruiker wil dit
+        # expliciet horen. Prefix NA de format-validatie hierboven, zodat de
+        # waarschuwingsregel de prefix/datum-check van het echte bericht niet
+        # verstoort.
+        fallback_reason = getattr(self.sms_generator, 'last_fallback_reason', None)
+        extra_issues: list[str] = []
+        if fallback_reason:
+            reason_txt = fallback_reason_label(fallback_reason)
+            logger.error(f"ALERT OP NOOD-TEMPLATE — reden: {fallback_reason}")
+            sms_text = f"LET OP nood-template ({reason_txt}), geen Claude:\n{sms_text}"
+            extra_issues = [f"llm_fallback:{fallback_reason}"]
+
         if not self.dry_run:
             result = self.notifier.send_alert(sms_text)
             # Fix #4: voeg validation-status toe aan result voor RunLog audit.
-            result.setdefault('validation_passed', True)
-            result.setdefault('validation_issues', [])
+            result.setdefault('validation_passed', not fallback_reason)
+            result.setdefault('validation_issues', extra_issues)
+            if fallback_reason:
+                result.setdefault('llm_fallback_reason', fallback_reason)
             return result
         return {
             'success': True,
             'debug_mode': True,
             'channel': self.notifier.channel,
             'message': sms_text,
-            'validation_passed': True,
-            'validation_issues': [],
+            'validation_passed': not fallback_reason,
+            'validation_issues': extra_issues,
+            'llm_fallback_reason': fallback_reason,
         }
 
     def _handle_digest(
@@ -652,14 +706,7 @@ class SurfAlertSystem:
         # Ná de format-validatie hierboven, want die eist een 'Nwijk'/'Surfweer'-start.
         fallback_reason = getattr(self.sms_generator, 'last_fallback_reason', None)
         if fallback_reason:
-            reason_txt = {
-                'credits_exhausted': 'Claude-credits op',
-                'auth_error': 'Claude API-key ongeldig',
-                'no_api_key': 'geen Claude API-key',
-                'api_error': 'Claude API onbereikbaar',
-                'validation_failed': 'Claude-tekst kwam niet door de check',
-                'empty_response': 'Claude gaf lege tekst',
-            }.get(fallback_reason, fallback_reason)
+            reason_txt = fallback_reason_label(fallback_reason)
             logger.error(f"DIGEST OP NOOD-TEMPLATE — reden: {fallback_reason}")
             sms_text = f"LET OP nood-template ({reason_txt}), geen Claude:\n{sms_text}"
             validation_passed = False
@@ -667,6 +714,21 @@ class SurfAlertSystem:
             run_log_note = f"llm_fallback:{fallback_reason}"
         else:
             run_log_note = None
+
+        # Degradatie-waarschuwing: de alert-detectie miste deze run kritieke
+        # input (lege forecast / geen boei-data). Net als de nood-template-prefix
+        # NA de format-validatie toegevoegd. Zo weet de gebruiker dat een rustige
+        # digest deels komt doordat de alert-zoektocht beperkt was — niet puur
+        # doordat er geen surf is.
+        degraded_reason = getattr(self, '_alert_search_degraded_reason', None)
+        if degraded_reason:
+            sms_text = (
+                f"LET OP: alert-detectie beperkt ({degraded_reason}) — "
+                f"alerts mogelijk gemist.\n{sms_text}"
+            )
+            validation_issues = (validation_issues or []) + [
+                f"alert_search_degraded:{degraded_reason}"
+            ]
 
         if not self.dry_run:
             result = self.notifier.send_digest(sms_text)
