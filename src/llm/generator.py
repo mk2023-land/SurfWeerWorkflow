@@ -277,6 +277,10 @@ class SMSGenerator:
                     f"{kind}: alle {max_attempts} pogingen faalden op validatie. "
                     f"Laatste issues: {result.issues}"
                 )
+                # Volledige afgekeurde tekst loggen — zonder dit is een
+                # validator-false-positive niet te debuggen (de INFO-regel kapt
+                # op 80 chars en MANUAL_RUN archiveert de fallback niet).
+                logger.error(f"{kind}: laatste afgekeurde tekst: {text!r}")
                 self._retry_outcome = 'validation_failed'
                 return None
 

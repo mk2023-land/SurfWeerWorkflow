@@ -245,7 +245,12 @@ class SMSValidator:
         #   - Verhoogd naar 30 min ALS de tijd direct voorafgegaan wordt door
         #     "rond"/"omstreeks"/"tegen"/"ongeveer" (zachte indicatie).
         time_matches = list(re.finditer(r'(\d{1,2}):(\d{2})', sms_text))
-        time_matches += list(re.finditer(r'\b(\d{1,2})u\b', sms_text))
+        # (?<!:) voorkomt dat de MINUTEN van een Dutch-stijl klokijd "20:50u"
+        # als losse "50u" (=50*60 min, ver buiten bereik) worden gelezen — die
+        # valse tijd-hallucinatie blokkeerde elke Claude-digest die een tijd met
+        # trailing 'u' bevatte. De "HH:MM"-regex hierboven valideert de echte
+        # tijd al; deze regex pakt alleen losstaande "HHu"-uren ("rond 20u").
+        time_matches += list(re.finditer(r'(?<!:)\b(\d{1,2})u\b', sms_text))
         allowed_minutes = {_time_to_minutes(t) for t in allowed['times_hhmm']}
         allowed_minutes.discard(None)
 

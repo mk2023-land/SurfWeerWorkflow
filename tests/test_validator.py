@@ -176,6 +176,27 @@ class TestRangeExpressions:
         assert not any('0.0m' in i or '0,0m' in i for i in result.issues), \
             f"Onverwachte 0.0m-issue: {result.issues}"
 
+    def test_dutch_time_with_trailing_u_not_misread_as_minute_time(self):
+        """⭐ REGRESSIE: 'wind zakt pas na 20:50u' mag de minuten '50' NIET als
+        losse tijd '50u' (=50*60 min) lezen. Die valse tijd-hallucinatie
+        blokkeerde elke Claude-digest met een klokijd-met-trailing-u."""
+        sms = (
+            "Nwijk vr: top rond 06:00 — 1,7m WZW, wind zakt pas na 20:50u. "
+            "Cam: surfweer.nl/webcams/noordwijk/"
+        )
+        allowed = {
+            'wave_heights_m': [1.7],
+            'wave_periods_s': [],
+            'wind_speeds_kn': [],
+            'wind_directions_compass': [],
+            'wave_directions_compass': ['WZW'],
+            'times_hhmm': ['06:00', '20:50'],   # 20:50 is toegestaan; 50u niet
+        }
+        result = self.v.validate_sms(sms, _make_days_input(allowed))
+        assert result.passed, (
+            f"'20:50u' werd vals als tijd '50u' gelezen. Issues: {result.issues}"
+        )
+
     def test_real_height_range_still_validated_after_time_guard(self):
         """De tijd-guard mag echte hoogte-ranges niet kapotmaken: '0,8-1,2m'
         met 0.8 ontbrekend moet nog steeds falen."""
