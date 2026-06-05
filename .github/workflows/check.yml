@@ -21,6 +21,15 @@ on:
     - cron: '0 20 * * *'   # 20:00 UTC = 22:00 NL CEST — alert
     - cron: '0 0 * * *'    # 00:00 UTC = 02:00 NL CEST — alert (nacht)
   workflow_dispatch:
+    inputs:
+      force_digest:
+        description: 'Forceer een digest, ook als die vandaag al verstuurd is (test-knop)'
+        type: boolean
+        default: false
+      debug:
+        description: 'DEBUG-logging aan (INFO-regels, o.a. "Generated SMS via <model>")'
+        type: boolean
+        default: false
 
 # Fix #5: voorkom parallelle runs van check.yml. Bij workflow_dispatch tijdens
 # een geplande schedule-run zouden twee runners hetzelfde data/state.json (in
@@ -110,10 +119,13 @@ jobs:
           ALERTS_ENABLED:      ${{ vars.ALERTS_ENABLED || 'true' }}
           COOLDOWN_HOURS:      ${{ vars.COOLDOWN_HOURS || '4' }}
           MAX_ALERTS_PER_WEEK: ${{ vars.MAX_ALERTS_PER_WEEK || '8' }}
-          DEBUG: 'false'
+          DEBUG: ${{ github.event.inputs.debug || 'false' }}
           # workflow_dispatch = manual test → verstuur wel maar pollueer
           # last_digest_time NIET (anders blokkeert die de scheduled cron-run).
           MANUAL_RUN: ${{ github.event_name == 'workflow_dispatch' && 'true' || 'false' }}
+          # Test-knop: forceer digest-generatie (bypass de "vandaag al verstuurd"-
+          # check in is_morning_first_run). Alleen via handmatige dispatch.
+          FORCE_DIGEST: ${{ github.event.inputs.force_digest || 'false' }}
         run: |
           mkdir -p data
           uv run python -m src.main

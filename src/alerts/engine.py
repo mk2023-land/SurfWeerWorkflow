@@ -564,6 +564,14 @@ class AlertEngine:
         één keer per dag een ochtend-digest sturen, ongeacht hoeveel runs er
         in dit venster vallen.
         """
+        # Test-knop: FORCE_DIGEST=true (handmatige workflow_dispatch) forceert
+        # digest-generatie, ook buiten het ochtend-venster en ook als er vandaag
+        # al een digest verstuurd is. Bedoeld om Claude end-to-end te testen
+        # zonder op de ochtend-cron te wachten.
+        if os.getenv('FORCE_DIGEST', '').lower() in ('true', '1', 'yes'):
+            logger.info("FORCE_DIGEST actief — digest geforceerd")
+            return True
+
         now_nl = datetime.now(_NL)
         if not (5 <= now_nl.hour <= 13):
             return False
