@@ -145,8 +145,33 @@ def parse_metadata(text: str, msg_date: date) -> dict:
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 FEATURES_PATH = _REPO_ROOT / 'data' / 'forecast_features.jsonl'
 PAIRS_PATH = _REPO_ROOT / 'data' / 'training' / 'referentie-forecaster_pairs.jsonl'
+SMS_ARCHIVE_DIR = _REPO_ROOT / 'data' / 'sms_archive'
 
 _VALID_VERDICTS = {'flat', 'longboard', 'surfable'}
+
+
+def _load_our_digest_text(forecast_date: str) -> str | None:
+    """Onze verstuurde digest-tekst die forecast_date als dag-0 beschrijft —
+    d.w.z. het digest-archief-record met decision=='digest' en timestamp op
+    forecast_date. Zo zit ONS eigen bericht ook in de trainingsdata (ons eigen
+    materiaal; staat al publiek in sms_archive)."""
+    if not SMS_ARCHIVE_DIR.exists():
+        return None
+    month_file = SMS_ARCHIVE_DIR / f"{forecast_date[:7]}.jsonl"
+    if not month_file.exists():
+        return None
+    best = None
+    for line in month_file.read_text(encoding='utf-8').splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            e = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if e.get('decision') == 'digest' and str(e.get('timestamp', ''))[:10] == forecast_date:
+            best = e.get('sms_text')  # laatste van die dag wint
+    return best
 
 
 def _load_our_snapshot(forecast_date: str) -> dict | None:
@@ -171,7 +196,7 @@ def _load_our_snapshot(forecast_date: str) -> dict | None:
     return cands[0]
 
 
-def write_training_pairs(noordwijk_days: list[dict]) -> list[dict]:
+def write_training_pairs(noordwijk_days: list[dict], msg_date_iso: str) -> list[dict]:
     """Voor elke gelabelde forecast-dag: join met onze feature-snapshot en
     schrijf een trainingspaar (label + onze features/score) naar
     data/training/referentie-forecaster_pairs.jsonl. Dagen zonder snapshot worden overgeslagen
@@ -197,12 +222,20 @@ def write_training_pairs(noordwijk_days: list[dict]) -> list[dict]:
         snap = _load_our_snapshot(d)
         pair = {
             'date': d,
+            # --- referentie-forecaster' kant: alleen afgeleide LABELS (geen ruwe proza — die
+            #     blijft in de privé-repo wegens auteursrecht) ---
             'referentie-forecaster_verdict': verdict,
             'referentie-forecaster_windows': day.get('windows') or [],
+            'ref_archive_ref': f"~/Merlijn/referentie-forecaster/data/ref_archive/{msg_date_iso}.txt",
+            # --- Onze kant: features + verdict + ONS eigen bericht (digest-tekst) ---
             'paired': snap is not None,
             'our_verdict': (snap or {}).get('our_verdict'),
             'our_peak_score': (snap or {}).get('our_peak_score'),
+            'our_windows': (snap or {}).get('our_windows'),
+            'our_digest_text': _load_our_digest_text(d),
             'features': snap,
+            # --- Vergelijking (gemak voor de leer-loop) ---
+            'agreement': (snap or {}).get('our_verdict') == verdict if snap else None,
         }
         existing[d] = pair
         if snap is not None:
@@ -296,7 +329,7 @@ def main():
         for day in noordwijk_days:
             if day.get('date') == msg_date.isoformat() and day.get('verdict') in _VALID_VERDICTS:
                 meta.setdefault('verdicts_per_spot', {})['Noordwijk'] = day['verdict']
-        made_pairs = write_training_pairs(noordwijk_days)
+        made_pairs = write_training_pairs(noordwijk_days, msg_date.isoformat())
 
     meta_path.write_text(json.dumps(meta, indent=2, ensure_ascii=False),
                          encoding='utf-8')
