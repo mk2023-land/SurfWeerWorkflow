@@ -139,7 +139,13 @@ class SMSValidator:
             return True
 
         for match in re.finditer(
-            r'(\d+[\.,]?\d*)\s*[-–—]\s*(\d+[\.,]?\d*)\s*m(?![/a-zA-Z])',
+            # (?<![\d:]) voorkomt dat de MINUTEN van een tijd ("06:00 — 1,7m")
+            # als ondergrens van een hoogte-range worden gelezen: zonder deze
+            # guard matchte "00 — 1,7m" → "0.0m", wat NOOIT in de allowed-lijst
+            # staat → ELKE Claude-digest met een klokijd vóór een hoogte werd
+            # vals afgekeurd en viel terug op de nood-template. Echte ranges
+            # ("0,8-1,2m") blijven werken.
+            r'(?<![\d:])(\d+[\.,]?\d*)\s*[-–—]\s*(\d+[\.,]?\d*)\s*m(?![/a-zA-Z])',
             sms_text,
         ):
             if not _claim(match.start(), match.end()):
@@ -164,7 +170,8 @@ class SMSValidator:
         # 2. Wave periods "Xs" — ranges eerst ("6-8s"), dan losse waarden.
         period_spans: list[tuple] = []
         for match in re.finditer(
-            r'(\d+[\.,]?\d*)\s*[-–—]\s*(\d+[\.,]?\d*)\s*(?:s|sec|seconden)(?=[\s\.,;:!?]|$)',
+            # (?<![\d:]) — zelfde tijd-minuut-guard als bij de hoogtes.
+            r'(?<![\d:])(\d+[\.,]?\d*)\s*[-–—]\s*(\d+[\.,]?\d*)\s*(?:s|sec|seconden)(?=[\s\.,;:!?]|$)',
             sms_text,
         ):
             period_spans.append((match.start(), match.end()))
@@ -195,7 +202,8 @@ class SMSValidator:
 
         wind_spans: list[tuple] = []
         for match in re.finditer(
-            r'(\d+[\.,]?\d*)\s*[-–—]\s*(\d+[\.,]?\d*)\s*kn(?:open)?\b',
+            # (?<![\d:]) — zelfde tijd-minuut-guard als bij de hoogtes.
+            r'(?<![\d:])(\d+[\.,]?\d*)\s*[-–—]\s*(\d+[\.,]?\d*)\s*kn(?:open)?\b',
             sms_text,
         ):
             wind_spans.append((match.start(), match.end()))

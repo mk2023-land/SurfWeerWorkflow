@@ -152,6 +152,47 @@ class TestRangeExpressions:
         assert any('6' in i and 'period' in i.lower() for i in result.issues), \
             f"Verwacht period 6s-issue, kreeg: {result.issues}"
 
+    def test_time_before_height_not_misread_as_zero_height(self):
+        """⭐ REGRESSIE: 'rond 06:00 — 1,7m' mag NIET als hoogte-range '00–1,7m'
+        gelezen worden (→ 0.0m). Die valse 0.0m-hallucinatie keurde ELKE
+        Claude-digest met een klokijd vóór een golfhoogte af, waardoor het
+        systeem permanent op de nood-template viel."""
+        sms = (
+            "Nwijk vr: top rond 06:00 — 1,7m WZW 5,3s, "
+            "wind 14kn W. Cam: surfweer.nl/webcams/noordwijk/"
+        )
+        allowed = {
+            'wave_heights_m': [1.7],       # 0.0 staat er bewust NIET in
+            'wave_periods_s': [5.3],
+            'wind_speeds_kn': [14],
+            'wind_directions_compass': ['W'],
+            'wave_directions_compass': ['WZW'],
+            'times_hhmm': ['06:00'],
+        }
+        result = self.v.validate_sms(sms, _make_days_input(allowed))
+        assert result.passed, (
+            f"Tijd '06:00' werd vals als 0.0m-hoogte gelezen. Issues: {result.issues}"
+        )
+        assert not any('0.0m' in i or '0,0m' in i for i in result.issues), \
+            f"Onverwachte 0.0m-issue: {result.issues}"
+
+    def test_real_height_range_still_validated_after_time_guard(self):
+        """De tijd-guard mag echte hoogte-ranges niet kapotmaken: '0,8-1,2m'
+        met 0.8 ontbrekend moet nog steeds falen."""
+        sms = "Nwijk di: top rond 14:00 — 0,8-1,2m WNW. Cam: surfweer.nl/webcams/noordwijk/"
+        allowed = {
+            'wave_heights_m': [1.2],       # 0.8 ontbreekt → moet falen
+            'wave_periods_s': [],
+            'wind_speeds_kn': [],
+            'wind_directions_compass': [],
+            'wave_directions_compass': ['WNW'],
+            'times_hhmm': ['14:00'],
+        }
+        result = self.v.validate_sms(sms, _make_days_input(allowed))
+        assert not result.passed
+        assert any('0.8' in i or '0,8' in i for i in result.issues), \
+            f"Verwacht 0.8m-issue, kreeg: {result.issues}"
+
     def test_period_word_seconden_is_validated(self):
         """D-fix: periode uitgeschreven als 'seconden'/'sec' (referentie-forecaster-proza) mag
         niet aan de validator ontsnappen — eerder matchte alleen 'Xs'."""
