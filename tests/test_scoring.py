@@ -768,21 +768,23 @@ class TestSprint2SizeCap:
     """Sprint 2 #13 — hard size-cap via multiplicatieve aggregation."""
 
     def test_marginal_wave_cannot_reach_surfable_via_environment(self):
-        """0.4m golf (~3-5pt) + perfect environment mag GEEN 60+ score halen."""
+        """Kleine golf + perfect environment mag NOOIT surfable (60+, shortboard)
+        halen. Wél mag een SCHONE kleine golf (golf>=5) sinds de referentie-forecaster-pariteit-
+        calibratie de longboard-tier (>=42) bereiken — een schoon 0,5m-golfje bij
+        hoogwater is 'inimini maar clean longboard', geen 'flat'. De golf<15-gate
+        + de harde <60-grens borgen dat omgeving alleen geen epic-score maakt."""
         from datetime import datetime
         sb = ScoreBreakdown(
             timestamp=datetime(2025, 8, 6, 12, 0),
             golf_score=5.0,
             wind_score=32.0,  # max
             tide_score=20.0,  # max
-            swell_dir_bonus=10.0,  # max
+            swell_dir_bonus=10.0,  # max (env_fraction=1.0 → volle clean-boost)
         )
-        # Fix #5: soft-blend ipv min(). alpha = sigmoid((5-15)/5) ≈ 0.119.
-        # additive=67, multiplicative=17.5 → blended ≈ 0.119×67 + 0.881×17.5 ≈ 23.4.
-        # Hoofdcriterium: ruim onder surfable=60. Soft-blend voorkomt
-        # de "epic via env" pathologie.
+        # Hoofd-invariant: nooit surfable via omgeving alleen.
         assert sb.total_score < 60.0
-        assert sb.total_score < 30.0  # ruim onder surfable, soft-blend werkt
+        # Nieuw gedrag: schone kleine golf landt in de longboard-tier, niet flat.
+        assert 42.0 <= sb.total_score < 60.0
 
     def test_big_wave_with_modest_environment_uses_additive(self):
         """30pt golf + matige environment → additieve uitkomst dominant in soft-blend."""

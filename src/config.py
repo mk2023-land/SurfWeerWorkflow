@@ -355,4 +355,13 @@ PIER_REFRACTION = {
 SIZE_CAP_AGGREGATION = {
     'env_bonus_cap': 2.5,          # max +250% via wind/tide/dir
     'use_multiplicative': True,    # multiplicatief naast additief, min van beide
+    # Clean-only longboard-promotie (referentie-forecaster-pariteit). Bij hoge env_fraction
+    # (schone, aflandige/zwakke wind + gunstig tij) leunt de score-blend richting
+    # additief, zodat een schoon klein golfje (golf>=5) de longboard-tier haalt
+    # i.p.v. door de multiplicatieve cap als 'flat' te worden weggedrukt.
+    # env_fraction <= floor → geen boost; >= full → volle boost; weight bepaalt
+    # hoe hard richting additief geduwd wordt (0=uit, 1=volledig additief bij full).
+    'clean_env_floor': 0.60,
+    'clean_env_full': 0.90,
+    'clean_alpha_weight': 0.7,
 }
