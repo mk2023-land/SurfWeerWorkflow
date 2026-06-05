@@ -199,7 +199,9 @@ jobs:
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
-          for f in data/sms_archive data/state.json data/monthly_budget.json; do
+          # forecast_features.jsonl = dataset-foundation voor de referentie-forecaster-leer-loop
+          # (scripts/calibrate.py); moet net als state durabel in git groeien.
+          for f in data/sms_archive data/state.json data/monthly_budget.json data/forecast_features.jsonl data/learned_params.json; do
             [ -e "$f" ] && git add "$f"
           done
           if git diff --staged --quiet; then
