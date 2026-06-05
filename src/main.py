@@ -341,7 +341,7 @@ class SurfAlertSystem:
 
             # Leer-loop dataset-foundation: leg per forecast-dag onze features +
             # ons verdict voor Noordwijk vast, zodat een later binnenkomend
-            # referentie-forecaster-bericht op dezelfde datum gepaird kan worden (scripts/
+            # referentie-bericht op dezelfde datum gepaird kan worden (scripts/
             # calibrate.py). Best-effort; faalt nooit de run.
             try:
                 self._log_forecast_features(hour_states, hourly_scores, windows)
@@ -803,9 +803,9 @@ class SurfAlertSystem:
 
         DATASET-FOUNDATION voor de leer-loop: elke run legt ONZE features (de
         fysische condities op het piek-uur) + ONS verdict per forecast-dag vast.
-        De referentie-forecaster-LABELS komen los uit het archief (~/Merlijn/referentie-forecaster); scripts/
+        De referentie-LABELS komen los uit het archief (privé referentie-archief); scripts/
         calibrate.py joint beide op datum en fit de scoring-parameters daarop.
-        Bewust géén referentie-forecaster-label hier — dit is puur onze kant, deterministisch
+        Bewust géén referentie-label hier — dit is puur onze kant, deterministisch
         reproduceerbaar, en groeit met elke run mee.
         """
         from collections import defaultdict
@@ -857,7 +857,7 @@ class SurfAlertSystem:
                     if getattr(tide, 'normalized_level', None) is not None else None
                 ),
                 'tide_phase': str(getattr(tide, 'phase', None)),
-                # Onze uitkomst (te vergelijken met het referentie-forecaster-label)
+                # Onze uitkomst (te vergelijken met het referentie-label)
                 'our_peak_score': sc_peak.total_score,
                 'our_verdict': verdict,
                 'our_windows': [

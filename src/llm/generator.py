@@ -207,7 +207,7 @@ class SMSGenerator:
             )
             if text:
                 # Volledige digest-tekst op INFO (alleen zichtbaar bij DEBUG) —
-                # voor inhoudelijke QA van de referentie-forecaster-stijl (venster/tij/hoogte).
+                # voor inhoudelijke QA van de referentie-stijl (venster/tij/hoogte).
                 logger.info(f"Digest volledig ({len(text)} chars):\n{text}")
                 return text
             # _generate_with_retry gaf None → API-fout of validatie 3× gefaald.

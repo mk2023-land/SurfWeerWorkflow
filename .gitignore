@@ -90,3 +90,8 @@ Thumbs.db
 .github/workflows/*.bak
 # CI-artefact van run_validation_backtest.py
 tests/validation_output.json
+
+# Leer-loop data (bevat referentie-labels) — nooit publiek
+data/training/
+data/forecast_features.jsonl
+data/learned_params.json

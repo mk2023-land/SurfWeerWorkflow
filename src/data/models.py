@@ -305,11 +305,11 @@ class ScoreBreakdown:
             #   golf=20 → alpha ≈ 0.73 (mostly additive)
             alpha = _sigmoid((self.golf_score - 15.0) / 5.0)
 
-            # referentie-forecaster-pariteit (clean-only): bij SCHONE condities — hoge
+            # referentie-pariteit (clean-only): bij SCHONE condities — hoge
             # env_fraction = aflandige/zwakke wind + gunstig tij + goede richting
             # — leunt de blend richting additief, óók voor een kleine golf. Zo
             # haalt een schoon 0,5m-golfje bij hoogwater de longboard-tier
-            # (referentie-forecaster' "inimini maar clean"), terwijl het de golf<15-gate niet
+            # (de referentie' "inimini maar clean"), terwijl het de golf<15-gate niet
             # tot surfable (shortboard) tilt. Vuile/aanlandige condities geven
             # lage env_fraction → geen clean-boost → multiplicatief regime →
             # blijft flat. De golf>=5-eis (height-curve × period_factor) gate't

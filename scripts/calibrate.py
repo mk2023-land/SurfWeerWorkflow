@@ -1,21 +1,20 @@
 """
-Leer-loop: fit de scoring-parameters op het referentie-forecaster-archief (data-driven,
-geen hand-gekozen verdict-drempels).
+Leer-loop: fit de scoring-parameters op de gepairde referentie-data
+(data-driven, geen hand-gekozen verdict-drempels).
 
-Idee (referentie-forecaster-pariteit, toekomstbestendig):
-  1. ONZE kant — `data/forecast_features.jsonl` (door main.py per run gevuld):
-     per forecast-dag de fysische features op het piek-uur + ons verdict +
-     onze piek-score voor Noordwijk.
-  2. referentie-forecaster-labels — `~/Merlijn/referentie-forecaster/data/ref_archive/*.meta.json`:
-     het verdict (flat/longboard/surfable) per spot/dag uit zijn berichten.
-  3. PAIR op datum → (features, onze_score, ons_verdict, referentie-forecaster_verdict).
-  4. EVALUEER: hoe vaak komt ons verdict overeen met referentie-forecaster? (confusion matrix)
-  5. FIT: zoek de longboard/surfable-drempels op onze piek-score die de
-     overeenkomst met referentie-forecaster maximaliseren → schrijf naar
-     `data/learned_params.json` (config.py laadt dat over de seed-waarden).
-  6. MODEL ERNAAST: train een lichte numpy-classifier (features → verdict) en
-     rapporteer zijn leave-one-out-overeenkomst NAAST de drempel-fit — "beide
-     naast elkaar", zodat we per datavolume kunnen kiezen.
+Idee (referentie-pariteit, toekomstbestendig):
+  - ONZE kant — `data/forecast_features.jsonl` (door main.py per run gevuld):
+    per forecast-dag de fysische features op het piek-uur + ons verdict + onze
+    piek-score voor Noordwijk.
+  - REFERENTIE-LABELS — uit het verstuurde referentie-bericht (geparst en in een
+    privé-archief opgeslagen); de ingest-stap joint die met onze snapshots tot trainingsparen in `data/training/ref_pairs.jsonl`.
+  - EVALUEER: hoe vaak komt ons verdict overeen met de referentie? (confusion)
+  - FIT: zoek de longboard/surfable-drempels op onze piek-score die de
+    overeenkomst maximaliseren → schrijf naar `data/learned_params.json`
+    (config.py laadt dat over de seed-waarden).
+  - MODEL ERNAAST: train een lichte numpy-classifier (features → verdict) en
+    rapporteer zijn leave-one-out-overeenkomst NAAST de drempel-fit — "beide
+    naast elkaar", zodat we per datavolume kunnen kiezen.
 
 Bewust GEEN hardcoded verdict-regels: de drempels worden gefit, niet geraden.
 Bij te weinig data rapporteert het script dat eerlijk en raakt het de
@@ -27,91 +26,22 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import os
 from collections import defaultdict
-from datetime import date, datetime
+from datetime import datetime
 from pathlib import Path
 
 VERDICTS = ['flat', 'longboard', 'surfable']  # ordinaal: flat < longboard < surfable
 _VRANK = {v: i for i, v in enumerate(VERDICTS)}
 
-FEATURES_PATH = Path(os.getenv('FEATURES_PATH', 'data/forecast_features.jsonl'))
+PAIRS_PATH = Path(os.getenv('REF_PAIRS_PATH', 'data/training/ref_pairs.jsonl'))
 LEARNED_PATH = Path(os.getenv('LEARNED_PARAMS_PATH', 'data/learned_params.json'))
-_referentie-forecaster_DEFAULT = Path(__file__).resolve().parent.parent.parent / 'referentie-forecaster' / 'data' / 'ref_archive'
-referentie-forecaster_DIR = Path(os.getenv('REF_ARCHIVE_DIR', _referentie-forecaster_DEFAULT))
-
-# referentie-forecaster-spots die we als Noordwijk-equivalent accepteren (hij groepeert
-# "zvoort/nwijk" en Zuid-Holland-strand vaak samen). Volgorde = voorkeur.
-_NWIJK_KEYS = ['Noordwijk', 'noordwijk', 'Zandvoort', 'zandvoort', 'nwijk', 'zvoort']
 
 
 # ---------------------------------------------------------------------------
-# referentie-forecaster-labels laden
+# Gepairde data laden (label + onze snapshot), geschreven door de ingest.
 # ---------------------------------------------------------------------------
-def load_referentie-forecaster_labels() -> dict[str, str]:
-    """{forecast_date_iso: referentie-forecaster_verdict} voor Noordwijk, best-effort.
-
-    Leest de geparste `verdicts_per_spot` uit de meta-bestanden. Het verdict
-    geldt voor de DAG van het bericht (referentie-forecaster schrijft 's avonds voor de dag
-    erna; we koppelen hier conservatief op de bericht-datum zelf — de
-    feature-snapshots bevatten meerdere forecast-dagen per datum, dus de join
-    vindt de juiste). Dagen zonder Noordwijk-label worden overgeslagen.
-    """
-    labels: dict[str, str] = {}
-    if not referentie-forecaster_DIR.exists():
-        return labels
-    for meta_file in sorted(referentie-forecaster_DIR.glob('*.meta.json')):
-        try:
-            meta = json.loads(meta_file.read_text(encoding='utf-8'))
-        except (json.JSONDecodeError, OSError):
-            continue
-        d = meta.get('date')
-        vps = meta.get('verdicts_per_spot') or {}
-        verdict = None
-        for key in _NWIJK_KEYS:
-            if key in vps:
-                verdict = vps[key]
-                break
-        if d and verdict in VERDICTS:
-            labels[d] = verdict
-    return labels
-
-
-# ---------------------------------------------------------------------------
-# Onze feature-snapshots laden
-# ---------------------------------------------------------------------------
-def load_our_snapshots() -> dict[str, dict]:
-    """{forecast_date_iso: record} — kies per forecast-dag de meest relevante
-    snapshot: bij voorkeur die gemaakt OP de dag zelf (day_offset==0), anders
-    de laatste vóór de dag. Zo vergelijken we onze 'nowcast' met referentie-forecaster."""
-    if not FEATURES_PATH.exists():
-        return {}
-    by_date: dict[str, list[dict]] = defaultdict(list)
-    for line in FEATURES_PATH.read_text(encoding='utf-8').splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            r = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if r.get('spot') != 'noordwijk' or not r.get('forecast_date'):
-            continue
-        by_date[r['forecast_date']].append(r)
-    chosen: dict[str, dict] = {}
-    for fdate, recs in by_date.items():
-        recs.sort(key=lambda r: (abs(r.get('day_offset', 99)), r.get('run_timestamp', '')))
-        chosen[fdate] = recs[0]
-    return chosen
-
-
-PAIRS_PATH = Path(os.getenv('referentie-forecaster_PAIRS_PATH', 'data/training/referentie-forecaster_pairs.jsonl'))
-
-
-def load_materialized_pairs() -> list[dict]:
-    """Lees de canonieke paren die ingest_reference_message.py schrijft (label +
-    onze snapshot). Alleen écht gepairde dagen (snapshot aanwezig)."""
+def load_pairs() -> list[dict]:
     if not PAIRS_PATH.exists():
         return []
     out = []
@@ -123,37 +53,15 @@ def load_materialized_pairs() -> list[dict]:
             p = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if p.get('paired') and p.get('our_verdict') and p.get('referentie-forecaster_verdict') in VERDICTS:
+        if p.get('paired') and p.get('our_verdict') and p.get('ref_verdict') in VERDICTS:
             out.append({
                 'date': p['date'],
-                'referentie-forecaster': p['referentie-forecaster_verdict'],
+                'ref': p['ref_verdict'],
                 'our_verdict': p['our_verdict'],
                 'our_peak_score': p.get('our_peak_score'),
                 'features': p.get('features') or {},
             })
     return out
-
-
-def build_pairs() -> tuple[list[dict], dict, dict]:
-    # 1) Canonieke gematerialiseerde paren (ingest --labels-json) hebben voorrang.
-    mat = load_materialized_pairs()
-    labels = load_referentie-forecaster_labels()
-    ours = load_our_snapshots()
-    if mat:
-        return mat, labels, ours
-    # 2) Fallback: on-the-fly join van regex-labels met snapshots (zwakker).
-    pairs = []
-    for d, tob in labels.items():
-        if d in ours:
-            r = ours[d]
-            pairs.append({
-                'date': d,
-                'referentie-forecaster': tob,
-                'our_verdict': r.get('our_verdict'),
-                'our_peak_score': r.get('our_peak_score'),
-                'features': r,
-            })
-    return pairs, labels, ours
 
 
 # ---------------------------------------------------------------------------
@@ -163,7 +71,7 @@ def confusion(pairs: list[dict], pred_key: str) -> tuple[dict, float]:
     cm = defaultdict(lambda: defaultdict(int))
     correct = 0
     for p in pairs:
-        t, o = p['referentie-forecaster'], p[pred_key]
+        t, o = p['ref'], p[pred_key]
         cm[t][o] += 1
         if t == o:
             correct += 1
@@ -172,9 +80,8 @@ def confusion(pairs: list[dict], pred_key: str) -> tuple[dict, float]:
 
 
 def print_confusion(cm: dict, title: str) -> None:
-    print(f"\n  {title} (rij=referentie-forecaster, kolom=onze):")
-    header = "    " + "".join(f"{v:>11}" for v in VERDICTS)
-    print(header)
+    print(f"\n  {title} (rij=referentie, kolom=onze):")
+    print("    " + "".join(f"{v:>11}" for v in VERDICTS))
     for t in VERDICTS:
         row = "".join(f"{cm.get(t, {}).get(o, 0):>11}" for o in VERDICTS)
         print(f"    {t:>9}{row}")
@@ -191,22 +98,21 @@ def verdict_from_score(score: float, lb: float, sb: float) -> str:
     return 'flat'
 
 
-def fit_thresholds(pairs: list[dict]) -> tuple[float, float, float]:
+def fit_thresholds(pairs: list[dict]):
     """Zoek (longboard_thr, surfable_thr) op onze piek-score die de overeenkomst
-    met referentie-forecaster maximaliseert. Returnt (lb, sb, agreement)."""
+    met de referentie maximaliseert. Returnt (lb, sb, agreement) of None."""
     scored = [p for p in pairs if isinstance(p.get('our_peak_score'), (int, float))]
     if not scored:
         return None
     best = (None, None, -1.0)
-    # Grid over plausibele drempels; sb > lb afgedwongen.
-    grid = [x for x in range(10, 91, 2)]
+    grid = list(range(10, 91, 2))
     for lb in grid:
         for sb in grid:
             if sb <= lb:
                 continue
             ok = sum(
                 1 for p in scored
-                if verdict_from_score(p['our_peak_score'], lb, sb) == p['referentie-forecaster']
+                if verdict_from_score(p['our_peak_score'], lb, sb) == p['ref']
             )
             acc = ok / len(scored)
             if acc > best[2]:
@@ -224,7 +130,7 @@ def _vec(rec: dict) -> list[float]:
     return [float(rec.get(f) if rec.get(f) is not None else 0.0) for f in _FEATS]
 
 
-def train_eval_model(pairs: list[dict]) -> float | None:
+def train_eval_model(pairs: list[dict]):
     """Leave-one-out overeenkomst van een numpy-softmax-classifier
     (features → verdict). None bij te weinig data of geen numpy."""
     usable = [p for p in pairs if p.get('features')]
@@ -236,8 +142,7 @@ def train_eval_model(pairs: list[dict]) -> float | None:
         return None
 
     X = np.array([_vec(p['features']) for p in usable], dtype=float)
-    y = np.array([_VRANK[p['referentie-forecaster']] for p in usable], dtype=int)
-    # Standaardiseer features (stabiliteit).
+    y = np.array([_VRANK[p['ref']] for p in usable], dtype=int)
     mu, sd = X.mean(0), X.std(0)
     sd[sd == 0] = 1.0
 
@@ -260,67 +165,57 @@ def train_eval_model(pairs: list[dict]) -> float | None:
         Xtr = (X[idx] - mu) / sd
         W, b = softmax_fit(Xtr, y[idx])
         xi = (X[i] - mu) / sd
-        pred = int(np.argmax(xi @ W + b))
-        if pred == y[i]:
+        if int(np.argmax(xi @ W + b)) == y[i]:
             correct += 1
     return correct / len(usable)
 
 
 # ---------------------------------------------------------------------------
 def main():
-    ap = argparse.ArgumentParser(description='Fit scoring-params op referentie-forecaster-archief')
+    ap = argparse.ArgumentParser(description='Fit scoring-params op referentie-data')
     ap.add_argument('--write', action='store_true', help='Schrijf learned_params.json')
     ap.add_argument('--min-pairs', type=int, default=12,
                     help='Minimum aantal gepairde dagen voordat we params wegschrijven')
     args = ap.parse_args()
 
-    pairs, labels, ours = build_pairs()
-    print("=" * 64)
-    print("referentie-forecaster-PARITEIT LEER-LOOP — calibratie")
-    print("=" * 64)
-    print(f"referentie-forecaster-labels (Noordwijk):   {len(labels)}")
-    print(f"Onze feature-snapshots:      {len(ours)} forecast-dagen")
-    print(f"Gepairde dagen (overlap):    {len(pairs)}")
+    pairs = load_pairs()
+    print("=" * 60)
+    print("REFERENTIE-PARITEIT LEER-LOOP — calibratie")
+    print("=" * 60)
+    print(f"Gepairde dagen: {len(pairs)}")
 
     if not pairs:
-        print("\nNog GEEN overlap tussen referentie-forecaster-labels en onze feature-snapshots.")
-        print("De feature-logging (main.py) is net toegevoegd en vult vooruit:")
-        print("elke productie-run legt onze kant vast; stuur referentie-forecaster-berichten via")
-        print("scripts/ingest_reference_message.py. Zodra er overlap is, fit dit script.")
-        print("(Tot dan blijft de fysica-seed in config.py de waarheid.)")
+        print("\nNog GEEN gepairde dagen. De feature-logging (main.py) vult vooruit;")
+        print("verwerk referentie-berichten via de ingest-stap.")
+        print("Zodra er paren zijn, fit dit script. (Tot dan blijft de fysica-seed.)")
         return
 
-    # Huidige overeenkomst (ons verdict zoals het systeem nu beslist)
     cm_now, acc_now = confusion(pairs, 'our_verdict')
-    print(f"\nHUIDIGE overeenkomst met referentie-forecaster: {acc_now:.0%} ({len(pairs)} dagen)")
+    print(f"\nHUIDIGE overeenkomst: {acc_now:.0%} ({len(pairs)} dagen)")
     print_confusion(cm_now, "Huidig (seed-params)")
 
-    # Drempel-fit
     fit = fit_thresholds(pairs)
+    lb = sb = acc_fit = None
     if fit and fit[0] is not None:
         lb, sb, acc_fit = fit
         print(f"\nGEFITTE drempels: longboard>={lb:.0f}, surfable>={sb:.0f} "
               f"→ overeenkomst {acc_fit:.0%}")
     else:
-        lb = sb = None
         print("\nDrempel-fit: onvoldoende score-data.")
 
-    # Model ernaast
     model_acc = train_eval_model(pairs)
     if model_acc is not None:
-        print(f"Model (numpy-softmax, leave-one-out): {model_acc:.0%} overeenkomst")
+        print(f"Model (numpy-softmax, leave-one-out): {model_acc:.0%}")
     else:
-        print(f"Model ernaast: nog te weinig data (min 6 gepairde dagen).")
+        print("Model ernaast: nog te weinig data (min 6 gepairde dagen).")
 
-    # Wegschrijven?
     if args.write:
         if len(pairs) < args.min_pairs:
             print(f"\nNIET weggeschreven: {len(pairs)} < min-pairs {args.min_pairs}. "
-                  f"Te weinig data → seed blijft staan (geen overfit-hardcoding).")
+                  f"Te weinig data → seed blijft (geen overfit).")
             return
         if lb is None or acc_fit <= acc_now:
-            print(f"\nNIET weggeschreven: fit verbetert niet t.o.v. huidige seed "
-                  f"({acc_fit:.0%} ≤ {acc_now:.0%}).")
+            print(f"\nNIET weggeschreven: fit verbetert niet ({acc_fit} ≤ {acc_now}).")
             return
         out = {
             'SURF_THRESHOLDS': {'longboard': lb, 'surfable': sb},

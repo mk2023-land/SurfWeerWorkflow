@@ -355,7 +355,7 @@ PIER_REFRACTION = {
 SIZE_CAP_AGGREGATION = {
     'env_bonus_cap': 2.5,          # max +250% via wind/tide/dir
     'use_multiplicative': True,    # multiplicatief naast additief, min van beide
-    # Clean-only longboard-promotie (referentie-forecaster-pariteit). Bij hoge env_fraction
+    # Clean-only longboard-promotie (referentie-pariteit). Bij hoge env_fraction
     # (schone, aflandige/zwakke wind + gunstig tij) leunt de score-blend richting
     # additief, zodat een schoon klein golfje (golf>=5) de longboard-tier haalt
     # i.p.v. door de multiplicatieve cap als 'flat' te worden weggedrukt.
@@ -367,11 +367,11 @@ SIZE_CAP_AGGREGATION = {
 }
 
 # ---------------------------------------------------------------------------
-# GELEERDE PARAMETERS — data-driven override (referentie-forecaster-pariteit, geen hardcoding)
+# GELEERDE PARAMETERS — data-driven override (referentie-pariteit, geen hardcoding)
 # ---------------------------------------------------------------------------
 # De drempels/calibratie hierboven zijn VOORLOPIGE seed-waarden (fysisch
 # redelijk, maar met de hand gekozen). De leer-loop (scripts/calibrate.py) fit
-# deze op het referentie-forecaster-archief en schrijft de uitkomst naar
+# deze op het referentie-archief en schrijft de uitkomst naar
 # `data/learned_params.json`. Staat dat bestand er, dan overschrijven de
 # geleerde waarden de seed — zo zijn de parameters een FIT-OUTPUT i.p.v.
 # hardcoded. Layout: {"SURF_THRESHOLDS": {...}, "ALERT_CONFIG": {...},

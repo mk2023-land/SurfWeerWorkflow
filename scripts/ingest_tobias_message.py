@@ -144,7 +144,7 @@ def parse_metadata(text: str, msg_date: date) -> dict:
 # Hoofdrepo-paden (script leeft in <repo>/scripts/).
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 FEATURES_PATH = _REPO_ROOT / 'data' / 'forecast_features.jsonl'
-PAIRS_PATH = _REPO_ROOT / 'data' / 'training' / 'referentie-forecaster_pairs.jsonl'
+PAIRS_PATH = _REPO_ROOT / 'data' / 'training' / 'ref_pairs.jsonl'
 SMS_ARCHIVE_DIR = _REPO_ROOT / 'data' / 'sms_archive'
 
 _VALID_VERDICTS = {'flat', 'longboard', 'surfable'}
@@ -199,7 +199,7 @@ def _load_our_snapshot(forecast_date: str) -> dict | None:
 def write_training_pairs(noordwijk_days: list[dict], msg_date_iso: str) -> list[dict]:
     """Voor elke gelabelde forecast-dag: join met onze feature-snapshot en
     schrijf een trainingspaar (label + onze features/score) naar
-    data/training/referentie-forecaster_pairs.jsonl. Dagen zonder snapshot worden overgeslagen
+    data/training/ref_pairs.jsonl. Dagen zonder snapshot worden overgeslagen
     (gerapporteerd). Idempotent per (date): vervangt een bestaand paar."""
     PAIRS_PATH.parent.mkdir(parents=True, exist_ok=True)
     existing = {}
@@ -222,11 +222,12 @@ def write_training_pairs(noordwijk_days: list[dict], msg_date_iso: str) -> list[
         snap = _load_our_snapshot(d)
         pair = {
             'date': d,
-            # --- referentie-forecaster' kant: alleen afgeleide LABELS (geen ruwe proza — die
+            # --- Referentie-forecaster: alleen afgeleide LABELS (geen ruwe proza — die
             #     blijft in de privé-repo wegens auteursrecht) ---
-            'referentie-forecaster_verdict': verdict,
-            'referentie-forecaster_windows': day.get('windows') or [],
-            'ref_archive_ref': f"~/Merlijn/referentie-forecaster/data/ref_archive/{msg_date_iso}.txt",
+            'ref_verdict': verdict,
+            'ref_windows': day.get('windows') or [],
+            # bestandsnaam in het privé referentie-archief (pad blijft privé)
+            'ref_archive_ref': f"{msg_date_iso}.txt",
             # --- Onze kant: features + verdict + ONS eigen bericht (digest-tekst) ---
             'paired': snap is not None,
             'our_verdict': (snap or {}).get('our_verdict'),
@@ -314,7 +315,7 @@ def main():
 
     # Canonieke Noordwijk-labels (door Claude volgens de vaste rubriek geleverd).
     # Dit is de BETROUWBARE labelbron — de regex-heuristiek hierboven pakt
-    # Noordwijk vaak niet uit referentie-forecaster' groeperende proza. Slaat de labels op in
+    # Noordwijk vaak niet uit de groeperende proza. Slaat de labels op in
     # de meta én maakt direct trainingsparen met onze feature-snapshots.
     noordwijk_days = []
     made_pairs = []

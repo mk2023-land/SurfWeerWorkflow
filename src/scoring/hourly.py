@@ -92,9 +92,9 @@ def score_golf_component(
     partitions = partition_energy_components(wave_spectrum, cos_offshore, wind_speed_kn)
     eff_height = partitions['effective_height_m']
 
-    # referentie-forecaster-pariteit (kleine schone longboardgolven): voorheen kreeg ALLES
+    # referentie-pariteit (kleine schone longboardgolven): voorheen kreeg ALLES
     # onder 0,5m nul punten en net daarboven bijna niets, waardoor een schoon
-    # 0,5m-golfje bij hoogwater (referentie-forecaster' "inimini maar clean longboard") als
+    # 0,5m-golfje bij hoogwater (referentie: "inimini maar clean longboard") als
     # "flat" uitkwam. De inimini-band 0,35-0,5m geeft nu een niet-nul basis
     # zodat zo'n golf — NA period_factor en de face/grooming-modifiers — de
     # longboard-cluster (golf>=5) kan halen. Cleanliness blijft gegated: korte
