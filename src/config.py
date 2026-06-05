@@ -365,3 +365,43 @@ SIZE_CAP_AGGREGATION = {
     'clean_env_full': 0.90,
     'clean_alpha_weight': 0.7,
 }
+
+# ---------------------------------------------------------------------------
+# GELEERDE PARAMETERS — data-driven override (referentie-forecaster-pariteit, geen hardcoding)
+# ---------------------------------------------------------------------------
+# De drempels/calibratie hierboven zijn VOORLOPIGE seed-waarden (fysisch
+# redelijk, maar met de hand gekozen). De leer-loop (scripts/calibrate.py) fit
+# deze op het referentie-forecaster-archief en schrijft de uitkomst naar
+# `data/learned_params.json`. Staat dat bestand er, dan overschrijven de
+# geleerde waarden de seed — zo zijn de parameters een FIT-OUTPUT i.p.v.
+# hardcoded. Layout: {"SURF_THRESHOLDS": {...}, "ALERT_CONFIG": {...},
+# "SIZE_CAP_AGGREGATION": {...}, "_meta": {"fitted_at":..., "n_pairs":...,
+# "agreement":...}}.  Onbekende keys worden genegeerd; ontbrekend bestand = seed.
+_LEARNED_PARAMS_PATH = os.getenv('LEARNED_PARAMS_PATH', 'data/learned_params.json')
+
+
+def _apply_learned_params(path: str) -> dict:
+    """Merge geleerde parameters over de seed-dicts. Returnt de _meta (of {})."""
+    import json
+    from pathlib import Path as _P
+    p = _P(path)
+    if not p.exists():
+        return {}
+    try:
+        learned = json.loads(p.read_text(encoding='utf-8'))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    targets = {
+        'SURF_THRESHOLDS': SURF_THRESHOLDS,
+        'ALERT_CONFIG': ALERT_CONFIG,
+        'SIZE_CAP_AGGREGATION': SIZE_CAP_AGGREGATION,
+        'SCORING_WEIGHTS': SCORING_WEIGHTS,
+    }
+    for group, target in targets.items():
+        for k, v in (learned.get(group) or {}).items():
+            if k in target and isinstance(v, (int, float)):
+                target[k] = v
+    return learned.get('_meta') or {}
+
+
+LEARNED_PARAMS_META = _apply_learned_params(_LEARNED_PARAMS_PATH)

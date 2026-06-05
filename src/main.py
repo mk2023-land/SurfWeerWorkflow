@@ -339,6 +339,15 @@ class SurfAlertSystem:
             # geen tweede call meer nodig (idempotent want zelfde input).
             self._update_run_log(run_log, hourly_scores, alertworthy_windows, decision, rws_data)
 
+            # Leer-loop dataset-foundation: leg per forecast-dag onze features +
+            # ons verdict voor Noordwijk vast, zodat een later binnenkomend
+            # referentie-forecaster-bericht op dezelfde datum gepaird kan worden (scripts/
+            # calibrate.py). Best-effort; faalt nooit de run.
+            try:
+                self._log_forecast_features(hour_states, hourly_scores, windows)
+            except Exception as e:
+                logger.warning(f"Forecast-feature logging faalde: {e}")
+
             # Stap 7: Genereer en verstuur notificatie (mail of SMS)
             if decision.has_alert:
                 logger.info("Generating and sending alert notification...")
@@ -788,6 +797,77 @@ class SurfAlertSystem:
             max_lines=10000,
             keep_archives=3,
         )
+
+    def _log_forecast_features(self, hour_states, hourly_scores, windows):
+        """Append per-dag feature-snapshot voor Noordwijk → git-persistente jsonl.
+
+        DATASET-FOUNDATION voor de leer-loop: elke run legt ONZE features (de
+        fysische condities op het piek-uur) + ONS verdict per forecast-dag vast.
+        De referentie-forecaster-LABELS komen los uit het archief (~/Merlijn/referentie-forecaster); scripts/
+        calibrate.py joint beide op datum en fit de scoring-parameters daarop.
+        Bewust géén referentie-forecaster-label hier — dit is puur onze kant, deterministisch
+        reproduceerbaar, en groeit met elke run mee.
+        """
+        from collections import defaultdict
+        from src.scoring.wind import _wind_direction_cosine
+        from src.util_files import append_jsonl_with_rotation
+        if not hour_states or not hourly_scores:
+            return
+
+        by_day: dict = defaultdict(list)
+        for st, sc in zip(hour_states, hourly_scores):
+            by_day[st.timestamp.date()].append((st, sc))
+
+        run_ts = datetime.now()
+        path = Path('data/forecast_features.jsonl')
+        for day, pairs in sorted(by_day.items()):
+            st_peak, sc_peak = max(pairs, key=lambda p: p[1].total_score)
+            ws = st_peak.wave_spectrum
+            hs = getattr(ws, 'significant_height_total', None)
+            tp = getattr(ws, 'peak_period_observed_s', None) or getattr(ws, 'mean_period', None)
+            tide = st_peak.tide
+            day_windows = [
+                w for w in windows
+                if w.start.date() == day or w.end.date() == day
+            ]
+            kinds = {w.kind for w in day_windows}
+            verdict = (
+                'surfable' if 'surfable' in kinds
+                else 'longboard' if 'longboard' in kinds
+                else 'flat'
+            )
+            record = {
+                'run_timestamp': run_ts.isoformat(),
+                'forecast_date': day.isoformat(),
+                'day_offset': (day - run_ts.date()).days,
+                'spot': 'noordwijk',
+                # Features op het piek-score-uur (model-inputs voor de leer-loop)
+                'peak_hour': st_peak.timestamp.strftime('%H:%M'),
+                'hs_m': round(hs, 2) if hs is not None else None,
+                'tp_s': round(tp, 1) if tp is not None else None,
+                'wind_speed_kn': round(st_peak.wind.speed_kn, 1),
+                'wind_dir_deg': int(st_peak.wind.direction_deg),
+                'offshore_cos': round(
+                    _wind_direction_cosine(
+                        st_peak.wind.direction_deg, NOORDWIJK.beach_normal_deg
+                    ), 3,
+                ),
+                'tide_level_norm': (
+                    round(tide.normalized_level, 2)
+                    if getattr(tide, 'normalized_level', None) is not None else None
+                ),
+                'tide_phase': str(getattr(tide, 'phase', None)),
+                # Onze uitkomst (te vergelijken met het referentie-forecaster-label)
+                'our_peak_score': sc_peak.total_score,
+                'our_verdict': verdict,
+                'our_windows': [
+                    f"{w.start.strftime('%H')}-{w.end.strftime('%H')}u"
+                    for w in day_windows
+                ],
+            }
+            append_jsonl_with_rotation(
+                path, record, max_lines=20000, keep_archives=2,
+            )
 
     def _archive_sent_sms(self, run_log: RunLog, sms_text: str):
         """
