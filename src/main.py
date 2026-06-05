@@ -334,6 +334,11 @@ class SurfAlertSystem:
                         "cooldown te voorkomen. Result: %s",
                         result.get('error'),
                     )
+                    # Echte send-fail op een live run → markeer als run-error zodat
+                    # main() exit-1 geeft en de workflow `if: failure()`-push de
+                    # gebruiker waarschuwt ("de alert-run werkte niet").
+                    if not self.dry_run:
+                        run_log.error = f"alert_send_failed: {result.get('error')}"
 
             elif decision.send_digest:
                 logger.info("Generating and sending digest notification...")
@@ -355,6 +360,11 @@ class SurfAlertSystem:
                         "Digest send failed — last_digest_time NIET bijgewerkt. "
                         "Result: %s", result.get('error'),
                     )
+                    # Live send-fail → run-error zodat de workflow `if: failure()`-
+                    # push afgaat. Op MANUAL_RUN niet (test, geen alarm nodig).
+                    if not self.dry_run and os.getenv('MANUAL_RUN', '').lower() \
+                            not in ('true', '1', 'yes'):
+                        run_log.error = f"digest_send_failed: {result.get('error')}"
                 elif os.getenv('MANUAL_RUN', '').lower() in ('true', '1', 'yes'):
                     # MANUAL_RUN=true (workflow_dispatch / lokale tests):
                     # verstuur wel maar pollueer last_digest_time NIET — anders
@@ -635,10 +645,35 @@ class SurfAlertSystem:
                     'message': sms_text,
                 }
 
+        # Nood-template-waarschuwing. generate_digest_sms zet last_fallback_reason
+        # zodra Claude niet de tekst leverde (geen key, API-fout, credits op, of
+        # 3× door de validator afgekeurd). De gebruiker wil dit expliciet horen —
+        # we prefixen een regel ZODAT het via het normale SMS-kanaal binnenkomt.
+        # Ná de format-validatie hierboven, want die eist een 'Nwijk'/'Surfweer'-start.
+        fallback_reason = getattr(self.sms_generator, 'last_fallback_reason', None)
+        if fallback_reason:
+            reason_txt = {
+                'credits_exhausted': 'Claude-credits op',
+                'auth_error': 'Claude API-key ongeldig',
+                'no_api_key': 'geen Claude API-key',
+                'api_error': 'Claude API onbereikbaar',
+                'validation_failed': 'Claude-tekst kwam niet door de check',
+                'empty_response': 'Claude gaf lege tekst',
+            }.get(fallback_reason, fallback_reason)
+            logger.error(f"DIGEST OP NOOD-TEMPLATE — reden: {fallback_reason}")
+            sms_text = f"LET OP nood-template ({reason_txt}), geen Claude:\n{sms_text}"
+            validation_passed = False
+            validation_issues = (validation_issues or []) + [f"llm_fallback:{fallback_reason}"]
+            run_log_note = f"llm_fallback:{fallback_reason}"
+        else:
+            run_log_note = None
+
         if not self.dry_run:
             result = self.notifier.send_digest(sms_text)
             result.setdefault('validation_passed', validation_passed)
             result.setdefault('validation_issues', validation_issues)
+            if run_log_note:
+                result.setdefault('llm_fallback_reason', fallback_reason)
             return result
         return {
             'success': True,
@@ -647,6 +682,7 @@ class SurfAlertSystem:
             'message': sms_text,
             'validation_passed': validation_passed,
             'validation_issues': validation_issues,
+            'llm_fallback_reason': fallback_reason,
         }
 
     def _update_run_log(

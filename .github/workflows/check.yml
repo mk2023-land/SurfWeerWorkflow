@@ -118,6 +118,27 @@ jobs:
           mkdir -p data
           uv run python -m src.main
 
+      # De gebruiker wil expliciet horen wanneer een alert/digest-run NIET werkt.
+      # Vuurt bij elke harde fout: crash, data-fetch-failure (run_log.error) of
+      # een mislukte notifier-send (main.py geeft dan exit-1). Stuurt los van de
+      # normale notifier een ntfy-push, zodat een kapot notify-kanaal alsnog
+      # zichtbaar wordt. `|| true` zodat een ntfy-hapering de job niet maskeert.
+      - name: Notify on run failure
+        if: failure() && github.event_name == 'schedule'
+        env:
+          NTFY_TOPIC:  ${{ secrets.NTFY_TOPIC }}
+          NTFY_SERVER: ${{ vars.NTFY_SERVER || 'https://ntfy.sh' }}
+        run: |
+          if [ -z "${NTFY_TOPIC}" ]; then
+            echo "Geen NTFY_TOPIC — kan geen failure-push sturen"; exit 0
+          fi
+          curl -s --max-time 15 \
+            -H "Title: Surf-check run FAALDE" \
+            -H "Priority: high" \
+            -H "Tags: warning" \
+            -d "De surf-alert run van $(date -u +'%Y-%m-%d %H:%MZ') is mislukt (run ${{ github.run_id }}). Geen voorspelling verstuurd. Check: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            "${NTFY_SERVER}/${NTFY_TOPIC}" || true
+
       - name: Upload forecasts log
         if: always()
         uses: actions/upload-artifact@v7

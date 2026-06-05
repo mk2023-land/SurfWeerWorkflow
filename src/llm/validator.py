@@ -64,6 +64,41 @@ def _within(value: float, allowed: list[float], tol: float) -> bool:
     return any(abs(value - a) <= tol for a in allowed)
 
 
+# 16-punts kompasroos in volgorde (kloksgewijs) — voor afstand-in-stappen.
+_COMPASS_RING = [
+    'N', 'NNO', 'NO', 'ONO', 'O', 'OZO', 'ZO', 'ZZO',
+    'Z', 'ZZW', 'ZW', 'WZW', 'W', 'WNW', 'NW', 'NNW',
+]
+_COMPASS_INDEX = {d: i for i, d in enumerate(_COMPASS_RING)}
+
+
+def _compass_step_distance(a: str, b: str) -> Optional[int]:
+    """Aantal 22,5°-stappen tussen twee kompaslabels op de 16-punts roos.
+    None als één van beide geen geldig label is."""
+    ia, ib = _COMPASS_INDEX.get(a), _COMPASS_INDEX.get(b)
+    if ia is None or ib is None:
+        return None
+    diff = abs(ia - ib) % 16
+    return min(diff, 16 - diff)
+
+
+def _compass_within_tol(d: str, allowed: set, tol_steps: int = 1) -> bool:
+    """True als `d` exact in `allowed` zit, óf binnen `tol_steps` 22,5°-stappen
+    van enige toegestane richting ligt.
+
+    Reden: de digest-data heeft per uur een discreet kompaslabel (bv. ZZO),
+    maar Claude beschrijft een dag-gemiddelde en kan een buur-label kiezen
+    (ZO, 22,5° ernaast). Dat is afronding, geen hallucinatie. Vóór deze
+    tolerantie viel élke digest met zo'n buur-label terug op de nood-template
+    (zie 2026-06-04/05: 'Direction ZO niet in allowed [...ZZO...]')."""
+    if d in allowed:
+        return True
+    return any(
+        (dist := _compass_step_distance(d, a)) is not None and dist <= tol_steps
+        for a in allowed
+    )
+
+
 def _time_to_minutes(hhmm: str) -> Optional[int]:
     """'14:30' → 870; '14' → 840. None bij parsing-fout."""
     try:
@@ -238,9 +273,10 @@ class SMSValidator:
             set(allowed['wave_directions_compass'])
         )
         for d in sms_dirs:
-            if d not in allowed_dirs:
+            if not _compass_within_tol(d, allowed_dirs, tol_steps=1):
                 issues.append(
-                    f"Direction '{d}' niet in allowed directions {sorted(allowed_dirs)}"
+                    f"Direction '{d}' niet in of naast allowed directions "
+                    f"{sorted(allowed_dirs)} (tolerantie ±1 kompasstap)"
                 )
 
         # 6. Verboden hallucinatie-indicatoren

@@ -34,6 +34,25 @@ import httpx
 # error-handling in _call_claude.
 from anthropic._exceptions import OverloadedError, RateLimitError
 
+
+def _classify_api_error(e: Exception) -> str:
+    """Vertaal een Anthropic/SDK-exception naar een korte fallback-reden.
+
+    Onderscheidt 'credits op' / ongeldige key van een generieke API-fout, zodat
+    de gebruiker een gerichte waarschuwing krijgt i.p.v. alleen 'er ging iets mis'.
+    Een credit-tekort komt bij Anthropic binnen als een billing-gerelateerde
+    400/403 ('credit balance is too low' / 'insufficient'); auth-fouten als 401.
+    """
+    name = type(e).__name__.lower()
+    msg = str(e).lower()
+    if any(k in msg for k in ('credit', 'billing', 'quota', 'insufficient',
+                              'payment', 'balance is too low')):
+        return 'credits_exhausted'
+    if 'authentication' in name or 'permission' in name or \
+            any(k in msg for k in ('invalid x-api-key', 'authentication', '401')):
+        return 'auth_error'
+    return 'api_error'
+
 from src.config import ANTHROPIC_CONFIG
 from src.data.models import (
     AlertCandidate,
@@ -104,6 +123,13 @@ class SMSGenerator:
                 timeout=httpx.Timeout(60.0, connect=5.0),
             )
 
+        # Reden waarom de laatste generate_*-call op de nood-template terugviel,
+        # of None als Claude de tekst wél leverde. main.py leest dit na elke
+        # call om de gebruiker te waarschuwen (incl. 'credits_exhausted').
+        self.last_fallback_reason = None if self.client else 'no_api_key'
+        # Sub-uitkomst van _generate_with_retry: 'api_error' of 'validation_failed'.
+        self._retry_outcome = None
+
     # ---------- public API ----------
 
     def generate_alert_sms(self, alert: AlertCandidate) -> str:
@@ -131,7 +157,10 @@ class SMSGenerator:
         wind_spread_series: Optional[list[dict]] = None,
     ) -> str:
         if not self.client:
+            self.last_fallback_reason = 'no_api_key'
             return self._fallback_digest_template(hour_states, scores, windows)
+        self.last_fallback_reason = None
+        self._retry_outcome = None
         try:
             structured_input = self._prepare_digest_input(
                 hour_states, scores, windows,
@@ -144,9 +173,17 @@ class SMSGenerator:
             text = self._generate_with_retry(
                 structured_input, max_tokens=max_tokens, kind='digest',
             )
-            return text or self._fallback_digest_template(hour_states, scores, windows)
+            if text:
+                return text
+            # _generate_with_retry gaf None → API-fout of validatie 3× gefaald.
+            self.last_fallback_reason = self._retry_outcome or 'empty_response'
+            return self._fallback_digest_template(hour_states, scores, windows)
         except Exception as e:
-            logger.error(f"Failed to generate digest SMS with Claude: {e}")
+            self.last_fallback_reason = _classify_api_error(e)
+            logger.error(
+                f"Failed to generate digest SMS with Claude "
+                f"({self.last_fallback_reason}): {e}"
+            )
             return self._fallback_digest_template(hour_states, scores, windows)
 
     def _generate_with_retry(
@@ -183,6 +220,7 @@ class SMSGenerator:
             if text is None:
                 # API faalde echt (network/overload/auth) — geen retry zin.
                 logger.warning(f"{kind} attempt {attempt + 1}: Claude API faalde")
+                self._retry_outcome = 'api_error'
                 return None
 
             # Anti-hallucinatie check
@@ -207,6 +245,7 @@ class SMSGenerator:
                     f"{kind}: alle {max_attempts} pogingen faalden op validatie. "
                     f"Laatste issues: {result.issues}"
                 )
+                self._retry_outcome = 'validation_failed'
                 return None
 
             # Voeg assistant-output + correctie-instructie toe aan conversation.
