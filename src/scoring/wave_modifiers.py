@@ -23,11 +23,15 @@ def _combine_golf_modifiers(factors: dict) -> float:
     surfable-drempel. Met weighted-sum: 1 + 6 * w_avg * dev → milde, subtiele
     penalty in plaats van compounding decay.
     """
+    # face_quality is hier verwijderd: te verdund (0,20 → max ~12% effect),
+    # waardoor een uitgeblazen golf alsnog hoog scoorde. Wordt nu als EIGEN,
+    # fit-bare multiplier op de golf-score toegepast (zie score_hour +
+    # config.WIND_FACE_PENALTY). De overige vijf modifiers blijven de subtiele
+    # weighted-sum.
     weights = {
         'wave_energy': 0.25,
         'wave_age': 0.25,
         'iribarren': 0.15,
-        'face_quality': 0.20,
         'wind_trend': 0.05,
         'wind_spread': 0.10,
     }

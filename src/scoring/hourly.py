@@ -14,6 +14,7 @@ from src.config import (
     NOORDWIJK,
     SCORING_WEIGHTS,
     SURF_MINIMUMS,
+    WIND_FACE_PENALTY,
 )
 from src.data.models import HourState, ScoreBreakdown, WaveSpectrum
 from src.scoring.context import (
@@ -205,6 +206,15 @@ def score_hour(state: HourState, context: Optional[dict] = None) -> ScoreBreakdo
         combined_factor, we_factor, age_factor, iri_factor, face_q, trend, conf_mult,
     )
     golf_score *= combined_factor
+
+    # Wind-face penalty als EIGEN multiplier (referentie-pariteit): harde onshore
+    # wind vernielt de face → drukt de golf-score los van hoogte, zodat een
+    # uitgeblazen grote golf niet alleen op hoogte 'surfable' wordt. face_q
+    # (0,4-1,0) komt uit wave_face_quality; sterkte is een fit-seed
+    # (WIND_FACE_PENALTY), niet hand-getuned op één dag.
+    face_pen = 1.0 - WIND_FACE_PENALTY['strength'] * (1.0 - face_q)
+    face_pen = max(WIND_FACE_PENALTY['min_factor'], face_pen)
+    golf_score *= face_pen
 
     is_mixed_sea, mixed_pen = mixed_sea_penalty(
         state.wave_spectrum,

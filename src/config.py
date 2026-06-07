@@ -341,6 +341,19 @@ PIER_REFRACTION = {
     'long_period_bonus': 0.15,     # +15% transmissie voor Tp ≥ 10s (refractie)
 }
 
+# Wind-face penalty (referentie-pariteit). Harde ONSHORE wind vernielt de
+# wave-face (chop, closeouts) — los van golfhoogte. `wave_face_quality` (0,4-1,0)
+# was als één van zes modifiers te verdund (weighted-sum, gewicht 0,20 → max
+# ~12% effect), waardoor een uitgeblazen 2,7m-golf bij 22kn onshore alsnog golf
+# ~35 hield en als 'surfable' uitkwam. Hier als EIGEN multiplier op de golf-score
+# met fit-bare sterkte: strength=1,0 → volledige face_quality geldt, lager dempt.
+# Seed fysisch gekozen (volledig geblazen face ≈ halve score); later op data
+# gefit (geen hand-tuning op één dag).
+WIND_FACE_PENALTY = {
+    'strength': 0.85,
+    'min_factor': 0.40,
+}
+
 # Hard size-cap met multiplicatieve aggregation (#13).
 # `env_bonus_cap`: maximaal hoeveel de omgeving (wind+tide+dir) de golf
 # kan boosten als percentage. 2.5 = max +250% bonus bij perfecte combo.
@@ -396,6 +409,7 @@ def _apply_learned_params(path: str) -> dict:
         'ALERT_CONFIG': ALERT_CONFIG,
         'SIZE_CAP_AGGREGATION': SIZE_CAP_AGGREGATION,
         'SCORING_WEIGHTS': SCORING_WEIGHTS,
+        'WIND_FACE_PENALTY': WIND_FACE_PENALTY,
     }
     for group, target in targets.items():
         for k, v in (learned.get(group) or {}).items():

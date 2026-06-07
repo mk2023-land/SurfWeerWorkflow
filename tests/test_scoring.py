@@ -1119,23 +1119,24 @@ class TestCombineGolfModifiers:
         assert _combine_golf_modifiers(factors) == 1.0
 
     def test_six_factors_085_no_collapse(self):
-        """6× 0.85: oude multiplicatieve stacking = 0.85⁶ ≈ 0.377 → score collapse.
-        Nieuwe weighted-sum = 1 + 1×(-0.15) = 0.85 (subtiele penalty)."""
+        """Alle modifiers 0.85: oude multiplicatieve stacking = 0.85⁶ ≈ 0.377 →
+        score collapse. Weighted-sum blijft mild. face_quality is verplaatst naar
+        een eigen multiplier (zie WIND_FACE_PENALTY), dus telt hier niet meer mee:
+        5 factoren, som van weights = 0.80 → combined = 1 + 0.80×(-0.15) = 0.88."""
         from src.scoring.hourly import _combine_golf_modifiers
         factors = {
             'wave_energy': 0.85,
             'wave_age': 0.85,
             'iribarren': 0.85,
-            'face_quality': 0.85,
+            'face_quality': 0.85,   # genegeerd in de sum (nu eigen multiplier)
             'wind_trend': 0.85,
             'wind_spread': 0.85,
         }
         combined = _combine_golf_modifiers(factors)
-        # Som van weights = 1.0; dev = -0.15 elk → combined = 1 + 1×(-0.15) = 0.85
-        assert 0.84 <= combined <= 0.86
+        assert 0.87 <= combined <= 0.89
         # Vergelijk met oude multiplicatieve: 0.85^6 ≈ 0.377 (was collapse)
         old_mult = 0.85 ** 6
-        assert combined > old_mult + 0.4  # >0.4 verschil = anti-collapse werkt
+        assert combined > old_mult + 0.4  # anti-collapse werkt nog
 
     def test_capped_below_at_060(self):
         """Extreme negative deviations gecapt op 0.60."""
