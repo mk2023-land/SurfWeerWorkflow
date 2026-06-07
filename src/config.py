@@ -347,10 +347,13 @@ PIER_REFRACTION = {
 # ~12% effect), waardoor een uitgeblazen 2,7m-golf bij 22kn onshore alsnog golf
 # ~35 hield en als 'surfable' uitkwam. Hier als EIGEN multiplier op de golf-score
 # met fit-bare sterkte: strength=1,0 → volledige face_quality geldt, lager dempt.
-# Seed fysisch gekozen (volledig geblazen face ≈ halve score); later op data
-# gefit (geen hand-tuning op één dag).
+# Seed 0,5 = MILD verdedigbaar (volledig geblazen face ≈ -30%): dempt een
+# uitgeblazen grote golf zonder de verdicten van andere (matig-onshore) dagen om
+# te gooien. Benchmark 2026-06-07 toonde dat een sterkere seed (0,85) overshoot
+# (day-verdict-agreement 50%→25%). De échte sterkte wordt op data gefit zodra
+# het corpus groot genoeg is — NIET hand-getuned op één dag.
 WIND_FACE_PENALTY = {
-    'strength': 0.85,
+    'strength': 0.5,
     'min_factor': 0.40,
 }
 
