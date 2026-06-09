@@ -597,6 +597,17 @@ class SMSValidator:
         Span-tracking voorkomt double-counting: een match die binnen een
         eerdere langere match valt (bv. 'N' binnen 'NNO') wordt geskipt.
         """
+        return [tok for tok, _s, _e in self._compass_direction_spans(text)]
+
+    def _compass_direction_spans(self, text: str) -> list[tuple]:
+        """(token, start, end) voor élke kompas-richting in `text`.
+
+        Gedeelde basis voor `_extract_compass_directions` (validatie) én
+        `sanitize_directions` (deterministisch vangnet) — zo gebruiken beide
+        exact dezelfde detectie + guards (dag-afkortingen na 'Nwijk '/regelbegin
+        en wind-label-context tellen niet als richting), en kan de sanitizer
+        nooit iets anders vinden dan wat de validator zou flaggen.
+        """
         upper = text.upper()
         consumed_spans: list[tuple] = []  # (start, end) van al gematchte richtingen
 
@@ -615,7 +626,7 @@ class SMSValidator:
         ):
             consumed_spans.append((m.start(1), m.end(1)))
 
-        found: list[str] = []
+        found: list[tuple] = []
         for d in _COMPASS_DIRS:  # al gesorteerd langste-eerst
             for m in re.finditer(r'\b' + re.escape(d) + r'\b', upper):
                 start, end = m.start(), m.end()
@@ -629,7 +640,7 @@ class SMSValidator:
                     consumed_spans.append((start, end))
                     continue
                 consumed_spans.append((start, end))
-                found.append(d)
+                found.append((d, start, end))
 
         # Sweep: onbekende NOZW-tokens (2-4 letters). Een hallucinatie als
         # 'NWN' of 'ZOZ' (geen geldige compass-codes) moet als afwijking
@@ -641,9 +652,55 @@ class SMSValidator:
             start, end = m.start(), m.end()
             if _overlaps(start, end):
                 continue
-            found.append(token)
+            found.append((token, start, end))
 
         return found
+
+    def sanitize_directions(self, sms_text: str, structured_input: dict) -> tuple:
+        """Verwijder elke kompasrichting die buiten de toegestane set valt.
+
+        Deterministisch vangnet naast prompt-grounding + retry: een richting-
+        hallucinatie (terugkerend: 'ZO', een verzonnen aflandige wind) laat de
+        digest zo NIET meer op de nood-template terugvallen. De richting wordt
+        kwalitatief weggelaten — "wind 18kn ZO" → "wind 18kn", "swell uit ZO"
+        → "swell" — de rest van de tekst blijft intact.
+
+        GETALLEN worden NOOIT aangeraakt: een verkeerde golfhoogte/wind is
+        veiligheidskritiek en MOET de validatie laten falen (→ retry/fallback).
+        Alleen richtingen zijn veilig weg te laten zonder de betekenis te
+        vervalsen.
+
+        Retourneert `(schone_tekst, [verwijderde_richtingen])`.
+        """
+        allowed = self._collect_allowed_citations(structured_input)
+        allowed_dirs = (
+            set(allowed['wind_directions_compass']) |
+            set(allowed['wave_directions_compass'])
+        )
+        bad = [
+            (tok, s, e) for tok, s, e in self._compass_direction_spans(sms_text)
+            if not _compass_within_tol(tok, allowed_dirs, tol_steps=1)
+        ]
+        if not bad:
+            return sms_text, []
+
+        out = sms_text
+        removed: list[str] = []
+        # Achterstevoren verwerken zodat eerdere offsets geldig blijven.
+        for tok, start, end in sorted(bad, key=lambda t: t[1], reverse=True):
+            removed.append(tok)
+            # Slok een direct voorafgaand voorzetsel ('uit'/'naar'/'richting')
+            # mee, zodat 'swell uit ZO' → 'swell' i.p.v. een dangling 'swell uit'.
+            pm = re.search(r'\b(?:uit|naar|richting)\s+$', out[:start], re.IGNORECASE)
+            cut = pm.start() if pm else start
+            out = out[:cut] + out[end:]
+
+        # Opruimen zonder newlines te slopen (alleen spaties/tabs collapsen).
+        out = re.sub(r'[ \t]{2,}', ' ', out)
+        out = re.sub(r'[ \t]+([,.;:])', r'\1', out)
+        out = re.sub(r'[ \t]+\n', '\n', out)
+        removed.reverse()  # terug naar leesvolgorde
+        return out, removed
 
     def _input_mentions_spring_tide(self, structured_input: dict) -> bool:
         """Check of springtij ergens in de input expliciet is gezegd."""

@@ -258,6 +258,18 @@ class SMSGenerator:
                 self._retry_outcome = 'api_error'
                 return None
 
+            # Deterministisch richting-vangnet vóór validatie: poets een
+            # hallucineerde kompasrichting (terugkerend: 'ZO') weg zodat ze de
+            # digest niet op de nood-template laat terugvallen. Getallen blijven
+            # onaangeraakt — die horen wél te falen en retry/fallback te
+            # triggeren. Zie validator.sanitize_directions.
+            text, removed_dirs = validator.sanitize_directions(text, structured_input)
+            if removed_dirs:
+                logger.warning(
+                    f"{kind} attempt {attempt + 1}: richting-sanitizer verwijderde "
+                    f"hallucinatie(s) {removed_dirs}"
+                )
+
             # Anti-hallucinatie check
             result = validator.validate_sms(text, structured_input)
             if result.passed:
@@ -288,6 +300,12 @@ class SMSGenerator:
                 return None
 
             # Voeg assistant-output + correctie-instructie toe aan conversation.
+            # De feedback is bewust CHIRURGISCH: een afgekeurde richting was de
+            # terugkerende faalmodus (zie 2026-06-09: Claude herhaalde 'ZO' over
+            # alle 3 pogingen omdat de generieke "gebruik de toegestane
+            # richtingen" niet zei dát-ie de verzonnen richting moest schrappen).
+            # Daarom nu expliciet: VERWIJDER de afgekeurde richting en schrijf
+            # 'm kwalitatief — kies NOOIT een buurrichting ter vervanging.
             messages.append({"role": "assistant", "content": text})
             messages.append({
                 "role": "user",
@@ -296,8 +314,19 @@ class SMSGenerator:
                     "richtingen die NIET in de _allowed_citations van de "
                     "betreffende dag staan. Concrete fouten:\n"
                     f"{issues_str}\n\n"
-                    "Genereer het bericht NU OPNIEUW, in dezelfde referentie-forecaster-stijl en "
-                    "format, maar zonder deze fouten. Loop voordat je schrijft "
+                    "REGELS voor de herschrijving:\n"
+                    "- Afgekeurde WIND- of SWELL-RICHTING: VERWIJDER die richting "
+                    "volledig. Schrijf de wind/swell kwalitatief ('zijwind', "
+                    "'tegenwind', 'schuin aanlandig', 'aflandig') of laat de "
+                    "richting helemaal weg. Verzin NOOIT een andere kompasrichting "
+                    "ter vervanging — een afgekeurde richting betekent dat die dag "
+                    "GEEN citeerbare richting heeft, niet dat je een buurrichting "
+                    "mag kiezen.\n"
+                    "- Afgekeurd getal (hoogte/periode/wind/tij): gebruik "
+                    "UITSLUITEND een waarde die letterlijk in _allowed_citations "
+                    "staat, of laat het getal weg.\n\n"
+                    "Genereer het bericht NU OPNIEUW, in dezelfde stijl en "
+                    "format als gevraagd, maar zonder deze fouten. Loop voordat je schrijft "
                     "elke dag mentaal langs _allowed_citations.wind_directions_compass "
                     "en wave_directions_compass — gebruik UITSLUITEND die richtingen. "
                     "Geef alleen het nieuwe bericht terug, geen uitleg vooraf."
