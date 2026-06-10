@@ -37,6 +37,13 @@ _COMPASS_DIRS = [
 _WIND_LABELS = {'aflandig', 'zijaflandig', 'aanlandig', 'zij-aanlandig',
                 'offshore', 'onshore', 'side-offshore'}
 
+# Kompas-codes die óók veelgebruikte Nederlandse woorden zijn: 'zo' (zodanig/zo)
+# en 'no' komen mid-zin voor ("nog onzeker zo ver vooruit"). Die mogen alleen als
+# richting tellen mét expliciete kompas-context (getal+eenheid, voorzetsel of
+# wind/swell-cue ernaast) — anders snijdt de sanitizer een geldig woord weg en
+# valt de digest onnodig op de nood-template terug. Zie _has_compass_context.
+_DUTCH_WORD_DIRS = {'ZO', 'NO'}
+
 
 class ValidationResult:
     """Resultaat van output validatie."""
@@ -614,6 +621,22 @@ class SMSValidator:
         def _overlaps(s: int, e: int) -> bool:
             return any(not (e <= cs or s >= ce) for cs, ce in consumed_spans)
 
+        def _has_compass_context(s: int, e: int) -> bool:
+            """True als de match op [s,e) in een kompas-context staat: een
+            getal+eenheid ervoor ('8kn ZO', '0,5m ZO'), een richting-voorzetsel
+            ('uit/naar/richting'), een wind/swell-cue, of een getal erachter
+            ('ZO 8kn'). Gebruikt om 'zo'/'no' als Nederlands woord te scheiden
+            van de kompas-codes ZO/NO."""
+            left = upper[max(0, s - 14):s]
+            right = upper[e:e + 8]
+            if re.search(r'\d[\d.,]*\s*(?:KN|BFT|KM|M/S|MS|M|°|S)?\s*$', left):
+                return True
+            if re.search(r'\b(?:UIT|NAAR|RICHTING|WIND|SWELL|GOLF|GOLVEN|DRAAIT|DRAAIEND)\s+$', left):
+                return True
+            if re.match(r'\s*\d', right):
+                return True
+            return False
+
         # Pre-pass: markeer dag-afkortingen na "Nwijk " of begin-van-alinea als
         # consumed, zodat ze niet als compass-richting worden geïnterpreteerd.
         # `zo` (zondag) zou anders verward worden met `ZO` (zuidoost). De andere
@@ -637,6 +660,10 @@ class SMSValidator:
                 # toegevoegd. Nu skippen we de match echt.
                 context = upper[max(0, start - 10):min(len(upper), end + 15)]
                 if any(w.upper() in context for w in _WIND_LABELS if w.upper() != d):
+                    consumed_spans.append((start, end))
+                    continue
+                # 'zo'/'no' zonder kompas-context = Nederlands woord, geen richting.
+                if d in _DUTCH_WORD_DIRS and not _has_compass_context(start, end):
                     consumed_spans.append((start, end))
                     continue
                 consumed_spans.append((start, end))

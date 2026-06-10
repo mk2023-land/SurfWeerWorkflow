@@ -41,6 +41,24 @@ class TestB8CompassExtraction:
         dirs = self.v._extract_compass_directions("ZOZ 1.4m groundswell")
         assert "ZOZ" in dirs
 
+    def test_dutch_word_zo_not_treated_as_compass(self):
+        """'zo'/'no' mid-zin zijn Nederlandse woorden, geen kompas-codes ZO/NO.
+        Regressie: de sanitizer sneed 'zo' uit echte digests ('nog onzeker zo
+        ver vooruit') → corrupt bericht + onnodige nood-template."""
+        dirs = self.v._extract_compass_directions("Nog onzeker zo ver vooruit")
+        assert "ZO" not in dirs
+        # Mét kompas-context (getal+eenheid of voorzetsel) blijft ZO een richting.
+        assert "ZO" in self.v._extract_compass_directions("Nwijk: wind 18kn ZO")
+        assert "ZO" in self.v._extract_compass_directions("swell uit ZO 6s")
+
+    def test_sanitizer_preserves_dutch_word_zo(self):
+        """De deterministische sanitizer mag 'zo' als woord niet wegsnijden."""
+        txt = "Nog onzeker zo ver vooruit. Wind 12kn ZW."
+        si = {"days": [{"_allowed_citations": {"wind_directions_compass": ["ZW"]}}]}
+        out, removed = self.v.sanitize_directions(txt, si)
+        assert "zo ver vooruit" in out
+        assert "ZO" not in removed
+
     def test_wind_label_context_does_not_emit_compass(self):
         """
         Bij wind-label context ('zij-aflandig N') mag de N niet als losse
