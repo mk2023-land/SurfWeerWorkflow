@@ -395,11 +395,16 @@ class SurfWindow:
         """
         if self.kind != 'surfable':
             return False
+        # Drempels uit ALERT_CONFIG (niet hardcoded) zodat de leer-loop ze via
+        # learned_params.json kan kalibreren — config._apply_learned_params
+        # merget die over de seed. Voorheen stonden 75/70 hier hard, waardoor
+        # de gemergede ALERT_CONFIG-waarden dood waren.
+        from src.config import ALERT_CONFIG
         return (
-            self.peak_score >= 75 and
+            self.peak_score >= ALERT_CONFIG['min_peak_score'] and
             len(self.triggers) >= 1 and
             self.stability >= 0.6 and
-            self.rarity_percentile >= 70 and
+            self.rarity_percentile >= ALERT_CONFIG['min_rarity_percentile'] and
             self.duration_hours >= 1
         )
 

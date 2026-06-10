@@ -809,7 +809,12 @@ class SurfAlertSystem:
         reproduceerbaar, en groeit met elke run mee.
         """
         from collections import defaultdict
-        from src.scoring.wind import _wind_direction_cosine
+        from src.config import WIND_FACE_PENALTY
+        from src.scoring.wave_modifiers import (
+            _offshore_groom,
+            partition_energy_components,
+        )
+        from src.scoring.wind import _wind_direction_cosine, wave_face_quality
         from src.util_files import append_jsonl_with_rotation
         if not hour_states or not hourly_scores:
             return
@@ -836,6 +841,29 @@ class SurfAlertSystem:
                 else 'longboard' if 'longboard' in kinds
                 else 'flat'
             )
+            # Re-score-basis: genoeg om de golf-score van dit piek-uur EXACT te
+            # herberekenen onder geleerde parameters (WIND_FACE_PENALTY strength,
+            # PARTITION wind_sea_multiplier), zodat scripts/calibrate.py de
+            # score-componenten kan fitten i.p.v. alleen de drempels. De wind/tij/
+            # richting-delen blijven vast; alleen de golf-keten wordt her-gescoord.
+            cos_off = _wind_direction_cosine(
+                st_peak.wind.direction_deg, NOORDWIJK.beach_normal_deg
+            )
+            parts = partition_energy_components(ws, cos_off, st_peak.wind.speed_kn)
+            score_basis = {
+                'golf_score': round(sc_peak.golf_score, 2),
+                'wind_score': round(sc_peak.wind_score, 2),
+                'tide_score': round(sc_peak.tide_score, 2),
+                'swell_dir_bonus': round(sc_peak.swell_dir_bonus, 2),
+                'confidence': round(getattr(sc_peak, 'confidence', 1.0), 4),
+                'face_q': round(wave_face_quality(st_peak.wind.speed_kn, cos_off), 4),
+                'wfp_strength': WIND_FACE_PENALTY['strength'],
+                'swell_h_m': round(parts['swell_height_m'], 3),
+                'windsea_h_m': round(parts['wind_sea_height_m'], 3),
+                'eff_height_m': round(parts['effective_height_m'], 3),
+                'groom': round(_offshore_groom(cos_off, st_peak.wind.speed_kn), 4),
+                'dominant_tp_s': round(parts['dominant_period_s'], 2),
+            }
             record = {
                 'run_timestamp': run_ts.isoformat(),
                 'forecast_date': day.isoformat(),
@@ -864,6 +892,8 @@ class SurfAlertSystem:
                     f"{w.start.strftime('%H')}-{w.end.strftime('%H')}u"
                     for w in day_windows
                 ],
+                # Her-scoorbare golf-keten voor de leer-loop (zie boven).
+                'score_basis': score_basis,
             }
             append_jsonl_with_rotation(
                 path, record, max_lines=20000, keep_archives=2,

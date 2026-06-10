@@ -413,6 +413,7 @@ def _apply_learned_params(path: str) -> dict:
         'SIZE_CAP_AGGREGATION': SIZE_CAP_AGGREGATION,
         'SCORING_WEIGHTS': SCORING_WEIGHTS,
         'WIND_FACE_PENALTY': WIND_FACE_PENALTY,
+        'PARTITION_WEIGHTS': PARTITION_WEIGHTS,
     }
     for group, target in targets.items():
         for k, v in (learned.get(group) or {}).items():

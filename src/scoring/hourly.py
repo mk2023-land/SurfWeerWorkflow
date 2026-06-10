@@ -75,6 +75,24 @@ _dominant_period_partition_based = dominant_period_partition_based
 logger = logging.getLogger(__name__)
 
 
+def golf_height_curve(eff_height: float) -> float:
+    """Effectieve golfhoogte (m) → ruwe hoogte-score (vóór period_factor en de
+    modifiers). Eén bron-van-waarheid, gedeeld door `score_golf_component` én
+    de leer-loop (`scripts/calibrate.py`), zodat een re-score onder geleerde
+    parameters exact dezelfde curve gebruikt als de live scoring (geen drift).
+    Zie commentaar in score_golf_component voor de inimini-band-rationale."""
+    if eff_height < 0.35:
+        return 0.0
+    elif eff_height < 0.5:
+        return (eff_height - 0.35) * 60   # 0,35→0, 0,5→9
+    elif eff_height < 1.0:
+        return 9 + (eff_height - 0.5) * 22  # 0,5→9, 1,0→20
+    elif eff_height < 2.0:
+        return 20 + (eff_height - 1.0) * 20
+    else:
+        return 40.0
+
+
 def score_golf_component(
     wave_spectrum: WaveSpectrum,
     cos_offshore: Optional[float] = None,
@@ -101,16 +119,7 @@ def score_golf_component(
     # longboard-cluster (golf>=5) kan halen. Cleanliness blijft gegated: korte
     # periode (lage period_factor) en aanlandige/harde wind (lage face_quality)
     # drukken een vuile kleine golf alsnog onder de drempel → blijft flat.
-    if eff_height < 0.35:
-        height_score = 0
-    elif eff_height < 0.5:
-        height_score = (eff_height - 0.35) * 60   # 0,35→0, 0,5→9
-    elif eff_height < 1.0:
-        height_score = 9 + (eff_height - 0.5) * 22  # 0,5→9, 1,0→20
-    elif eff_height < 2.0:
-        height_score = 20 + (eff_height - 1.0) * 20
-    else:
-        height_score = 40
+    height_score = golf_height_curve(eff_height)
 
     T = partitions['dominant_period_s']
     height_score *= period_factor(T)
@@ -342,6 +351,7 @@ __all__ = [
     'score_hour',
     'score_hour_series',
     'score_golf_component',
+    'golf_height_curve',
     'score_wind_component',
     'score_tide_component',
     'score_swell_direction_bonus',
