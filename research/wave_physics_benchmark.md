@@ -1,6 +1,6 @@
 # Wat maakt een goede surfgolf? Internationaal onderzoek als benchmark-kader
 
-**Doel:** een referentiekader bouwen om twee Nederlandse golf-voorspellingen tegen te benchmarken — een van de referentie-forecaster (referentie-forecaster) en een van een geautomatiseerd Python-systeem op Open-Meteo wave data. Onderzoek per 19 mei 2026, gebaseerd op Surfline, Stormsurf, NDBC/NOAA, ECMWF/WAM, SWAN/WW3 modeldocumentatie, Coastal Wiki, en Nederlandse/Belgische kustonderzoek.
+**Doel:** een referentiekader bouwen om twee Nederlandse golf-voorspellingen tegen te benchmarken — een van de referentie-forecaster en een van een geautomatiseerd Python-systeem op Open-Meteo wave data. Onderzoek per 19 mei 2026, gebaseerd op Surfline, Stormsurf, NDBC/NOAA, ECMWF/WAM, SWAN/WW3 modeldocumentatie, Coastal Wiki, en Nederlandse/Belgische kustonderzoek.
 
 ---
 
@@ -339,7 +339,7 @@ Surfline zelf erkent ze ([Surf Ratings: Colors](https://support.surfline.com/hc/
 
 ## 9. BENCHMARK-CRITERIA
 
-**Concrete checklist: wat moet een geautomatiseerde NL-surf-voorspelling minimaal bevatten om vergelijkbaar te zijn met een pro forecaster zoals referentie-forecaster van de referentie-forecaster?**
+**Concrete checklist: wat moet een geautomatiseerde NL-surf-voorspelling minimaal bevatten om vergelijkbaar te zijn met een pro forecaster zoals de referentie-forecaster?**
 
 ### A. Verplichte input-parameters (uit modeldata)
 
@@ -415,7 +415,7 @@ Surfline zelf erkent ze ([Surf Ratings: Colors](https://support.surfline.com/hc/
 
 Een goede surfvoorspelling is een **gewogen integratie** van: (1) golf-spectrumstructuur, niet alleen Hs/Tp samenvattingen; (2) wind-vector op uur-resolutie; (3) tide-stand op spot-niveau; (4) bathymetrie-aware refractie/shoaling; (5) bias-gecorrigeerde model-output gevalideerd tegen boeien. Pro forecasters voegen daar local knowledge en synoptisch oordeel aan toe.
 
-Voor het Open-Meteo–gedreven Python-systeem is de cruciale vraag bij benchmarking tegen de referentie-forecaster/referentie-forecaster dus niet *"klopt de voorspelde Hs?"* maar *"voorspelt het systeem de juiste combinatie van parameters in het juiste tijdvenster, met expliciete erkenning van zijn beperkingen ten opzichte van een mens met spectrum-inzicht en lokale ervaring?"*
+Voor het Open-Meteo–gedreven Python-systeem is de cruciale vraag bij benchmarking tegen de referentie-forecaster dus niet *"klopt de voorspelde Hs?"* maar *"voorspelt het systeem de juiste combinatie van parameters in het juiste tijdvenster, met expliciete erkenning van zijn beperkingen ten opzichte van een mens met spectrum-inzicht en lokale ervaring?"*
 
 De checklist in sectie 9 (BENCHMARK-CRITERIA) is hiervoor het concrete operationele instrument.
 

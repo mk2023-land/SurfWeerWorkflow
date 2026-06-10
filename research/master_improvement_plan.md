@@ -7,7 +7,7 @@
 
 ## 0. Bronnen die in dit plan gesynthetiseerd zijn
 
-1. **`gap_analysis.md`** (4411 woorden) — Per-case gap-analyse referentie-forecaster' 13 historische SMSes + woensdag 20 mei
+1. **`gap_analysis.md`** (4411 woorden) — Per-case gap-analyse van de referentie-forecaster 13 historische SMSes + woensdag 20 mei
 2. **`industry_models.md`** (5750 woorden) — Surfline LOTUS, Magicseaweed, Stormsurf, Surf-Forecast.com, Windguru, NL-diensten
 3. **`pro_forecaster_methods.md`** (6600 woorden) — WSL, Pat Caldwell, Sean Collins, wave physics, NL-specifiek
 4. **`academic_ml.md`** (4100 woorden) — WW3/SWAN/ECWAM, XGBoost bias correction, ML approaches, EMODnet bathymetrie
@@ -18,9 +18,9 @@ Plus eerder onderzoek: `wave_physics_benchmark.md`, `reference_methodology.md`, 
 
 ## 1. Executive Summary
 
-Het huidige systeem matcht referentie-forecaster' woensdag-output op **2 van 3 windows** (12-14u en 18-21u) maar genereert nog een extra morning-window (06-09u) dat referentie-forecaster niet noemt. Diepere benchmarks op referentie-forecaster' 13 historische SMSes laten zien dat de overblijvende gap **drie families** heeft:
+Het huidige systeem matcht de woensdag-output van de referentie-forecaster op **2 van 3 windows** (12-14u en 18-21u) maar genereert nog een extra morning-window (06-09u) dat de referentie-forecaster niet noemt. Diepere benchmarks op van de referentie-forecaster 13 historische SMSes laten zien dat de overblijvende gap **drie families** heeft:
 
-**A. Enkelvoudige wind-data** — één model (Open-Meteo `knmi_seamless`) terwijl referentie-forecaster 4 modellen triangulateert. **Belangrijkste bottleneck.**
+**A. Enkelvoudige wind-data** — één model (Open-Meteo `knmi_seamless`) terwijl de referentie-forecaster 4 modellen triangulateert. **Belangrijkste bottleneck.**
 
 **B. Te grove wave-decompositie** — geen continue refractie, geen wave-age, geen wave energy flux, T4-bonus te zwak. **Direct te fixen met bestaande data.**
 
@@ -37,13 +37,13 @@ De academic literatuur is helder: een hybrid pipeline van **fysisch model + XGBo
 Distillaat van alle vier rapporten: **7 systemische gaps** die vaker dan eens terugkomen.
 
 ### R1. Single-model wind-data (genoemd in 4/4 rapporten)
-Open-Meteo `knmi_seamless` is één getal per uur per grid-cel (~5 km). referentie-forecaster gebruikt Harmonie 2.5km + ECMWF + KNMI menselijke guidance. Wat dit oplevert dat ik mis:
+Open-Meteo `knmi_seamless` is één getal per uur per grid-cel (~5 km). De referentie-forecaster gebruikt Harmonie 2.5km + ECMWF + KNMI menselijke guidance. Wat dit oplevert dat ik mis:
 - Spread tussen modellen = onzekerheidssignaal (vooral relevant bij frontpassages)
 - Sub-uurlijkse shifts (modellen middelen weg)
 - Spatial variability (Z-H vs N-H kan 30-60° verschillen)
 
 ### R2. Spectrum-decompositie te grof (genoemd in 4/4)
-Open-Meteo Marine geeft één swell-partitie + één wind-zee partitie. referentie-forecaster leest 2D-spectra met 2-3 aparte pieken. Surfline rolt nu actief "Swell Spectra" feature uit als premium feature.
+Open-Meteo Marine geeft één swell-partitie + één wind-zee partitie. De referentie-forecaster leest 2D-spectra met 2-3 aparte pieken. Surfline rolt nu actief "Swell Spectra" feature uit als premium feature.
 - Mijn pipeline gebruikt `swell_wave_*` en `wind_wave_*` apart maar score ze gemiddeld
 - Mixed-sea detectie (wave_dir vs swell_dir hoek > 30°) ontbreekt
 - Combo-swell waar matige primaire + goed-georiënteerde secundaire werkt (Ridersguide-regel) wordt nu niet correct gescoord
@@ -60,22 +60,22 @@ Dit triggert false-negatives op N-swell ALERT cases (CASE 3, CASE 11 in gap-anal
 ### R4. Geen wave-age / spin-up modellering (genoemd in 3/4)
 Open-Meteo's wave-model rapporteert quasi-stationaire equilibrium-respons op de wind. In werkelijkheid heeft een wave-veld inertie van uren — een ochtend-veld dat 0.5 → 1.3m groeit is *minder* surfbaar dan een zelfde-hoogte veld dat al 12 uur stabiel draait.
 
-referentie-forecaster' "ochtend rustig, opbouwend" is impliciete kennis hiervan. Wetenschappelijke proxy: wave age = c_p/U10:
+De opmerking "ochtend rustig, opbouwend" van de referentie-forecaster is impliciete kennis hiervan. Wetenschappelijke proxy: wave age = c_p/U10:
 - c_p/U10 > 1.2 = matured swell, surfbaar
 - 0.83 < c_p/U10 < 1.2 = wind-zee, marginal
 - c_p/U10 < 0.83 = jonge wind-zee, pure chop
 
 ### R5. Geen real-time buoy-correctie (genoemd in 4/4)
-Surfline doet hourly buoy assimilatie, Stormsurf vertrouwt primair op live buoys, referentie-forecaster checkt elke ochtend IJG1 spectrum, academic top-1 is XGBoost op buoy-residuals. **Ik gebruik buoys nergens voor correctie.**
+Surfline doet hourly buoy assimilatie, Stormsurf vertrouwt primair op live buoys, de referentie-forecaster checkt elke ochtend IJG1 spectrum, academic top-1 is XGBoost op buoy-residuals. **Ik gebruik buoys nergens voor correctie.**
 - Verwachte impact: 15-25% RMSE-reductie op de eerste 6-12u nowcast
 - Data is gratis (RWS Waterinfo / DDAPI20)
 - Bias decay: zwaarder gewicht op eerste uren, decay naar 1.0 over 24-48h
 
 ### R6. Geen synoptische context (genoemd in 2/4)
-referentie-forecaster kijkt naar drukkaarten, frontpassages. Mijn `pressure_msl` wordt opgehaald maar niet in scoring gebruikt. Drukgradiënt-derivative (`|dp/dt| > 1.5 hPa/uur` = frontpassage) zou veel automatisch detecteerbaar maken zonder extra API.
+De referentie-forecaster kijkt naar drukkaarten, frontpassages. Mijn `pressure_msl` wordt opgehaald maar niet in scoring gebruikt. Drukgradiënt-derivative (`|dp/dt| > 1.5 hPa/uur` = frontpassage) zou veel automatisch detecteerbaar maken zonder extra API.
 
 ### R7. Deterministische output i.p.v. probabilistisch (genoemd in 3/4)
-referentie-forecaster zegt "kan zaterdag wat zijn" (uncertain), Surfline rapporteert ranges, ECMWF ensemble heeft P10/P90. Ik geef één getal. Hierdoor verliest het systeem **operationele beslissingswaarde** voor de gebruiker bij twijfelgevallen.
+De referentie-forecaster zegt "kan zaterdag wat zijn" (uncertain), Surfline rapporteert ranges, ECMWF ensemble heeft P10/P90. Ik geef één getal. Hierdoor verliest het systeem **operationele beslissingswaarde** voor de gebruiker bij twijfelgevallen.
 
 ---
 
@@ -88,9 +88,9 @@ Volgnummering grenzeloos doorlopend. Elke fix heeft: **What** | **Why (consensus
 | # | Fix | Why | Data | Effort | Impact | Sprint |
 |---|---|---|---|---|---|---|
 | **1** | **T4 groundswell-through-windsea bonus opwaarderen +1 → +8/+12 pt** | Gap-analyse Gap 8 — meest impactful voor zeldzame events; CASE 4 (6-aug-2025 groundswell) gaat nu naar ALERT. Industry consensus: groundswell-by-windsea is *het* paradigma-voorbeeld voor alert-waardigheid. | Geen extra — bestaat al | XS (1u) | Hoog voor rare events | 1 |
-| **2** | **Wave-age proxy** `cp/U10` als pre-filter | Pro-forecaster mechanism 6, academic top-3. Wind-sea met cp/U10 < 0.83 = pure chop. referentie-forecaster' "5s minimum ongeacht hoogte" is empirische proxy. | Tp en U10 al beschikbaar | XS (1u) | Hoog (filtert ochtend-spin-up correct) | 1 |
+| **2** | **Wave-age proxy** `cp/U10` als pre-filter | Pro-forecaster mechanism 6, academic top-3. Wind-sea met cp/U10 < 0.83 = pure chop. het "5s minimum ongeacht hoogte" van de referentie-forecaster is empirische proxy. | Tp en U10 al beschikbaar | XS (1u) | Hoog (filtert ochtend-spin-up correct) | 1 |
 | **3** | **Wave energy flux** `P = 0.49·Hs²·Te` als size-metric | Pro-forecaster mechanism 4, academic 2.2, Surf-Forecast.com basis-formule. Combineert periode én hoogte in fysische eenheid; voorkomt dat 1.4m@4s windhash even hoog scoort als 0.9m@8s clean swell. | Hs en Te al beschikbaar | XS (2u) | Hoog (juiste relatieve weging) | 1 |
-| **4** | **Wind-gust ratio** als instabiliteits-flag | Gap-analyse Gap 3. `gust/sustained > 1.5` = vlagerig (post-front, instabiel). referentie-forecaster' "vlagerig" wordt automatisch gedetecteerd. | `wind_gusts_10m` al opgehaald, ongebruikt | XS (1u) | Middel (2-3 cases) | 1 |
+| **4** | **Wind-gust ratio** als instabiliteits-flag | Gap-analyse Gap 3. `gust/sustained > 1.5` = vlagerig (post-front, instabiel). het "vlagerig" van de referentie-forecaster wordt automatisch gedetecteerd. | `wind_gusts_10m` al opgehaald, ongebruikt | XS (1u) | Middel (2-3 cases) | 1 |
 | **5** | **Mixed-sea detector** wave_dir vs swell_dir hoek > 30° | Gap-analyse Gap 5. Detecteert "rommelige" combo-seas. LLM kan dan "rommelig" zeggen in plaats van geforceerd één richting. | Open-Meteo Marine geeft beide | XS (1-2u) | Laag-middel (verbetert taalkwaliteit) | 1 |
 | **6** | **Drukgradiënt-derivative** voor synoptische detectie | Gap-analyse Gap 7, pro-forecaster mechanism 1. `|dp/dt| > 1.5 hPa/uur` = front/trog. `pressure_msl` al opgehaald. | Geen extra | XS (2u) | Middel (auto-detect frontale shifts) | 1 |
 | **7** | **Iribarren-number breaker-quality bonus** | Academic top-2 (⭐⭐⭐⭐⭐ rating). Voor Noordwijk ξ≈0.15 = spilling/mushy. Bij grotere swells stijgt ξ richting plunging = quality-bonus. | Beach slope (vast, ~0.02), Hs, Tp | XS (2u) | Middel-laag (quality modifier) | 1 |
@@ -103,7 +103,7 @@ Volgnummering grenzeloos doorlopend. Elke fix heeft: **What** | **Why (consensus
 | **9** | **Continue pier-refractie** vervangt binaire blocked sector | Gap-analyse Gap 4, pro-forecaster mechanism 9. Sigmoid-based op offset van swell-richting vs pier-shadow center, periode-afhankelijk. Voorkomt false-negative alerts op N-swell. | Pier-positie (vast), swell_dir, Tp | S (½ dag) | Hoog voor N-swell cases (2-3 cases, allemaal ALERT-waardig) | 2 |
 | **10** | **Wave energy flux + period-quality weighting per partition** | Pro-forecaster cheat-sheet, Surfline Wave Energy concept. `score = (swell_E × swell_quality) + (wind_E × wind_quality)` met aparte quality-factoren per partition. Ridersguide-regel: secundaire goed-georiënteerde swell kan dominant matige verslaan. | Beide partities al beschikbaar | M (1 dag) | Hoog (combo-seas correct gescored) | 2 |
 | **11** | **Tide-flank features** als rising/falling derivative | Pro-forecaster mechanism 7, industry P4. Niet alleen `tide_normalized` 0-1, ook `tide_velocity` (rising/falling), `time_to_next_high`, `time_to_next_low`. Sweet spot: mid-rising voor de meeste NL beach breaks. | RWS getij-data al beschikbaar | S (½ dag) | Hoog (windows preciezer) | 2 |
-| **12** | **Diurnal wind-decay** rond zonsondergang | Pro-forecaster mechanism 8. Empirische regel: `als sunset_h − 2 ≤ uur ≤ sunset_h + 1 én cloud_cover < 50%: wind -= 2-3 kn`. Modelleert referentie-forecaster' "na 19:30 wind valt weg" effect. | Sunset-tijd berekenbaar, cloud_cover al opgehaald | S (½ dag) | Middel (verbetert avond-window detectie) | 2 |
+| **12** | **Diurnal wind-decay** rond zonsondergang | Pro-forecaster mechanism 8. Empirische regel: `als sunset_h − 2 ≤ uur ≤ sunset_h + 1 én cloud_cover < 50%: wind -= 2-3 kn`. Modelleert het "na 19:30 wind valt weg"-effect van de referentie-forecaster. | Sunset-tijd berekenbaar, cloud_cover al opgehaald | S (½ dag) | Middel (verbetert avond-window detectie) | 2 |
 | **13** | **Hard size-cap met multiplicative aggregation** | Industry Gap 2 (Surfline + MSW consensus). Wind/tide/dir mogen nooit een 0.5m wave naar "epic" tillen. `total = min(size_proxy, max_per_size) × wind_factor × tide_factor` ipv puur additief. Versterkt huidige min_golf gate. | Geen extra | S (½ dag) | Middel-hoog (voorkomt edge-case false positives) | 2 |
 
 ### 3.3 Real-time correctie & data-infra (Sprint 3: ~3-5 dagen)
@@ -113,7 +113,7 @@ Volgnummering grenzeloos doorlopend. Elke fix heeft: **What** | **Why (consensus
 | **14** | **RWS IJG1-boei real-time bias-correctie** | Gap-analyse Gap 9, pro-forecaster mechanism 2, industry P3, academic top-1. Vergelijk live boei-Hs met model-Hs voor laatste 3-6 uur, bereken `bias_factor`, pas toe op forecast met exponential decay. Wetenschappelijk gefundeerd (Surfline 30-40% error reductie). | RWS DDAPI20 endpoint | M (1 dag) | Hoog (alle nowcasts beter, 3-4 cases) | 3 |
 | **15** | **Boei-spectrum history voor T1 swell-arrival** | Gap-analyse Gap 6. Functioneel niet geïmplementeerd. Schrijf periodiek A12+K13 spectrum naar `data/buoy_spectra_history.jsonl`. Detect peak-frequency shift naar lager + amplitude stijging → T1 trigger. Maakt CASE 5 detecteerbaar. | RWS DDAPI20 + storage discipline | M (1 dag) | Middel (alleen voor verre-storm cases, 2-3 cases) | 3 |
 | **16** | **Boei-vs-model bias logger** voor lange-termijn learning | Voorbereiding op XGBoost (Sprint 4). Bij elke run log model_prediction én boei_observation per veld; later trainbaar. | Pipeline-aanpassing | S (½ dag) | Laag direct, hoog op termijn | 3 |
-| **17** | **Probabilistische output met model-spread** | Gap-analyse Gap 10, pro-forecaster mechanism 12. P25-P75 range ipv single getal in LLM-input. Overlap met #8 (multi-model). LLM mag dan "1.0-1.4m" of "modellen nog onzeker" schrijven. | Multi-model uit #8 | S (½ dag) | Middel (verbetert vertrouwen + referentie-forecaster-fit van taal) | 3 |
+| **17** | **Probabilistische output met model-spread** | Gap-analyse Gap 10, pro-forecaster mechanism 12. P25-P75 range ipv single getal in LLM-input. Overlap met #8 (multi-model). LLM mag dan "1.0-1.4m" of "modellen nog onzeker" schrijven. | Multi-model uit #8 | S (½ dag) | Middel (verbetert vertrouwen + de referentie-forecaster-fit van taal) | 3 |
 
 ### 3.4 ML laag (Sprint 4: 2 weken, optioneel)
 
@@ -176,7 +176,7 @@ MEDIUM impact      │ #4 gust-ratio │ #6 drukgrad     │ #15 T1 detector│
 
 **Test-criterium:** woensdag-ochtend window krijgt nu wave-age penalty (Hs groeit van 0.5→1.3m in 5u = young wind-sea). Verwacht resultaat: morning-window valt onder longboard-threshold OF wordt expliciet als "spin-up fase" gemarkeerd.
 
-**Acceptance check tegen referentie-forecaster' 13 SMSes:** verwacht 4-6 cases verbeterd. Specifiek: CASE 1 (woensdag morgen wordt correct uitgesloten), CASE 4 (groundswell-event correct als ALERT), CASE 13 (vandaag correct flat).
+**Acceptance check tegen van de referentie-forecaster 13 SMSes:** verwacht 4-6 cases verbeterd. Specifiek: CASE 1 (woensdag morgen wordt correct uitgesloten), CASE 4 (groundswell-event correct als ALERT), CASE 13 (vandaag correct flat).
 
 ### Sprint 2 — Structurele verbeteringen (3-4 dagen)
 **Doel:** de twee grootste single-source-of-truth problemen oplossen (wind & refractie) en spectrum-decompositie correct doen.
@@ -192,7 +192,7 @@ MEDIUM impact      │ #4 gust-ratio │ #6 drukgrad     │ #15 T1 detector│
 
 **Test-criterium:** CASE 3 en CASE 11 (N-swell cases) genereren nu ALERT (waren false-negative). Combo-swell dagen worden correct als surfable gescored ook wanneer dominante Hs matig is.
 
-**Acceptance:** ~7-8 cases binnen tolerantie van referentie-forecaster (was ~5).
+**Acceptance:** ~7-8 cases binnen tolerantie van de referentie-forecaster (was ~5).
 
 ### Sprint 3 — Real-time correctie & infrastructuur (3-5 dagen)
 **Doel:** boei-data echt benutten en lange-termijn learning voorbereiden.
@@ -212,9 +212,9 @@ MEDIUM impact      │ #4 gust-ratio │ #6 drukgrad     │ #15 T1 detector│
 - [ ] **#18** XGBoost residual model getraind op Meetpost Noordwijk
 - [ ] Time-series cross-validation (geen random shuffle!)
 - [ ] Per-windrichting bias correction strata
-- [ ] Verification framework met McNemar + Diebold-Mariano tests tegen referentie-forecaster
+- [ ] Verification framework met McNemar + Diebold-Mariano tests tegen de referentie-forecaster
 
-**Test-criterium:** wetenschappelijk gevalideerde 20-25% RMSE reductie aanhoudend over 90+ dagen. HSS go/no-go classification > 0.60 vs referentie-forecaster als baseline.
+**Test-criterium:** wetenschappelijk gevalideerde 20-25% RMSE reductie aanhoudend over 90+ dagen. HSS go/no-go classification > 0.60 vs de referentie-forecaster als baseline.
 
 ---
 
@@ -222,20 +222,20 @@ MEDIUM impact      │ #4 gust-ratio │ #6 drukgrad     │ #15 T1 detector│
 
 | Metric | Huidig (na laatste benchmark) | Na Sprint 1 | Na Sprint 2 | Na Sprint 3 | Na Sprint 4 |
 |---|---|---|---|---|---|
-| Cases binnen referentie-forecaster-tolerantie | 5/13 | 7/13 | 8-9/13 | 10-11/13 | 11-12/13 |
+| Cases binnen de referentie-forecaster-tolerantie | 5/13 | 7/13 | 8-9/13 | 10-11/13 | 11-12/13 |
 | Hs MAE (m) | ~0.35 (ruw Open-Meteo) | ~0.32 | ~0.28 | ~0.25 | ~0.18-0.22 |
 | Tp MAE (s) | ~1.5 | ~1.3 | ~1.0 | ~0.8 | ~0.6 |
 | ALERT precision (false alerts) | onbekend | gelijk | beter (R3 fix) | beter | hoog |
 | ALERT recall (gemist alerts) | matig (mist N-swell) | gelijk | veel beter | veel beter | uitstekend |
-| Output-stijl (referentie-forecaster-lijkenheid) | 70% | 75% | 80% | 85% | 85% |
+| Output-stijl (de referentie-forecaster-lijkenheid) | 70% | 75% | 80% | 85% | 85% |
 | Probabilistische uncertainty | nee | nee | nee | ja | ja |
 | Operationele kosten/maand | €3 (LLM) | €3 | €4 (multi-model) | €5 (boei polling) | €5 |
 
 **Honest limits — wat geen enkele Sprint oplost:**
 
-1. **Spot-specific sandbank kennis.** Vereist 1+ jaar eigen waarneming. referentie-forecaster' "Wijk werkt op X, Noordwijk op Y" blijft buiten bereik.
-2. **KNMI menselijke guidance.** referentie-forecaster leest een geredigeerde menselijke synthese die niet als API beschikbaar is. We benaderen dit via multi-model spread maar 100% replicatie is onmogelijk.
-3. **Subjectieve voorkeur ("ochtend nooit, middag altijd").** Sommige van referentie-forecaster' picks zijn persoonlijke conventie. Zonder die mining van zijn historische SMSes blijft mijn output objectiever (= soms onverwachte morning-windows).
+1. **Spot-specific sandbank kennis.** Vereist 1+ jaar eigen waarneming. het "Wijk werkt op X, Noordwijk op Y" van de referentie-forecaster blijft buiten bereik.
+2. **KNMI menselijke guidance.** de referentie-forecaster leest een geredigeerde menselijke synthese die niet als API beschikbaar is. We benaderen dit via multi-model spread maar 100% replicatie is onmogelijk.
+3. **Subjectieve voorkeur ("ochtend nooit, middag altijd").** Sommige picks van de referentie-forecaster zijn persoonlijke conventie. Zonder die mining van zijn historische SMSes blijft mijn output objectiever (= soms onverwachte morning-windows).
 
 ---
 
@@ -267,7 +267,7 @@ LLM mag NOOIT numeriek redeneren of cijfers verzinnen. Alle scoring in Python, L
 
 | Risico | Mitigatie |
 |---|---|
-| Sprint 1 fixes leveren stapeling van penalty's → alle scores nul | Stage-gate test na elke fix: ten minste 2 van referentie-forecaster' cases moeten blijven scoren als surfable. Bij regressie: tune-down tot acceptabel. |
+| Sprint 1 fixes leveren stapeling van penalty's → alle scores nul | Stage-gate test na elke fix: ten minste 2 cases van de referentie-forecaster moeten blijven scoren als surfable. Bij regressie: tune-down tot acceptabel. |
 | Multi-model wind-fetch verviervoudigt API-calls | Open-Meteo expliciet ondersteund multi-model in één call; geen extra quota. Wel iets tragere response (~3 sec ipv 1). |
 | RWS IJG1 boei valt uit / DDAPI20 breekt | Implementeer met graceful degradation: bij missing boei-data, val terug op model-only forecast met explicit confidence-decrement. |
 | Continue refractie-functie overpaste op CASE 3/11 → false ALERT bij NNO swells | Validate tegen alle 13 cases; calibreer sigmoid curvature. Hardstop: bij swell direction exact 0°±5° (pier-shadow center), max 50% refractie. |
@@ -320,9 +320,9 @@ Per sprint, welke bestanden worden geraakt:
 4. **#7 Iribarren bonus** (vierde — fysieke breaker-classificatie)
 5. **#4 gust-ratio** + **#5 mixed-sea** + **#6 drukgradiënt** (parallel — kleine penalties die samen synoptische context geven)
 
-Per fix: implementeer, run dry-run-benchmark op woensdag-20-mei case, vergelijk met referentie-forecaster. Commit per fix met test-case bewijs.
+Per fix: implementeer, run dry-run-benchmark op woensdag-20-mei case, vergelijk met de referentie-forecaster. Commit per fix met test-case bewijs.
 
-Na Sprint 1: tweede benchmark-ronde. Als die laat zien dat ochtend-window nu correct uit referentie-forecaster-pattern valt, **dan pas Sprint 2** beginnen. Anders eerst Sprint 1-fine-tuning.
+Na Sprint 1: tweede benchmark-ronde. Als die laat zien dat ochtend-window nu correct uit de referentie-forecaster-pattern valt, **dan pas Sprint 2** beginnen. Anders eerst Sprint 1-fine-tuning.
 
 ---
 
@@ -355,13 +355,13 @@ Mijn voorstel: (c), maar pas in Sprint 3 implementeren.
 
 ## 12. Slotsamenvatting
 
-Het onderzoek over 4 onafhankelijke sporen (industry, pro-forecaster, academic, gap-analyse referentie-forecaster) convergeert op 7 systemische gaps die ALLEMAAL terugkomen, met **multi-model wind-triangulatie + partition-aware scoring + buoy bias-correctie** als de drie absolute hoofdthema's.
+Het onderzoek over 4 onafhankelijke sporen (industry, pro-forecaster, academic, gap-analyse de referentie-forecaster) convergeert op 7 systemische gaps die ALLEMAAL terugkomen, met **multi-model wind-triangulatie + partition-aware scoring + buoy bias-correctie** als de drie absolute hoofdthema's.
 
 De goede news: 12 van de 18 voorgestelde verbeteringen kunnen met BESTAANDE data (Open-Meteo + RWS + huidige config). Geen extra API's, geen ML-infrastructuur, geen jaar wachten op trainingsdata.
 
-De realistische ambitie: na Sprint 1+2 (max 5 dagen werk) zit het systeem op **10/13 cases binnen referentie-forecaster-tolerantie**. Na Sprint 3 op **11/13**. Volledig referentie-forecaster-niveau vereist Sprint 4 (XGBoost op 6+ maanden Meetpost Noordwijk data) — niet realistisch deze maand maar wel binnen 6 maanden bereikbaar.
+De realistische ambitie: na Sprint 1+2 (max 5 dagen werk) zit het systeem op **10/13 cases binnen de referentie-forecaster-tolerantie**. Na Sprint 3 op **11/13**. Volledig de referentie-forecaster-niveau vereist Sprint 4 (XGBoost op 6+ maanden Meetpost Noordwijk data) — niet realistisch deze maand maar wel binnen 6 maanden bereikbaar.
 
-De honest cap: zelfs perfect uitgevoerd haalt het systeem geen 13/13 omdat sommige van referentie-forecaster' picks subjectief zijn (lokale conventie, persoonlijke voorkeuren) of leunen op spot-specifieke bank-kennis die zonder jaren-lange waarneming niet replicabel is.
+De honest cap: zelfs perfect uitgevoerd haalt het systeem geen 13/13 omdat sommige picks van de referentie-forecaster subjectief zijn (lokale conventie, persoonlijke voorkeuren) of leunen op spot-specifieke bank-kennis die zonder jaren-lange waarneming niet replicabel is.
 
 **Voor de gebruiker, kort en bondig:** Sprint 1 is laagdrempelig, lage risk, hoge bewezen impact. Sprint 2 vereist iets meer architecturale aanpassingen maar lost de twee belangrijkste structurele gaps op (single-model + binaire refractie). Sprint 3+4 zijn voor wanneer het systeem productie-rijp moet zijn met probabilistische uncertainty en ML.
 

@@ -13,7 +13,7 @@ aiosignal==1.4.0
 annotated-types==0.7.0
     # via pydantic
 anthropic==0.103.1
-    # via surfweer
+    # via noordwijk-surf-alert
 anyio==4.13.0
     # via
     #   anthropic
@@ -46,7 +46,7 @@ httpcore==1.0.9
 httpx==0.28.1
     # via
     #   anthropic
-    #   surfweer
+    #   noordwijk-surf-alert
 idna==3.15
     # via
     #   anyio
@@ -60,9 +60,9 @@ multidict==6.7.1
     #   aiohttp
     #   yarl
 numpy==2.2.6 ; python_full_version < '3.11'
-    # via surfweer
+    # via noordwijk-surf-alert
 numpy==2.4.6 ; python_full_version >= '3.11'
-    # via surfweer
+    # via noordwijk-surf-alert
 propcache==0.5.2
     # via
     #   aiohttp
@@ -74,13 +74,13 @@ pydantic-core==2.46.4
 pyjwt==2.12.1
     # via twilio
 python-dotenv==1.2.2
-    # via surfweer
+    # via noordwijk-surf-alert
 requests==2.34.2
     # via twilio
 sniffio==1.3.1
     # via anthropic
 twilio==9.10.9
-    # via surfweer
+    # via noordwijk-surf-alert
 typing-extensions==4.15.0
     # via
     #   aiosignal

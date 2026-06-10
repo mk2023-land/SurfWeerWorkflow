@@ -71,9 +71,9 @@ def _prepare_digest_input(
     toegevoegd aan elk day_block zodat de LLM "modellen lopen nog uiteen"
     kan verwoorden.
 
-    Horizon was 4 dagen maar miste de surfable T+4 pulse die referentie-forecaster in zijn
+    Horizon was 4 dagen maar miste de surfable T+4 pulse die de referentie-forecaster in zijn
     SMS wel meeneemt. Verhoogd naar 5 dagen na benchmark 2026-05-23
-    (referentie-forecaster: woensdag heuphoog; systeem: stopte bij dinsdag).
+    (de referentie-forecaster: woensdag heuphoog; systeem: stopte bij dinsdag).
     """
     days = _group_by_day(hour_states, scores)
     day_blocks: list[dict] = []
@@ -271,7 +271,7 @@ def _circular_mean_deg(degrees: list[float]) -> float:
 
 def _wind_summary_for_day(day_states: list[HourState]) -> dict:
     """
-    Wind-dagdelen voor de LLM. referentie-forecaster benoemt vaak avondwind die op zichzelf
+    Wind-dagdelen voor de LLM. de referentie-forecaster benoemt vaak avondwind die op zichzelf
     geen surf geeft maar mogelijk de volgende dag wel ("dinsdag-avond NNO
     4bft, komt te laat om iets te geven, maar woensdag lukt dat wel").
 
@@ -384,7 +384,7 @@ def _summarize_day(
     elif longboard_windows:
         chosen_window = max(longboard_windows, key=lambda w: w.peak_score)
 
-    # Alle "andere" windows van de dag (niet de chosen) — referentie-forecaster noemt vaak
+    # Alle "andere" windows van de dag (niet de chosen) — de referentie-forecaster noemt vaak
     # meerdere vensters op een dag ("14-16u of na 19:30u"). Door deze ook
     # mee te geven kan de LLM dat patroon repliceren.
     other_windows = [w for w in day_windows if w is not chosen_window]
@@ -443,7 +443,7 @@ def _summarize_day(
     else:
         result["best_window"] = {"is_surfable": False, "kind": None}
 
-    # Andere windows van de dag (referentie-forecaster' "14-16u of na 19:30u" patroon)
+    # Andere windows van de dag (de referentie-forecaster "14-16u of na 19:30u" patroon)
     result["other_windows"] = [_window_payload(w) for w in other_windows]
 
     # Anti-hallucinatie vangnet — exact wat de LLM mag citeren.
@@ -783,7 +783,7 @@ def _tide_summary_for_day(day_states: list[HourState], peak_state: HourState) ->
       al voorbij is)
     - `high_tide_times_today` / `low_tide_times_today`: ALLE HW/LW-tijden
       die op deze kalenderdag vallen (Europe/Amsterdam), als HH:MM-lijst.
-      referentie-forecaster citeert vaak exacte tij-keerpunten ("vloed komt vol inzetten
+      de referentie-forecaster citeert vaak exacte tij-keerpunten ("vloed komt vol inzetten
       15u", "laagtij 10u"); deze velden geven de LLM die data per dag.
     - `daily_range_m`: HW-LW range (m); driver voor spring/doodtij-label
     - `spring_neap_label`: "springtij" / "doodtij" / None

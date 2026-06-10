@@ -366,7 +366,7 @@ class SurfWindow:
     `kind` onderscheidt 'surfable' (≥SURF_THRESHOLDS['surfable']) van
     'longboard' (alleen ≥SURF_THRESHOLDS['longboard']). Alleen 'surfable'
     windows zijn alert-candidate; 'longboard' windows verschijnen alleen
-    in de digest om referentie-forecaster' "longboard prima" momenten te dekken.
+    in de digest om de referentie-forecaster "longboard prima" momenten te dekken.
     """
     start: datetime
     end: datetime

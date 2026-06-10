@@ -2,14 +2,14 @@
 
 **Datum:** 19 mei 2026
 **Doel:** in kaart brengen wat menselijke pro-forecasters doen *bovenop* numerieke modellen, met als concreet einddoel om gerichte verbeteringen voor het SurfWeerWorkflow-systeem voor Noordwijk te identificeren.
-**Methode:** literatuur- en interviewonderzoek over WSL/big-wave forecasters, NOAA/NWS surfdiensten, Surfline/Stormsurf/Magicseaweed-methodologie, fundamentele golffysica, NL-specifieke kustdynamica, en de werkwijze van de referentie-forecaster (de referentie-forecaster).
+**Methode:** literatuur- en interviewonderzoek over WSL/big-wave forecasters, NOAA/NWS surfdiensten, Surfline/Stormsurf/Magicseaweed-methodologie, fundamentele golffysica, NL-specifieke kustdynamica, en de werkwijze van de referentie-forecaster.
 **Aanvulling op:** `reference_methodology.md`, `wave_physics_benchmark.md`, `benchmark_comparison.md`.
 
 ---
 
 ## 1. De vier "scholen" van surf-forecasting
 
-Voor wij in detail duiken: er zijn vier herkenbare archetypes onder professionele forecasters, met elk een eigen aanpak. Onze Noordwijk-context valt het dichtst bij archetype 2 (referentie-forecaster) en 4 (NWS-stijl regionale forecaster), maar er valt veel te leren van 1 en 3.
+Voor wij in detail duiken: er zijn vier herkenbare archetypes onder professionele forecasters, met elk een eigen aanpak. Onze Noordwijk-context valt het dichtst bij archetype 2 (de referentie-forecaster) en 4 (NWS-stijl regionale forecaster), maar er valt veel te leren van 1 en 3.
 
 | Archetype | Voorbeelden | Sterke punten | Wat ze missen |
 |---|---|---|---|
@@ -55,7 +55,7 @@ Stormsurf nummert elke storm die "significant swell" zal genereren (Storm 5 → 
 
 ### 3.3 Zelf in het water — verificatie-cultuur
 
-Wat Sponsler scheidt van pure modelaars: hij paddle't out om zijn eigen voorspelling te checken. Grant Washburn (filmmaker) zei over hem: *"He is the only forecaster I've seen paddle out to see if his prediction of 50-foot faces is accurate."* Dit komt **identiek** terug bij referentie-forecaster (`reference_methodology.md` §1: "bijna dagelijks zelf in het water").
+Wat Sponsler scheidt van pure modelaars: hij paddle't out om zijn eigen voorspelling te checken. Grant Washburn (filmmaker) zei over hem: *"He is the only forecaster I've seen paddle out to see if his prediction of 50-foot faces is accurate."* Dit komt **identiek** terug bij de referentie-forecaster (`reference_methodology.md` §1: "bijna dagelijks zelf in het water").
 
 ### 3.4 De Stormsurf Calculator
 
@@ -85,11 +85,11 @@ Caldwell schrijft niet "NW swell" maar **"305-320 degrees"**. Voor Hawaii (eilan
 
 ### 4.3 De "discussion" als tekst
 
-Onder de tabel met cijfers staat ALTIJD een vrije-tekst-discussie waarin Caldwell met humor uitlegt **waarom** de forecast is zoals hij is. Dit is precies wat referentie-forecaster in zijn SMS doet: niet alleen het cijfer, maar het **verhaal eromheen** (welke storm, welke fetch, welke periode-evolution).
+Onder de tabel met cijfers staat ALTIJD een vrije-tekst-discussie waarin Caldwell met humor uitlegt **waarom** de forecast is zoals hij is. Dit is precies wat de referentie-forecaster in zijn SMS doet: niet alleen het cijfer, maar het **verhaal eromheen** (welke storm, welke fetch, welke periode-evolution).
 
 ### 4.4 Feedback-loop met de big-wave community
 
-Caldwell belt big-wave surfer Kohl Christensen voor "view from the lineup" — biggest set, lulls, wind. Dit is een **menselijke validation-loop** die de hindcasts continu kalibreert. Vergelijk referentie-forecaster: hij is zelf de surfer-validator.
+Caldwell belt big-wave surfer Kohl Christensen voor "view from the lineup" — biggest set, lulls, wind. Dit is een **menselijke validation-loop** die de hindcasts continu kalibreert. Vergelijk de referentie-forecaster: hij is zelf de surfer-validator.
 
 Bronnen: [Hana Hou – The Surf Sage](https://hanahou.com/24.2/the-surf-sage), [NWS HFO Surf Forecast](https://www.weather.gov/hfo/SRF), [NCEI – Inside NCEI: Patrick Caldwell](https://www.ncei.noaa.gov/news/inside-ncei-regional-science-officer-patrick-caldwell), [Surf News Network – Pat Caldwell](https://www.surfnewsnetwork.com/pat-caldwell/).
 
@@ -119,7 +119,7 @@ Surfline's rating-systeem (7 niveau's: Very Poor → Epic) is **bewust dubbel**:
 
 Citaat ([surfline.com](https://support.surfline.com/hc/en-us/articles/36277684017819-Surf-Ratings-Colors)): *"This change was made because Good and Epic ratings can only be assigned by forecasters who have observed the conditions."*
 
-Reden: het ML-model mist context-elementen zoals **prior winds that have left residual chop, of a very high tide that slows conditions at tide-dependent spots**. Dit is exact wat referentie-forecaster' SMS-tekst impliciet bevat.
+Reden: het ML-model mist context-elementen zoals **prior winds that have left residual chop, of a very high tide that slows conditions at tide-dependent spots**. Dit is exact wat de SMS-tekst van de referentie-forecaster impliciet bevat.
 
 ### 5.2 Wave Consistency — losse score voor set-frequentie
 
@@ -153,19 +153,19 @@ Bronnen: [MSW – Quick Forecast Tutorial](https://magicseaweed.com/docs/forecas
 
 ---
 
-## 7. de referentie-forecaster — Nederlandse spot-orakel
+## 7. De referentie-forecaster — Nederlandse spot-orakel
 
 Uitgebreid behandeld in `reference_methodology.md`. Hier de essentie:
 
 - **17+ jaar gekalibreerde patroonherkenning op de Noordzee**, autodidact, woont dichtbij KNMI De Bilt.
-- Methode: 3-4 fijnmazige modellen (Harmonie, ICON, AROME) naast elkaar leggen — zelf benoemt hij dit in zijn KNRM-interview: *"In geval van een complexe weersituatie zeker de moeite waard"* ([KNRM – Kitesurfweer](https://www.knrm.nl/blog/tips/kitesurfweer)).
+- Methode: 3-4 fijnmazige modellen (Harmonie, ICON, AROME) naast elkaar leggen — zelf benoemt hij dit in een KNRM-interview: *"In geval van een complexe weersituatie zeker de moeite waard"* ([KNRM – Kitesurfweer](https://www.knrm.nl/blog/tips/kitesurfweer)).
 - Gebruikt expliciet **KNMI guidance modelbeoordeling** — dat is *menselijke synthese als input*, iets dat wij niet 1-op-1 kunnen repliceren.
 - Verifieert **dagelijks zelf** door in het water te staan.
 - Spectrum-uitleg: zie zijn 2017-post (helaas inmiddels 404), maar `reference_methodology.md` §3 documenteert: shoaling-factor ~2× bij T=10s, ~1× bij T=5s; groepssnelheid `1.56 × T` m/s; optimum 6.5–7s voor Noordzee.
-- Niet-genoemd in eerdere research, maar gevonden in [de referentie-forecaster/surf/surfweer-laatste-week-van-juni-2023/](https://de referentie-forecaster/surf/surfweer-laatste-week-van-juni-2023/): zijn drempel voor surfability: *"de wave periode moet minimaal 5 seconden zijn, ongeacht hoogte. Er zijn windagen waarbij de wave hoogte oploopt tot bijna 1,5m, maar de wave periode blijft steken op 4 tot 4,5 seconden."*
+- Niet-genoemd in eerdere research, maar gevonden in een van zijn publieke posts (eind juni 2023): zijn drempel voor surfability: *"de wave periode moet minimaal 5 seconden zijn, ongeacht hoogte. Er zijn windagen waarbij de wave hoogte oploopt tot bijna 1,5m, maar de wave periode blijft steken op 4 tot 4,5 seconden."*
 - Geen formele KNMI-relatie maar wordt door de surf-community én KNRM als autoriteit erkend.
 
-Bronnen: [Tasha's Surfcamp – referentie-forecaster](https://[bron verwijderd]/referentie-forecaster-de-piet-paulusma-van-het-surfen), [KNRM – Kitesurfweer](https://www.knrm.nl/blog/tips/kitesurfweer), [Ridersguide – Windvoorspellingen](https://ridersguide.nl/haal-meer-uit-de-windvoorspellingen/), [Omroep West – overleden watersporters Scheveningen](https://www.omroepwest.nl/nieuws/4045711/overleden-watersporters-scheveningen-mogelijk-verrast-door-lange-zeedeining).
+Bronnen: [KNRM – Kitesurfweer](https://www.knrm.nl/blog/tips/kitesurfweer), [Ridersguide – Windvoorspellingen](https://ridersguide.nl/haal-meer-uit-de-windvoorspellingen/).
 
 ---
 
@@ -226,7 +226,7 @@ Berekening voor Noordwijk wind-swell scenario (T=6s, U10=10 m/s):
 - cp = 1.56 × T = 9.4 m/s
 - cp/U10 = 9.4 / 10 = 0.94 → grensgeval, marginaal surfbaar
 
-referentie-forecaster' eigen empirische cutoff (5s) komt aardig overeen: bij T=5s, U10=10m/s is cp/U10 = 7.8/10 = 0.78 → jonge windsea, **niet surfbaar**.
+De eigen empirische cutoff van de referentie-forecaster (5s) komt aardig overeen: bij T=5s, U10=10m/s is cp/U10 = 7.8/10 = 0.78 → jonge windsea, **niet surfbaar**.
 
 Pierson-Moskowitz fully-developed sea criterium: cp/U10 ≈ 1.14 (≈ Tp = 8.13 × U10/g voor fully developed). Dat is exact waar Surfline UK / Stormrider de cutoff legt voor "kwaliteits-groundswell-achtig" voor Atlantische context.
 
@@ -240,11 +240,11 @@ In ondiep water versterken golven door behoud van energieflux. De shoaling-coëf
 Ks = √(Cg_deep / Cg_shallow)
 ```
 
-Voor T=10s, gaat een 1m boei-meting op 30m diepte naar ~2.0m op 3m diepte (= waar het breekt). referentie-forecaster noemt dit zelf: *"bij 10s een factor 2 ten opzichte van wat de boei meet"*. Voor T=5s is de factor slechts ~1.1, dus boei = strand-hoogte.
+Voor T=10s, gaat een 1m boei-meting op 30m diepte naar ~2.0m op 3m diepte (= waar het breekt). De referentie-forecaster noemt dit zelf: *"bij 10s een factor 2 ten opzichte van wat de boei meet"*. Voor T=5s is de factor slechts ~1.1, dus boei = strand-hoogte.
 
 Wat onze app dus moet doen: als we **boei-data** (IJG1, MUN1) gebruiken, een periode-afhankelijke shoaling-correctie toepassen. Open-Meteo Marine geeft al een nearshore Hs (kustpunt), maar deze is een grof model — een vergelijking IJG1-boei vs model voor periode > 8s zou een correctie-factor opleveren.
 
-Bron: [UBC ATSC113 – Swell](https://www.eoas.ubc.ca/courses/atsc113/sailing/met_concepts/08-met-waves/8d-swell/index.html), referentie-forecaster' impliciete uitleg in [de referentie-forecaster/surf/spectra/](https://de referentie-forecaster/surf/spectra/).
+Bron: [UBC ATSC113 – Swell](https://www.eoas.ubc.ca/courses/atsc113/sailing/met_concepts/08-met-waves/8d-swell/index.html), plus de impliciete spectra-uitleg van de referentie-forecaster.
 
 ### 8.5 Refractie en Snell's law voor swells
 
@@ -256,7 +256,7 @@ sin(θ₁) / C₁ = sin(θ₂) / C₂
 
 Voor Noordwijk: een WZW-swell (245°, beach-normal 285°) heeft offset 40°. Door refractie zal de breaking-direction dichter bij beach-normal komen, dus de **effectieve closeout-risk** vermindert. Een ZZW-swell (200°) heeft offset 85° en zal **veel meer langs de kust scheren** zonder fatsoenlijk te breken (refractie kan niet 85° overbruggen voor windswell met T<8s).
 
-Praktische regel uit literatuur en referentie-forecaster: voor Noordwijk werkt swell-richting tussen ~225° (ZW) en ~340° (NNW). Buiten dit bereik treedt **swell-shadow** op (pier IJmuiden voor N-swell, kustoriëntatie zelf voor ZZW).
+Praktische regel uit literatuur en van de referentie-forecaster: voor Noordwijk werkt swell-richting tussen ~225° (ZW) en ~340° (NNW). Buiten dit bereik treedt **swell-shadow** op (pier IJmuiden voor N-swell, kustoriëntatie zelf voor ZZW).
 
 Bronnen: [Ocean Dynamics – Numerical simulations of surface wave refraction in the North Sea](https://link.springer.com/content/pdf/10.1007/BF02226339.pdf), [UBC ATSC113 – Swell](https://www.eoas.ubc.ca/courses/atsc113/sailing/met_concepts/08-met-waves/8d-swell/index.html).
 
@@ -293,7 +293,7 @@ De Vlaamse Banken (1099 km², zuidwest van België, tot 45 km in zee) zijn een s
 - **Wave height attenuation**: ~20-40% over de banken (afhankelijk van Hs, T, water level)
 - **Spectrum filtering**: korte-periode-componenten (T<6s) passeren makkelijker dan lange-periode (de banken dempen relatief meer bij T>10s door grotere bottom-interactie)
 
-Dat is precies wat referentie-forecaster zelf zegt (21-8 SMS, geciteerd in `reference_methodology.md`): *"kortere interval komt makkelijker over de Vlaamse banken"*. Voor Noordwijk: Z-swells worden bij aankomst NIET zoals een open-zee swell behandeld — de **periode is filterd** en pas wat doorkomt is meestal T=5-7s windswell.
+Dat is precies wat de referentie-forecaster zelf zegt (21-8 SMS, geciteerd in `reference_methodology.md`): *"kortere interval komt makkelijker over de Vlaamse banken"*. Voor Noordwijk: Z-swells worden bij aankomst NIET zoals een open-zee swell behandeld — de **periode is filterd** en pas wat doorkomt is meestal T=5-7s windswell.
 
 Bron: [Health.belgium.be – Habitats Directive Areas Belgian North Sea](https://www.health.belgium.be/en/habitats-directive-areas-belgian-part-north-sea), [BODC – Monitoring Network Flemish Banks](https://www.bodc.ac.uk/resources/inventories/edmed/report/5619/).
 
@@ -345,7 +345,7 @@ Surfline ([Science of Surfing](https://www.scienceofsurfing.com/p/why-is-the-win
 
 ### 10.2 Evening glass-off
 
-Mechanisme (omgekeerd): 's avonds als zon onder gaat, koelt land snel af, sea-breeze valt weg, paar uur tussen 19:00-21:00 lokaal wordt het **glassy**. Dit is wat referentie-forecaster in zijn SMS van 19 mei 2026 expliciet noemt voor Noordwijk: *"5bft tot 20u, daarna afnemend tot 4bft"* + de specifieke avond-window **19:30-21u**.
+Mechanisme (omgekeerd): 's avonds als zon onder gaat, koelt land snel af, sea-breeze valt weg, paar uur tussen 19:00-21:00 lokaal wordt het **glassy**. Dit is wat de referentie-forecaster in zijn SMS van 19 mei 2026 expliciet noemt voor Noordwijk: *"5bft tot 20u, daarna afnemend tot 4bft"* + de specifieke avond-window **19:30-21u**.
 
 In ons systeem moeten we dus **wind-decay rond zonsondergang** modelleren. Open-Meteo geeft per-uur wind, dus de signal is wel aanwezig, maar mogelijk onderschat. Een **post-processing rule** "subtract 1-2 kn for the hour 19-21 if windrichting=onshore en cloud-cover laag" zou dit verbeteren.
 
@@ -365,7 +365,7 @@ Open-Meteo Marine geeft Hs per uur, maar de **echte surfability** hangt af van *
 - **Hoogwater + kleine swell** = inner bank in spel, breakers zijn dichtbij strand, korter ride.
 - **Mid-tide (rising) + medium swell** = classic, beide bands kunnen werken, optimum window.
 
-referentie-forecaster' SMS-windows volgen *exact* dit patroon. Onze huidige `tide_normalized` 0-1 mist het feit dat **flank van een tij** (rising/falling) belangrijker is dan absolute height.
+De SMS-windows van de referentie-forecaster volgen *exact* dit patroon. Onze huidige `tide_normalized` 0-1 mist het feit dat **flank van een tij** (rising/falling) belangrijker is dan absolute height.
 
 ---
 
@@ -384,7 +384,7 @@ Voor Noordwijk: zelfs de fijnste resolutie (5 km DWD ICON) is **te grof om kust-
 
 Dit verklaart twee structurele biases in onze data:
 1. **Wave-height bias**: model geeft 1.0m terwijl boei IJG1 op 1.3m staat. Dit komt door (a) ontbrekende lokale wind-versterking, (b) verkeerde shoaling-correctie, (c) onderschatte refractie-focusing.
-2. **Period bias laag**: model geeft Tp=4.5s terwijl referentie-forecaster 5-6s zegt. WAM/WW3 hebben bekende negative bias in Tp voor fetch-limited seas met breed spectrum.
+2. **Period bias laag**: model geeft Tp=4.5s terwijl de referentie-forecaster 5-6s zegt. WAM/WW3 hebben bekende negative bias in Tp voor fetch-limited seas met breed spectrum.
 
 ### 11.2 Wat WW3 en SWAN wel/niet kunnen
 
@@ -416,13 +416,13 @@ Bron: [ECMWF – Quantifying forecast uncertainty](https://www.ecmwf.int/en/rese
 ## 12. Wat doen pro's dat naive modellen niet doen — 12 mechanismen
 
 ### A. Mechanism 1: Multi-model triangulatie
-Pro's leggen **3-4 verschillende numerieke modellen naast elkaar** (referentie-forecaster: Harmonie, ICON, AROME, KNMI guidance). Verschil tussen modellen = onzekerheidssignaal. Onze app gebruikt nu één model (Open-Meteo).
+Pro's leggen **3-4 verschillende numerieke modellen naast elkaar** (de referentie-forecaster: Harmonie, ICON, AROME, KNMI guidance). Verschil tussen modellen = onzekerheidssignaal. Onze app gebruikt nu één model (Open-Meteo).
 
 ### B. Mechanism 2: Boei-as-truth feedback
 Pro's vergelijken **real-time boei tegen ochtend-forecast**. Als de IJG1-boei al om 08:00 hoger zit dan de forecast voor 08:00, weet je dat de hele dag-curve geüpdate moet worden (bv. +0.2m systematisch).
 
 ### C. Mechanism 3: Spectrum-partitie (wind sea + swell apart wegen)
-Niet alleen totale Hs maar **per partition height, period en direction**. referentie-forecaster splitst expliciet "windhoogte" en "swell-component" — Sponsler maakt het tot core-methodologie.
+Niet alleen totale Hs maar **per partition height, period en direction**. De referentie-forecaster splitst expliciet "windhoogte" en "swell-component" — Sponsler maakt het tot core-methodologie.
 
 ### D. Mechanism 4: Wave energy flux als size-proxy
 P = 0.49 × Hs² × Te. Eén-getal die **periode én hoogte** combineert in fysische eenheid. Lange-periode dag met lagere Hs kan dezelfde flux hebben als korte-periode dag met hogere Hs maar de **surfability is heel anders**.
@@ -431,7 +431,7 @@ P = 0.49 × Hs² × Te. Eén-getal die **periode én hoogte** combineert in fysi
 ξ-getal bepaalt spilling vs plunging. Spilling op Hollandse beach = standaard; plunging-tendency (ξ>0.25) = bonus-quality signaal.
 
 ### F. Mechanism 6: Wave age check (cp/U10)
-Wind-zee met cp/U10 < 0.83 = niet-surfbare jonge windsea (model rapporteert wel "wave_height" maar het is geen surfable wave). referentie-forecaster' empirische cutoff (T>5s) is een proxy hiervoor.
+Wind-zee met cp/U10 < 0.83 = niet-surfbare jonge windsea (model rapporteert wel "wave_height" maar het is geen surfable wave). De empirische cutoff van de referentie-forecaster (T>5s) is een proxy hiervoor.
 
 ### G. Mechanism 7: Tide-flank logic (rising/falling × spring/neap × bank-zone)
 Pro's redeneren over **welke bank werkt bij welke tide-hoogte**. Mid-rising tide = sweet spot voor de meeste Hollandse beach-breaks. Onze normalized tide (0-1) mist de flank-richting.
@@ -446,10 +446,10 @@ Pier IJmuiden blokkeert N-swell maar amplificeert NW-wrap-around voor Noordwijk.
 Outer bank werkt op laag, inner bank werkt op hoog. Pro's hebben mentale tabellen per spot. Dit is **niet** in publieke data beschikbaar; vereist eigen jaar-of-meer-data verzameling.
 
 ### K. Mechanism 11: Bias-correctie per windrichting
-Onze observatie (`benchmark_comparison.md`): model Tp consistent 1-2s laag versus referentie-forecaster. Pro's kennen die bias en corrigeren mentaal. Sponsler doet dit expliciet via calibration coefficients.
+Onze observatie (`benchmark_comparison.md`): model Tp consistent 1-2s laag versus de referentie-forecaster. Pro's kennen die bias en corrigeren mentaal. Sponsler doet dit expliciet via calibration coefficients.
 
 ### L. Mechanism 12: Vertelvorm / verhaal in plaats van getallen
-referentie-forecaster' SMS is **prozaisch** met expliciete windows ("Nwijk 14-16u of na 19:30u") en **kwalitatieve woorden** ("genoeg hoogte", "leuke lijntjes"). Geen score, geen alert-threshold. De surfer leest dit als coherent verhaal, niet als data-dump.
+De SMS van de referentie-forecaster is **prozaisch** met expliciete windows ("Nwijk 14-16u of na 19:30u") en **kwalitatieve woorden** ("genoeg hoogte", "leuke lijntjes"). Geen score, geen alert-threshold. De surfer leest dit als coherent verhaal, niet als data-dump.
 
 ---
 
@@ -484,7 +484,7 @@ referentie-forecaster' SMS is **prozaisch** met expliciete windows ("Nwijk 14-16
 **Sprint 3 — verfijning:**
 6. **Diurnal wind-decay correctie (#8)**: Als (uur 19-22) AND (sunset_hour - 1 ≤ uur ≤ sunset_hour + 1) AND (cloud_cover < 50%): wind -= 2 kn.
 7. **Multi-model triangulatie (#1)**: ECMWF + ICON + GFS Wave naast elkaar. Spread berekenen, in output communiceren.
-8. **Vertelvorm output (#12)**: Output-templating met natuurlijke taal (zoals referentie-forecaster' SMS).
+8. **Vertelvorm output (#12)**: Output-templating met natuurlijke taal (zoals de SMS van de referentie-forecaster).
 
 **Backlog / lange termijn:**
 9. **Bias-correctie per windrichting (#11)**: Vereist 6+ maanden logging.
@@ -562,7 +562,7 @@ Een professionele forecaster doet drie dingen die geen consumer-app vandaag doet
 
 Voor SurfWeerWorkflow: de **grootste sprong vooruit** zit in (a) spectrum-partitie + wave-energy-flux + wave-age filter implementeren (één-twee dagen werk, hoge impact), en (b) tide-flank logic toevoegen met derived rising/falling/mid-features (één dag werk, zeer hoge impact). Het output-format vermenselijken (LLM-templated tekst i.p.v. score-tabel) is de derde stap die de gebruikerservaring transformeert.
 
-De ML-aanpak van Surfline (LOTUS leert van honderdduizenden menselijke observaties) is op onze schaal niet realistisch — we hebben geen training data. Maar **hard-coded heuristieken uit deze 12-punts lijst** kunnen 80% van het gat naar referentie-forecaster dichten zonder ML.
+De ML-aanpak van Surfline (LOTUS leert van honderdduizenden menselijke observaties) is op onze schaal niet realistisch — we hebben geen training data. Maar **hard-coded heuristieken uit deze 12-punts lijst** kunnen 80% van het gat naar de referentie-forecaster dichten zonder ML.
 
 ---
 
@@ -614,21 +614,11 @@ De ML-aanpak van Surfline (LOTUS leert van honderdduizenden menselijke observati
 - [Swellnet – Hot air and choppy surf (sea breeze)](https://www.swellnet.com/news/swellnet-dispatch/2013/07/18/hot-air-and-choppy-surf-making-sense-sea-breeze)
 - [Surf Mastery – Ben Macartney forecasting](https://surfmastery.com/podcast/ben-macartney-surf-forecaster)
 
-### de referentie-forecaster / de referentie-forecaster
-- [de referentie-forecaster](https://de referentie-forecaster/)
-- [de referentie-forecaster – Spectra](https://de referentie-forecaster/surf/spectra/)
-- [de referentie-forecaster – Weerlinks](https://de referentie-forecaster/weerlinks/)
-- [de referentie-forecaster – Surfweer laatste week juni 2023](https://de referentie-forecaster/surf/surfweer-laatste-week-van-juni-2023/)
-- [de referentie-forecaster – Een weekje zomer wind swell](https://de referentie-forecaster/surf/weekje-zomer-wind-swell/)
-- [de referentie-forecaster – Surfweer flat Time 2 Paddle](https://de referentie-forecaster/surf/surfweer-flat-____-time-2-paddle/)
-- [de referentie-forecaster – Zaterdag 26 januari 2013](https://de referentie-forecaster/surf/het-surfweer-van-zaterdag-26-januari-201/)
-- [Tasha's Surfcamp – referentie-forecaster Piet Paulusma](https://[bron verwijderd]/referentie-forecaster-de-piet-paulusma-van-het-surfen)
-- [KNRM – Kitesurfweer (referentie-forecaster quote)](https://www.knrm.nl/blog/tips/kitesurfweer)
+### De referentie-forecaster
+- Publieke posts en spectra-uitleg van de referentie-forecaster (gearchiveerd, zie `reference_methodology.md`)
+- [KNRM – Kitesurfweer](https://www.knrm.nl/blog/tips/kitesurfweer)
 - [Ridersguide – Haal meer uit windvoorspellingen](https://ridersguide.nl/haal-meer-uit-de-windvoorspellingen/)
 - [Goede Golven – Bronnen](https://goedegolven.nl/sources/)
-- [Omroep West – Scheveningen lange zeedeining](https://www.omroepwest.nl/nieuws/4045711/overleden-watersporters-scheveningen-mogelijk-verrast-door-lange-zeedeining)
-- [Instagram [verwijderd]](https://www.[verwijderd]/?hl=nl)
-- [LinkedIn de referentie-forecaster](https://nl.[verwijderd])
 
 ### Wave physics / spectra / breaker-types
 - [Wikipedia – Iribarren number](https://en.wikipedia.org/wiki/Iribarren_number)

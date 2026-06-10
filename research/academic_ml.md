@@ -244,7 +244,7 @@ Across domains (marine routing, rip current risk, drowning models) zijn de patte
 
 Naast Surfline LOTUS/Premium+:
 - **Surfana** (NL): markt voor jonge surfers, maar zonder eigen forecast engine — leunt op derde-partij feeds.
-- **[verwijderd]** (de referentie-forecaster): handmatige expert synthese van meerdere modellen (ECMWF, GFS, Windguru). Geen ML.
+- **De referentie-forecaster**: handmatige expert synthese van meerdere modellen (ECMWF, GFS, Windguru). Geen ML.
 - **Goedegolven.nl**: zelfde, NL focus.
 - **Surf-forecast.com**: bulk parameters + wave energy index.
 - **AI-Meteorologist (arxiv 2511.23387, nov 2025)**: modular LLM-agent voor weather reports. Niet specifiek surf, maar de architectuur (serialized data → structured prompts → narrative output) is direct transponeerbaar.
@@ -276,7 +276,7 @@ Kobayashi & Yasuda WAM+KF en Houghton et al. (optimal interpolation pattern spec
 
 ### 10.1 Standaard skill scores
 
-| Score | Type | Use Case Surfweer |
+| Score | Type | Use Case Noordwijk |
 |---|---|---|
 | MAE (m) | continu | gemiddelde Hs-fout |
 | RMSE (m) | continu | penaliseert grote misses (storms) |
@@ -291,21 +291,21 @@ Kobayashi & Yasuda WAM+KF en Houghton et al. (optimal interpolation pattern spec
 
 1. **Meetpost Noordwijk** (RWS waterinfo / Matroos OpenDAP): wave height en period, hourly.
 2. **Europlatform / IJmuiden buoy** (RWS): 30 km offshore, goede deep-water reference.
-3. **referentie-forecaster' forecasts** ([verwijderd], scrape RSS/web): nuttig als *menselijk* baseline.
+3. **Forecasts van de referentie-forecaster** (scrape RSS/web): nuttig als *menselijk* baseline.
 4. **Eigen Telegram-bot ratings**: crowd-sourced surf experience.
 
-### 10.3 Hoe valideer je tegen referentie-forecaster?
+### 10.3 Hoe valideer je tegen de referentie-forecaster?
 
 Statistisch design:
 - **N**: minimaal 30 events per categorie voor stabiele HSS; bij voorkeur 90+ dagen continu.
 - **Categorieën**: 4-klasse {flat, surfable, good, epic} of binair {go, no-go}.
-- **Test**: McNemar's test voor paired forecast accuracy (model M vs referentie-forecaster T op zelfde dag).
-- **Stratificatie**: splits resultaten naar windrichting en seizoen — referentie-forecaster is goed in storm-events maar wellicht zwak in marginal days; daar zit jouw kans.
+- **Test**: McNemar's test voor paired forecast accuracy (model M vs referentie-forecaster R op zelfde dag).
+- **Stratificatie**: splits resultaten naar windrichting en seizoen — de referentie-forecaster is goed in storm-events maar wellicht zwak in marginal days; daar zit jouw kans.
 - **Reliability diagram**: gebruik bij probabilistische output, plot voorspelde kans vs gemeten frequentie per bin.
 
 ### 10.4 Verwachtingen
 
-Een goed gecalibreerde Open-Meteo+XGBoost pipeline kan na 3–6 maanden training een MAE van 0.15–0.25 m op Hs halen (vs raw Open-Meteo ~0.35 m), en een binary go/no-go HSS van 0.55–0.65 (perfect = 1, random = 0). referentie-forecaster' menselijke skill zit waarschijnlijk rond HSS 0.60–0.70 op marginal days; bij duidelijke storms convergeren beide naar 0.85+.
+Een goed gecalibreerde Open-Meteo+XGBoost pipeline kan na 3–6 maanden training een MAE van 0.15–0.25 m op Hs halen (vs raw Open-Meteo ~0.35 m), en een binary go/no-go HSS van 0.55–0.65 (perfect = 1, random = 0). De menselijke skill van de referentie-forecaster zit waarschijnlijk rond HSS 0.60–0.70 op marginal days; bij duidelijke storms convergeren beide naar 0.85+.
 
 ---
 
@@ -341,7 +341,7 @@ Voor Claude/GPT-4o: prompt template `"Je bent een rustige, Nederlandstalige surf
 
 Validation: vergelijk numerical claims in de output regex tegen de input JSON; reject als er getallen zijn die niet matchen.
 
-### E. Verificatie van Jouw Approach tegen referentie-forecaster
+### E. Verificatie van Jouw Approach tegen de referentie-forecaster
 
 **Protocol**:
 1. **Sample size**: 90+ dagen continu logging, beide forecasts op T-24h.
@@ -350,7 +350,7 @@ Validation: vergelijk numerical claims in de output regex tegen de input JSON; r
 4. **Stratificatie**: per seizoen (winter storm vs zomer flat), per windrichting (offshore E vs onshore SW).
 5. **Calibratie**: reliability diagram als jouw output probabilistisch wordt.
 
-**Realistische verwachting**: referentie-forecaster wint waarschijnlijk in extreme storms (hij weet "deze zuidwester wordt zwaarder dan modellen zien") en marginal days (zijn lokale kennis). Jij wint in herhalende routine days, in objectieve consistentie, en in continu availability.
+**Realistische verwachting**: de referentie-forecaster wint waarschijnlijk in extreme storms (hij weet "deze zuidwester wordt zwaarder dan modellen zien") en marginal days (zijn lokale kennis). Jij wint in herhalende routine days, in objectieve consistentie, en in continu availability.
 
 ---
 

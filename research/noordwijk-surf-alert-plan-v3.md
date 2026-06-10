@@ -1,10 +1,10 @@
 # Noordwijk Surf Alert — Bouwplan v3 voor Claude Code
 
 > **Belangrijkste veranderingen t.o.v. v2:**
-> - Diepe analyse van referentie-forecaster' methodiek op basis van 13 SMS'jes (juli–augustus 2025 + mei 2026 + september 2025) waarin hij expliciet uitlegt hoe hij denkt
+> - Diepe analyse van de methodiek van de referentie-forecaster op basis van 13 SMS'jes (juli–augustus 2025 + mei 2026 + september 2025) waarin hij expliciet uitlegt hoe hij denkt
 > - Vijf onderscheiden alert-typen, niet één generieke alert-trigger
 > - Frequentie-spectrum analyse als eerste-klas data (`seconden = 1000/mhz`)
-> - IJgeul boei (IJG1) als primaire meting voor Noordwijk — referentie-forecaster noemt deze boei expliciet voor deze spot
+> - IJgeul boei (IJG1) als primaire meting voor Noordwijk — de referentie-forecaster noemt deze boei expliciet voor deze spot
 > - Refractie-modellering: groundswell uit het noorden refracteert om de pier van IJmuiden heen wel/niet
 > - Synoptische context: drukverdeling (UKMO) als input voor 5-10 dagen outlook
 > - Per-SMS validatieset met expected algoritme-uitkomst
@@ -14,7 +14,7 @@
 ## DEEL 0 — Executive summary
 
 We bouwen een Python-systeem op GitHub Actions dat elke 6 uur:
-1. Data ophaalt uit dezelfde bronnen die referentie-forecaster gebruikt (RWS-boeien inclusief 2D-spectra, KNMI Harmonie, ECMWF, GFS, UKMO via Open-Meteo)
+1. Data ophaalt uit dezelfde bronnen die de referentie-forecaster gebruikt (RWS-boeien inclusief 2D-spectra, KNMI Harmonie, ECMWF, GFS, UKMO via Open-Meteo)
 2. Per uur een score 0-100 berekent met componenten golf/wind/tij/swell
 3. Vijf typen alert-triggers checkt (swell-arrival, wind-shift, wind-dip, sustained groundswell, tide-gated)
 4. Beslist over daily digest (vast tijdstip) of alert-SMS (event-driven)
@@ -22,15 +22,15 @@ We bouwen een Python-systeem op GitHub Actions dat elke 6 uur:
 6. Output valideert tegen hallucinatie
 7. SMS verstuurt via MessageBird (~€0,08/SMS) of als gratis alternatief via Telegram
 
-**Doel**: alert-frequentie en alert-kwaliteit zo dicht mogelijk bij referentie-forecaster' werkwijze houden, voor 1 spot (Noordwijk).
+**Doel**: alert-frequentie en alert-kwaliteit zo dicht mogelijk bij de werkwijze van de referentie-forecaster houden, voor 1 spot (Noordwijk).
 
 ---
 
-## DEEL 1 — Hoe referentie-forecaster denkt (gereconstrueerd uit zijn SMS'jes)
+## DEEL 1 — Hoe de referentie-forecaster denkt (gereconstrueerd uit zijn SMS'jes)
 
 ### 1.1 Zijn data-stack (uit weerlinks-pagina en verwijzingen in SMS)
 
-referentie-forecaster gebruikt — in volgorde van hoe hij ernaar verwijst in de SMS'jes:
+De referentie-forecaster gebruikt — in volgorde van hoe hij ernaar verwijst in de SMS'jes:
 
 **Voorspellingen (toekomst):**
 - KNMI Harmonie (NL 2.5km wind, 48u vooruit)
@@ -60,7 +60,7 @@ referentie-forecaster gebruikt — in volgorde van hoe hij ernaar verwijst in de
 
 ### 1.2 Zijn frequentie-taal
 
-referentie-forecaster rekent in **millihertz** en converteert naar seconden:
+De referentie-forecaster rekent in **millihertz** en converteert naar seconden:
 
 ```
 periode_seconden = 1000 / frequentie_mhz
@@ -68,7 +68,7 @@ periode_seconden = 1000 / frequentie_mhz
 
 Frequenties die hij noemt en wat hij ermee doet:
 
-| Frequentie | Periode | Wat het betekent | referentie-forecaster' woorden |
+| Frequentie | Periode | Wat het betekent | Woorden van de referentie-forecaster |
 |---|---|---|---|
 | ≥200 mhz | ≤5 sec | Pure wind sea (windgegenereerd, lokaal) | "rommel", "wild-wash", "chop" |
 | 140 mhz | 7 sec | Wind swell, kan over Vlaamse banken refracteren | *"ideale golfperiode op 140 mhz... afgerond zo'n 7 seconde"* |
@@ -76,11 +76,11 @@ Frequenties die hij noemt en wat hij ermee doet:
 | 100 mhz | 10 sec | Groundswell — energie raakt de bodem | *"swell op een frequentie van 100mhz (omgerekend 1000:100 = 10 seconde groundswell)"* |
 | ≤85 mhz | ≥12 sec | Echte verre groundswell (zeldzaam in NL) | "zware groundswell" |
 
-**Het cruciale inzicht** dat hij geeft in de SMS van 6-8-2025: een **wind sea op 200mhz + een groundswell op 100mhz** zijn **twee aparte energiepieken** in hetzelfde spectrum. Het systeem moet ze los van elkaar tracken, NIET één gemiddelde nemen. referentie-forecaster' alert op 6-8 was specifiek omdat de groundswell-piek dóór de windgolven heen kwam.
+**Het cruciale inzicht** dat hij geeft in de SMS van 6-8-2025: een **wind sea op 200mhz + een groundswell op 100mhz** zijn **twee aparte energiepieken** in hetzelfde spectrum. Het systeem moet ze los van elkaar tracken, NIET één gemiddelde nemen. De alert van de referentie-forecaster op 6-8 was specifiek omdat de groundswell-piek dóór de windgolven heen kwam.
 
 ### 1.3 Zijn ruimtelijke modellering
 
-Hoe referentie-forecaster denkt over de kust:
+Hoe de referentie-forecaster denkt over de kust:
 
 **Refractie**: een swell uit een bepaalde richting "bocht" om obstakels heen. *"Richting v/d swell is te veel uit NNO afkomstig en draait slechts N en niet genoeg NNW om rond de pier van IJmuiden te komen"* (23-8) — dit is exact wave refraction. Voor Noordwijk: swell uit NNW komt direct, swell uit NNO is minder voor Noordwijk omdat de pier van IJmuiden hem deels afschermt.
 
@@ -128,7 +128,7 @@ Op basis van de SMS-analyse zijn er **vijf typen alerts** die elk een eigen mete
 
 **Belangrijk**: meerdere typen kunnen tegelijkertijd triggeren. De SMS moet dan vermelden welke typen actief zijn ("groundswell + windstilte na frontpassage").
 
-### 1.5 Wanneer referentie-forecaster géén alert stuurt
+### 1.5 Wanneer de referentie-forecaster géén alert stuurt
 
 Even relevant. Uit zijn SMS'jes:
 - Conditie is wel goed maar **niet ongewoon voor het seizoen** ("de moeite" zonder "alerts")
@@ -139,7 +139,7 @@ Even relevant. Uit zijn SMS'jes:
 
 ### 1.6 Zijn seizoenscontext
 
-Uit 9-8-2025 SMS: *"Geen surfweer alerts meer tot en met 20 augustus. Die hebben we de afgelopen weken al gehad..."* en uit 13-8: *"vanaf vrijdagmiddag komt hier verandering in door het hogedrukbied dat met centrum boven Schotland komt te liggen"*.
+Uit 9-8-2025 SMS: *"Geen alerts meer tot en met 20 augustus. Die hebben we de afgelopen weken al gehad..."* en uit 13-8: *"vanaf vrijdagmiddag komt hier verandering in door het hogedrukbied dat met centrum boven Schotland komt te liggen"*.
 
 Hij denkt in **synoptische tijdsblokken** (3-7 dagen) en signaleert deze in de SMS. Het algoritme moet dit ook doen: lange flat-periodes durf je voorspellen op basis van een persistent hogedrukgebied; lange alert-periodes durf je voorspellen op basis van een aanhoudende W/NW depressie-track.
 
@@ -149,7 +149,7 @@ Hij denkt in **synoptische tijdsblokken** (3-7 dagen) en signaleert deze in de S
 
 Deze tabel is de **goldset** waar het algoritme tegen gevalideerd wordt in Stap 8 van het bouwplan.
 
-| Datum | Status Noordwijk | Type | referentie-forecaster' redenering | Wat algoritme zou moeten zien |
+| Datum | Status Noordwijk | Type | Redenering referentie-forecaster | Wat algoritme zou moeten zien |
 |---|---|---|---|---|
 | 9-9-2025 di | flat | n.v.t. | "Nauwelijks wind" → geen golfgeneratie | wind <8kn, wave <0.4m, score <15 |
 | 10-9-2025 wo | flat | n.v.t. | Hogedruk warm, geen wind | idem |
@@ -175,7 +175,7 @@ Deze tabel is de **goldset** waar het algoritme tegen gevalideerd wordt in Stap 
 
 ### 2.1 Belangrijk inzicht over Noordwijk specifiek
 
-referentie-forecaster noemt Noordwijk in deze SMS'jes meestal als deel van groepering "Katwijk/Nwijk/Zvoort" of "Wssnaar-Nwijk". Patronen voor Noordwijk-alert-momenten:
+De referentie-forecaster noemt Noordwijk in deze SMS'jes meestal als deel van groepering "Katwijk/Nwijk/Zvoort" of "Wssnaar-Nwijk". Patronen voor Noordwijk-alert-momenten:
 
 1. **N tot NNW swell** (NNO te veel afgeschermd door IJmuiden pier)
 2. **Tij**: meestal niet kritisch (geen pier), mid-tij prima
@@ -237,7 +237,7 @@ class SpectralPeak:
     # ground_swell: >= 9s
 ```
 
-Belangrijk: één spectrum kan **2-3 pieken** hebben. referentie-forecaster' inzicht: een groundswell-piek (10s) + wind sea-piek (4s) tegelijk = mooie surf (de groundswell komt door).
+Belangrijk: één spectrum kan **2-3 pieken** hebben. Het inzicht van de referentie-forecaster: een groundswell-piek (10s) + wind sea-piek (4s) tegelijk = mooie surf (de groundswell komt door).
 
 ### 3.3 Layer 2 — Per-uur score
 
@@ -351,8 +351,8 @@ def decide(windows, state, baseline) -> Decision:
 System prompt (Nederlands):
 
 ```
-Je schrijft korte surf-SMS'jes voor Noordwijk in de stijl van referentie-forecaster 
-van de referentie-forecaster. Bondig, surferslang oké, geen overdrijving.
+Je schrijft korte surf-SMS'jes voor Noordwijk in de stijl van de 
+referentie-forecaster. Bondig, surferslang oké, geen overdrijving.
 
 STRIKTE REGELS:
 1. Gebruik ALLEEN getallen die in de structured_input staan.
@@ -466,7 +466,7 @@ https://archive-api.open-meteo.com/v1/archive
 
 **Documentatie**: https://rijkswaterstaat.github.io/wm-ws-dl/
 
-**Voor Noordwijk: IJG1 (IJgeul) is primaire boei**, want referentie-forecaster gebruikt deze expliciet voor Noordwijk/Zandvoort/Scheveningen.
+**Voor Noordwijk: IJG1 (IJgeul) is primaire boei**, want de referentie-forecaster gebruikt deze expliciet voor Noordwijk/Zandvoort/Scheveningen.
 
 ```python
 RWS_STATIONS = {
@@ -537,7 +537,7 @@ response = requests.post(url, json=body)
 
 **Spectrumdata** (2D wave spectrum) is via Rijkswaterstaat ook beschikbaar, maar moeilijker te parsen. Voor MVP gebruiken we de gepartitioneerde data (Hm0, Tm02, Th0) en de Open-Meteo wind_wave vs swell_wave splitsing. Voor v2 kan spectrum-parsing toegevoegd worden.
 
-**Spectrum-images van surfweer** zijn beschikbaar via:
+**Spectrum-images (RWS waterberichtgeving)** zijn beschikbaar via:
 ```
 https://waterberichtgeving.rws.nl/dynamisch/forecast/image/spec_{boei}.jpg
 ```
@@ -802,7 +802,7 @@ Helpt om te zien of het systeem drift krijgt.
 | Te veel alerts (cry wolf) | Min rarity_percentile, max 8/week, manual dry-run eerste week |
 | Te weinig alerts (gemist) | Logging van scoreverloop; user kan log openen om te zien waarom |
 | Verkeerd alert-type | Validatie tegen 13 historische SMS-dagen |
-| [verwijderd] stijl te dichtbij overgenomen | LLM output is paraphrase, geen letterlijke quotes |
+| Stijl van de referentie-forecaster te dichtbij overgenomen | LLM output is paraphrase, geen letterlijke quotes |
 | Stormwaarschuwing als alert verkeerd geïnterpreteerd | Hard cap: wind >35kn of waveheight >3m = NO alert, juist waarschuwing in digest |
 | Mei-juli alerts te zeldzaam | Lage seizoensbaseline maakt absoluut bescheidener events alert |
 
@@ -810,7 +810,7 @@ Helpt om te zien of het systeem drift krijgt.
 
 ## DEEL 8 — Latere uitbreidingen (post-MVP)
 
-1. **2D-spectrum parser**: RWS levert ook richting-gefilterde spectra. Implementeer een echte FFT-deconstructie van wind_sea / wind_swell / ground_swell pieken met directionele info. Dit benadert referentie-forecaster' "spectra"-analyse beter dan de huidige gepartitioneerde data.
+1. **2D-spectrum parser**: RWS levert ook richting-gefilterde spectra. Implementeer een echte FFT-deconstructie van wind_sea / wind_swell / ground_swell pieken met directionele info. Dit benadert de "spectra"-analyse van de referentie-forecaster beter dan de huidige gepartitioneerde data.
 
 2. **Webcam computer vision**: machine vision op de Noordwijk-webcam (https://surfweer.nl/webcams/noordwijk/) om de actuele werkelijke conditie te vergelijken met de voorspelling. Bij grote discrepantie: noot in digest.
 
@@ -822,13 +822,13 @@ Helpt om te zien of het systeem drift krijgt.
 
 6. **Telegram-fallback**: bij MessageBird-falen automatisch naar een Telegram bot.
 
-7. **Synoptische narratie**: voor multi-day outlook in digest: laat de LLM een 1-zinsverklaring genereren over wat er meteorologisch gebeurt ("hogedruk boven Schotland, geen swell verwacht"). Dit benadert referentie-forecaster' synoptische uitleg.
+7. **Synoptische narratie**: voor multi-day outlook in digest: laat de LLM een 1-zinsverklaring genereren over wat er meteorologisch gebeurt ("hogedruk boven Schotland, geen swell verwacht"). Dit benadert de synoptische uitleg van de referentie-forecaster.
 
 ---
 
-## Appendix A — [verwijderd] bronnen die we direct meenemen
+## Appendix A — Bronnen van de referentie-forecaster die we direct meenemen
 
-| referentie-forecaster' bron | Onze implementatie |
+| Bron referentie-forecaster | Onze implementatie |
 |---|---|
 | KNMI guidance / Harmonie | Open-Meteo `knmi_seamless` |
 | DWD golfhoogtes | Open-Meteo Marine (default EU) |
@@ -845,12 +845,12 @@ Helpt om te zien of het systeem drift krijgt.
 | Cefas Wavenet | wavenet.cefas.co.uk |
 | Webcam | URL in SMS |
 
-## Appendix B — referentie-forecaster' afkortingen en spotgroepen
+## Appendix B — Afkortingen en spotgroepen van de referentie-forecaster
 
 ```python
 NEARBY_SPOTS = {
     'noordwijk':  ['Nwijk'],
-    'cluster':    ['Katwijk', 'Nwijk', 'Zvoort', 'Wssnaar'],  # groepering referentie-forecaster
+    'cluster':    ['Katwijk', 'Nwijk', 'Zvoort', 'Wssnaar'],  # groepering de referentie-forecaster
     'similar':    ['Zandvoort', 'IJmuiden', 'Scheveningen'],
     'reference_buoy': 'IJG1',  # IJgeul
 }
@@ -867,7 +867,7 @@ BEAUFORT_TO_KNOTS = {
 }
 ```
 
-## Appendix C — referentie-forecaster' meteorologische verklaringen om in algoritme te verwerken
+## Appendix C — Meteorologische verklaringen van de referentie-forecaster om in algoritme te verwerken
 
 Uit zijn SMS'jes leerden we:
 
@@ -898,13 +898,13 @@ Deze set wordt door `validate.py` in Stap 9 gebruikt om het algoritme te kalibre
 
 ## Slotwoord
 
-Dit plan benadert referentie-forecaster' werkwijze zo goed als algoritmisch mogelijk is voor één spot (Noordwijk). De LLM-laag zorgt voor natuurlijke berichten, de deterministische scoring zorgt voor reproduceerbare beslissingen, en de validatieset zorgt voor kwaliteitsborging tegen zijn historische output.
+Dit plan benadert de werkwijze van de referentie-forecaster zo goed als algoritmisch mogelijk is voor één spot (Noordwijk). De LLM-laag zorgt voor natuurlijke berichten, de deterministische scoring zorgt voor reproduceerbare beslissingen, en de validatieset zorgt voor kwaliteitsborging tegen zijn historische output.
 
-Het is geen vervanging van referentie-forecaster zelf — hij heeft 16+ jaar surferservaring en kan dingen zien die het algoritme niet ziet. Maar voor de specifieke use case "stuur me een SMS als Noordwijk binnen 24u goed wordt" is dit een sterke benadering.
+Het is geen vervanging van de referentie-forecaster zelf — hij heeft 16+ jaar surferservaring en kan dingen zien die het algoritme niet ziet. Maar voor de specifieke use case "stuur me een SMS als Noordwijk binnen 24u goed wordt" is dit een sterke benadering.
 
 Belangrijkste afhankelijkheden voor succes:
 1. Toegang tot Anthropic API (Haiku 4.5)
 2. RWS Waterinfo API blijft beschikbaar (publiek)
 3. Open-Meteo blijft gratis (zo lijkt het)
 4. MessageBird account met saldo
-5. **Genoeg historische SMS-data van referentie-forecaster om tegen te valideren** — als gebruiker meer kan aanleveren, wordt het systeem proportioneel beter
+5. **Genoeg historische bericht-data van de referentie-forecaster om tegen te valideren** — als gebruiker meer kan aanleveren, wordt het systeem proportioneel beter

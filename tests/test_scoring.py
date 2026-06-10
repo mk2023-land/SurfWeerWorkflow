@@ -446,7 +446,7 @@ class TestValidatieCases:
         # baseline (was 70-80). 0.9m golf op 9s = matige groundswell met
         # perfect environment → multiplicatief plafond ~60-70. Dit is nog
         # steeds boven longboard-threshold (42), maar onder shortboard-
-        # surfable (60). Past bij referentie-forecaster' "smal-alert" karakter: het is
+        # surfable (60). Past bij het "smal-alert" karakter van de referentie-forecaster: het is
         # NIET een dichte-bank "alles werkt" dag, het is een 1-2u
         # rustige-conditie longboard-window.
         assert 55 <= score.total_score <= 75

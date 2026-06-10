@@ -61,7 +61,7 @@ class EmailNotifier:
         return self._send(subject, message)
 
     def send_digest(self, message: str) -> dict:
-        subject = f"Surf-update Noordwijk van {format_nl_date(datetime.now(ZoneInfo('Europe/Amsterdam')))}"
+        subject = f"Surf-update Noordwijk {format_nl_date(datetime.now(ZoneInfo('Europe/Amsterdam')))}"
         return self._send(subject, message)
 
     def _send(self, subject: str, body: str) -> dict:

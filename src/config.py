@@ -140,12 +140,12 @@ SCORING_WEIGHTS = {
     'swell_dir_max': 10
 }
 
-# Surf-window drempels. Twee niveaus omdat referentie-forecaster regelmatig "longboard-only"
+# Surf-window drempels. Twee niveaus omdat de referentie-forecaster regelmatig "longboard-only"
 # windows benoemt die voor shortboard te slap zijn — die mogen wel in de digest,
 # maar geven géén alert.
 #   surfable: shortboard-rideable, multi-board acceptabel
 #   longboard: alleen longboard/fish, lagere kwaliteit maar wel surfable
-# Drempels gekalibreerd tegen referentie-forecaster' 19:30-21u window (woensdag 20 mei 2026,
+# Drempels gekalibreerd tegen de referentie-forecaster 19:30-21u window (woensdag 20 mei 2026,
 # berekende score ~47-49) en zijn 14-16u window (berekende score ~43-47).
 SURF_THRESHOLDS = {
     'surfable': 60,    # shortboard, voor alert-candidate
@@ -159,7 +159,7 @@ SURF_THRESHOLDS = {
 }
 
 # Fysieke minimums waaronder NIETS surfbaar is, ongeacht score.
-# Per referentie-forecaster' lexicon: "flat" / "rimpelsurf" / "20cm windhoogte" = niets doen.
+# Per de referentie-forecaster lexicon: "flat" / "rimpelsurf" / "20cm windhoogte" = niets doen.
 # Internationale consensus: 4 sec is de absolute drempel waaronder zelfs
 # longboards niets kunnen met de chop.
 SURF_MINIMUMS = {
@@ -366,7 +366,7 @@ WIND_FACE_PENALTY = {
 # - 1.5m+ wave (~30+pt) × max env bonus → bereikt additieve som
 # De bedoeling van #13 is voorkomen dat MARGINALE golven (<0.5m) tot
 # epic-score schalen door perfect environment — niet om reasonable
-# small-but-quality groundswells (referentie-forecaster' "smal alert 11-12u zonder wind")
+# small-but-quality groundswells (de referentie-forecaster "smal alert 11-12u zonder wind")
 # uit te sluiten van surfable-threshold.
 SIZE_CAP_AGGREGATION = {
     'env_bonus_cap': 2.5,          # max +250% via wind/tide/dir

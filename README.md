@@ -2,7 +2,7 @@
 
 [![Surf Alert Check](https://github.com/mk2023-land/SurfWeerWorkflow/actions/workflows/check.yml/badge.svg)](https://github.com/mk2023-land/SurfWeerWorkflow/actions/workflows/check.yml)
 
-Geautomatiseerd surfweer alert systeem voor Noordwijk. Stuurt één ochtenddigest (5-daagse outlook) en daarnaast push/email/SMS-alerts wanneer de algoritme-score boven drempel komt. Notificaties via ntfy.sh push (default), SMTP-mail, of Twilio-SMS.
+Geautomatiseerd surf alert systeem voor Noordwijk. Stuurt één ochtenddigest (5-daagse outlook) en daarnaast push/email/SMS-alerts wanneer de algoritme-score boven drempel komt. Notificaties via ntfy.sh push (default), SMTP-mail, of Twilio-SMS.
 
 ## 📋 Overzicht
 
@@ -123,7 +123,7 @@ tests/
 
 scripts/
 ├── send_test_notification.py        # End-to-end test van notifier-pipeline
-├── ingest_reference_message.py         # referentie-forecaster-referentieberichten archiveren als training-labels (private repo ~/Merlijn/referentie-forecaster)
+├── ingest_reference_message.py      # referentieberichten archiveren als training-labels (private repo ~/Merlijn/referentie-archief)
 └── run_validation_backtest.py       # Backtest validatie tegen historische SMS dataset
 
 research/                  # 9 onderzoeksrapporten + master plan
@@ -204,7 +204,7 @@ python scripts/run_validation_backtest.py
 - **Bias log**: `data/bias_log.jsonl` (forecast-vs-observation, voor Sprint 4 XGBoost training)
 - **Boei-spectrum history**: `data/buoy_spectra_history.jsonl` (rolling input voor T1 swell-arrival detector)
 - **SMS-archief**: `data/sms_archive/YYYY-MM.jsonl` — elke verstuurde digest/alert permanent in git voor model-training, auto-commit door check.yml
-- **referentie-forecaster-referentie-archief**: aparte private repo `~/Merlijn/referentie-forecaster` (user-geleverde SMS + parse-metadata, training-labels + `PATTERNS.md` referentie-forecaster-vs-systeem benchmark). Pad configureerbaar via `REF_ARCHIVE_DIR` env-var.
+- **Referentie-archief**: aparte private repo `~/Merlijn/referentie-archief` (user-geleverde berichten + parse-metadata, training-labels + `PATTERNS.md` referentie-vs-systeem benchmark). Pad configureerbaar via `REF_ARCHIVE_DIR` env-var.
 
 **Persistentie**: De GitHub Actions cache bewaart de hele `data/` map tussen runs (unique key per run + restore-keys fallback). Daarnaast wordt `data/sms_archive/` na elke succesvolle send naar git gepushed, zodat training-data permanent bewaard blijft ook als de cache zou expireren.
 

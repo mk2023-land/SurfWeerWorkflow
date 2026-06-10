@@ -132,7 +132,7 @@ def _offshore_groom(cos_offshore: Optional[float], wind_speed_kn: Optional[float
     Grooming-fractie (0.0-1.0) van aflandige wind die een zee opschoont.
 
     Aflandige/zij-aflandige wind strijkt het oppervlak glad: windzee + swell
-    naast elkaar wordt dan een opschoning ("clean windlijn", referentie-forecaster) i.p.v.
+    naast elkaar wordt dan een opschoning ("clean windlijn", de referentie-forecaster) i.p.v.
     chaotische chop. 0.0 = geen grooming (aanlandig, glassy <3kn, of >22kn die
     de boel juist afblaast); 1.0 = volledige grooming bij volle side-offshore.
     cos_offshore: +1 pure offshore, 0 cross-shore, −1 onshore (zie wind.py).

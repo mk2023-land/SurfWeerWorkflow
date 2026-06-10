@@ -2,7 +2,7 @@
 
 **Datum:** 19 mei 2026
 **Doel:** referentiekader bouwen voor het verbeteren van het Python surf-alert systeem voor Noordwijk. Focus op *hoe* een wave-condition omgezet wordt in één score of rating, welke parameters wegen, en wat naïeve scoring typisch mist.
-**Scope:** industry leaders (Surfline, Magicseaweed, Stormsurf, Surf-Forecast.com, Windguru) plus Europese/NL-specifieke diensten (Surfana, Ridersguide, Seven at Sea, [verwijderd], Goedegolven, Surf-Report.com).
+**Scope:** industry leaders (Surfline, Magicseaweed, Stormsurf, Surf-Forecast.com, Windguru) plus Europese/NL-specifieke diensten (Surfana, Ridersguide, Seven at Sea, de referentie-forecaster, Goedegolven, Surf-Report.com).
 **Belangrijke caveat:** geen enkele dienst publiceert hun exacte formule. Wat hieronder volgt is gereconstrueerd uit officiële support-artikelen, blogposts van hun forecasters, en publieke interviews. Waar bekend wordt de bron geciteerd; waar afgeleid wordt dat expliciet vermeld.
 
 ---
@@ -241,16 +241,14 @@ Voor Noordwijk specifiek: hoofd-oriëntatie ≈ 270° (W-facing), dus N en Z win
 
 Bron: [Sevenatsea voorspellen lessen 1–5](https://sevenatsea.nl/voorspellen/leer-zelf-surfcondities-te-voorspellen/).
 
-### 6.4 [verwijderd] (de referentie-forecaster)
+### 6.4 De referentie-forecaster
 
-referentie-forecaster gebruikt **een sterk subjectieve narrative-stijl methodologie** met expliciete spectra-decompositie. Sleutelelementen uit zijn publieke posts:
+De referentie-forecaster gebruikt **een sterk subjectieve narrative-stijl methodologie** met expliciete spectra-decompositie. Sleutelelementen uit zijn publieke posts:
 
-- **Spectra-analyse via Rijkswaterstaat-boeien**: hij linkt naar de referentie-forecaster/spectra met click-baar boei-veld (Munitiestort, Maasgeul, etc.) en leest periode én richting handmatig uit het 2D-spectrum (b.v. "140 mHz uit WZW = 7.1s uit 250°").
+- **Spectra-analyse via Rijkswaterstaat-boeien**: hij leest periode én richting handmatig uit het 2D-spectrum van de RWS-boeien (Munitiestort, Maasgeul, etc.) (b.v. "140 mHz uit WZW = 7.1s uit 250°").
 - **Waterstand vs. golf-break interactie**: "Als de golven niet omslaan heeft dat te maken met een te hoge waterstand. Hoe meer water op een zandbank, hoe minder snel een golf breekt."
 - **Spring/doodtij overweging**: bij springtij + N-swell op opkomend tij = stroming tegen swell = bonus; bij doodtij = stroming-effect grotendeels weg.
 - **Dagdeel-voorkeur per spot**: Zuid-Holland (Noordwijk/Katwijk) 12–16u, Noord-Holland 15–18u (door verschil in wegvallend lokaal-wind moment).
-
-Bronnen: [[verwijderd] spectra-pagina](https://de referentie-forecaster/surf/spectra/), [Tasha's Surfcamp: referentie-forecaster profiel](https://[bron verwijderd]/referentie-forecaster-de-piet-paulusma-van-het-surfen).
 
 ### 6.5 Goedegolven.nl
 
@@ -270,7 +268,7 @@ Bron: [Ocean Adventure: surf forecasting France](https://oceanadventure.surf/en/
 
 ### A. Welke parameters wegen ze, met welke gewichten?
 
-| Parameter | Surfline rating | MSW rating | Surf-Forecast | Stormsurf | referentie-forecaster |
+| Parameter | Surfline rating | MSW rating | Surf-Forecast | Stormsurf | Referentie-forecaster |
 |---|---|---|---|---|---|
 | Hs (surf height) | **Primair** (hard cap) | Primair | Primair (via energy) | Reference output | Primair |
 | Tp (period) | Indirect via height | Multiplicative bonus | Primair (energy ∝ Hs²·Tp) | Critical, manual | Critical |
@@ -305,7 +303,7 @@ Bron: [Ocean Adventure: surf forecasting France](https://oceanadventure.surf/en/
 - **Surfline:** expliciet erkend als "missing" in de geautomatiseerde rating; forecaster-override en spot-specifieke ML noodzakelijk.
 - **MSW:** niet in de rating, apart getoond.
 - **Surf-Forecast:** niet in rating, apart getoond.
-- **referentie-forecaster:** wél in rating, via heuristieken (water-op-bank, stroming tegen swell, spring/doodtij).
+- **Referentie-forecaster:** wél in rating, via heuristieken (water-op-bank, stroming tegen swell, spring/doodtij).
 - **Industry consensus:** "There is no universal best tide rule — it's spot-specific bathymetry-dependent". Surf-forecast literatuur recommenderen om over tijd te leren per spot.
 
 ### E. Board-aanbevelingen
@@ -342,7 +340,7 @@ Bron: [Ocean Adventure: surf forecasting France](https://oceanadventure.surf/en/
 - **Surfline:** ja, "on the fly" — wave assimilation via satelliet + NDBC/CDIP boeien (~elke uur in nieuwere LOTUS-versies). Nearshore buoys zoals Huntington Beach CDIP geven near-realtime swell-spectrum dat met model vergeleken wordt.
 - **Stormsurf:** primaire bron — Sponsler verkiest live buoy data boven model-forecast.
 - **MSW/Surf-Forecast:** beperkt; aggregated boei-data getoond maar niet als correctie-laag.
-- **Voor NL toepasselijk:** Rijkswaterstaat Munitiestort/IJmuiden/Eierland boeien zijn open data via waterinfo.rws.nl en publiceren spectra. referentie-forecaster gebruikt dit; eigen pipeline doet het nog niet.
+- **Voor NL toepasselijk:** Rijkswaterstaat Munitiestort/IJmuiden/Eierland boeien zijn open data via waterinfo.rws.nl en publiceren spectra. De referentie-forecaster gebruikt dit; eigen pipeline doet het nog niet.
 
 ### H. AI/ML approaches in surf forecasting
 
@@ -364,7 +362,7 @@ Bron: [Ocean Adventure: surf forecasting France](https://oceanadventure.surf/en/
 
 ## 8. Vergelijkings-matrix: Naive scoring vs industry leaders
 
-| Aspect | Naive scoring (size-only) | Surfline (LOTUS + ML) | Magicseaweed | Surf-Forecast.com | Stormsurf | referentie-forecaster ([verwijderd]) |
+| Aspect | Naive scoring (size-only) | Surfline (LOTUS + ML) | Magicseaweed | Surf-Forecast.com | Stormsurf | Referentie-forecaster |
 |---|---|---|---|---|---|---|
 | **Rating-output** | Continue 0–100 | 7 tiers (categorisch) | 5 solid + 0–5 faded sterren | 0–10 sterren (kleur) | Geen rating, raw data | Subjectief narratief |
 | **Size als limiter** | Lineair gewicht | Hard cap (size limits epic) | Solid-rating drijver | Energy = Hs²·Tp basis | Reference, niet gerated | Met spot-context |
@@ -391,7 +389,7 @@ Op basis van bovenstaande consensus tussen industry leaders, dit zijn de **5 gro
 
 ### Gap 1: Multi-swell decompositie (combo-spectrum)
 - **Wat naïef mist:** één Hs/Tp/Dir wordt behandeld als één swell. Maar Noordzee kent vaak gelijktijdige N-swell + ZW-windswell, of W-groundswell + lokale chop. Naïeve scoring rapporteert dan een tussenligende Hs en gemiddelde Tp die *geen van beide swells correct karakteriseert*.
-- **Wat industry doet:** Surfline (forecast spectra), Stormsurf (2D-buoy spectra), referentie-forecaster (RWS-spectra) gebruiken alle gescheiden swell-partities.
+- **Wat industry doet:** Surfline (forecast spectra), Stormsurf (2D-buoy spectra), de referentie-forecaster (RWS-spectra) gebruiken alle gescheiden swell-partities.
 - **Practical fix:** gebruik Open-Meteo's afzonderlijke `swell_wave_height/period/direction` én `wind_wave_height/period/direction` velden. Score beide partities afzonderlijk, kies de hoogste, of bonus bij goed-georiënteerde groundswell zelfs als wind-zee niet meewerkt (Ridersguide-regel).
 
 ### Gap 2: Hard size-cap (you can't epic a 2-foot day)
@@ -401,17 +399,17 @@ Op basis van bovenstaande consensus tussen industry leaders, dit zijn de **5 gro
 
 ### Gap 3: Tide × bathymetry per-spot heuristiek
 - **Wat naïef mist:** een algemene bell-curve "rond half-tide is beste" voor alle spots. Maar voor Noordwijk specifiek werkt dit anders dan voor bv. Maasvlakte (stijl-oplopende bank) of Domburg.
-- **Wat industry doet:** Surfline laat tide bewust uit de model-rating en verlaat zich op forecaster-override. referentie-forecaster gebruikt expliciete heuristieken per spot. Surfana waarschuwt voor stroming verschillen.
-- **Practical fix:** maak `tide_optimum_curve` per-spot configureerbaar i.p.v. globale formule. Voor Noordwijk: leer uit referentie-forecaster' posts (vaak laag tot mid op opkomend) en bouw aparte curves voor wind-swell (laag-water-bonus voor steepening) en groundswell (geen sterke voorkeur). Voeg `spring/doodtij` modifier toe via een eenvoudige tidal-range-check uit getij.nl.
+- **Wat industry doet:** Surfline laat tide bewust uit de model-rating en verlaat zich op forecaster-override. De referentie-forecaster gebruikt expliciete heuristieken per spot. Surfana waarschuwt voor stroming verschillen.
+- **Practical fix:** maak `tide_optimum_curve` per-spot configureerbaar i.p.v. globale formule. Voor Noordwijk: leer uit de posts van de referentie-forecaster (vaak laag tot mid op opkomend) en bouw aparte curves voor wind-swell (laag-water-bonus voor steepening) en groundswell (geen sterke voorkeur). Voeg `spring/doodtij` modifier toe via een eenvoudige tidal-range-check uit getij.nl.
 
 ### Gap 4: Wind-effect modulering t.o.v. swell-eigenschap (niet als losse multiplier)
 - **Wat naïef mist:** dezelfde 15 kn onshore wind is destructiever op 0.5m windswell dan op 1.5m groundswell met 12s periode. Naïef behandelt wind als universele penalty.
-- **Wat industry doet:** Surfline ML-laag leert dit impliciet; Surf-Forecast schaalt "in proportion to wind speed" relatief tot wave-strength; Stormsurf/referentie-forecaster doen dit handmatig.
+- **Wat industry doet:** Surfline ML-laag leert dit impliciet; Surf-Forecast schaalt "in proportion to wind speed" relatief tot wave-strength; Stormsurf/de referentie-forecaster doen dit handmatig.
 - **Practical fix:** maak `wind_penalty` schalend met `Tp` en `Hs` — bv. `penalty = wind_kn * f(Tp)` waarbij f(12s) ≈ 0.5 en f(5s) ≈ 1.2. Of: bereken een ratio "swell-energy / wind-disrupting-energy" en degradeer alleen onder een drempel. Erkennen dat sub-9s wind-zee fundamenteel "wind-driven" is en niet door wind weer veel meer beschadigd kan worden.
 
 ### Gap 5: Real-time buoy-correctie / dag-na-storm fenomeen
 - **Wat naïef mist:** forecast-model loopt vast op snel veranderende NL-windswell. De golf-hoogte halveert binnen 4 uur na wind-afname (Ridersguide) — een vooruitlopende forecast die om 06u "1.2m" zegt kan om 10u prima 0.6m zijn, en omgekeerd kan een ochtend-stilte na een nacht-storm verrassende cleane condities geven die model niet ziet aankomen.
-- **Wat industry doet:** Surfline hourly model + buoy-assimilatie (30–40% error reduction door bias-correctie alleen). Stormsurf vertrouwt vooral live boei-data. referentie-forecaster check RWS-spectra elke ochtend.
+- **Wat industry doet:** Surfline hourly model + buoy-assimilatie (30–40% error reduction door bias-correctie alleen). Stormsurf vertrouwt vooral live boei-data. De referentie-forecaster checkt RWS-spectra elke ochtend.
 - **Practical fix:** fetch laatste 6–12 uur RWS Munitiestort/IJmuiden boei-spectra in scoring-run. Als boei-Hs significant afwijkt van model-Hs voor de laatste 3 uur, pas een bias-correctie toe op de eerstvolgende 6–12 uur forecast. Eenvoudige variant: lineaire blending van boei-trend in vroegste forecast-uren. Geavanceerde variant: kalman-filter of simple regressie tussen boei en model over rolling window.
 
 ### Bonus Gap 6: Spot-class normalisatie
@@ -421,7 +419,7 @@ Op basis van bovenstaande consensus tussen industry leaders, dit zijn de **5 gro
 
 ### Bonus Gap 7: Sequencing en consistency
 - **Wat naïef mist:** twee uren met identieke parameters kunnen heel andere surf-quality hebben afhankelijk van *waar in een swell-sequence* ze zitten. Aan begin van een opbouwende swell = bonus, in afnemende fase met resterende chop = penalty.
-- **Wat industry doet:** Surfline's "Wave Consistency" feature toont dit; referentie-forecaster schrijft regelmatig "dag na de storm" als bonus-window.
+- **Wat industry doet:** Surfline's "Wave Consistency" feature toont dit; de referentie-forecaster schrijft regelmatig "dag na de storm" als bonus-window.
 - **Practical fix:** voeg een `swell_trend` feature toe (Hs delta over laatste 6 uur, periode-trend). Een opwaartse trend +0.3m/uur met stijgende periode = bonus; afnemende swell met chop = penalty.
 
 ---
@@ -433,7 +431,7 @@ De industry-consensus is duidelijk:
 1. **Naïeve "size × wind" scoring is een fundamenteel beperkt model** dat de top-3 industry-spelers allemaal expliciet hebben verlaten ten gunste van ML-laagjes, swell-spectra decompositie, of pure-data tools voor experts.
 2. **De grootste error-reductie komt niet van een betere fysische formule, maar van bias-correctie op spot-niveau** (Surfline: 30–40% van enkel boei-bias-correctie, 70% met ML-laag).
 3. **Voor Noordzee-spots specifiek is multi-swell decompositie de #1 prioriteit** — naïeve scoring mist consistent dat een matige dominante swell + goed-georiënteerde secundaire swell nog steeds surfable kan zijn.
-4. **Tide × bathymetrie is universeel onderbedeeld** in geautomatiseerde systemen; referentie-forecaster' handmatige heuristieken zijn hier de gouden standaard voor NL.
+4. **Tide × bathymetrie is universeel onderbedeeld** in geautomatiseerde systemen; de handmatige heuristieken van de referentie-forecaster zijn hier de gouden standaard voor NL.
 5. **Real-time RWS-boei integratie biedt low-hanging fruit voor accuracy-gain** zonder dat ML nodig is.
 
 Voor het SurfWeerWorkflow-systeem (single-spot Noordwijk, 4×/dag GitHub Actions): de prioriteit zou moeten zijn:
@@ -442,7 +440,7 @@ Voor het SurfWeerWorkflow-systeem (single-spot Noordwijk, 4×/dag GitHub Actions
 - **P3**: RWS-boei real-time bias-correctie voor de eerste 6–12 uur.
 - **P4**: Tide-curve per-spot configureerbaar (i.p.v. globaal).
 - **P5**: Wind-penalty schalend met Tp (groundswell minder wind-gevoelig).
-- **P6** (optioneel, hogere investering): trainen van een eenvoudige logistische regressie of MLP op historische referentie-forecaster-posts als labels, à la Surfline's neural net approach.
+- **P6** (optioneel, hogere investering): trainen van een eenvoudige logistische regressie of MLP op historische posts van de referentie-forecaster als labels, à la Surfline's neural net approach.
 
 ---
 
@@ -499,8 +497,6 @@ Voor het SurfWeerWorkflow-systeem (single-spot Noordwijk, 4×/dag GitHub Actions
 - [Sevenatsea – Windkaarten lezen](https://sevenatsea.nl/voorspellen/windkaarten-lezen/)
 - [Sevenatsea – Lokale wind](https://sevenatsea.nl/voorspellen/lokale-wind/)
 - [Sevenatsea – Getijden](https://sevenatsea.nl/voorspellen/getijden/)
-- [[verwijderd] – Spectra](https://de referentie-forecaster/surf/spectra/)
-- [Tasha's Surfcamp: referentie-forecaster profiel](https://[bron verwijderd]/referentie-forecaster-de-piet-paulusma-van-het-surfen)
 - [Goedegolven.nl](https://goedegolven.nl/)
 - [Boardshortz: Surfweer overzicht NL](https://www.boardshortz.nl/surfen/nederland/surfweer/)
 - [Ocean Adventure: surf forecasting France](https://oceanadventure.surf/en/surfing-weather-waves/)

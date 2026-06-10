@@ -16,7 +16,7 @@ Gebruik (CLI argument):
 Gebruik (via stdin pipe):
     cat msg_today.txt | python scripts/ingest_reference_message.py --date 2026-05-20
 
-Bestand-layout (in de private archive-repo ~/Merlijn/referentie-forecaster):
+Bestand-layout (in de private archive-repo ~/Merlijn/referentie-archief):
     data/ref_archive/
         2026-05-19.txt        ← raw SMS-tekst
         2026-05-19.meta.json  ← geparste metadata (datum, spots, verdict)
@@ -26,20 +26,21 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 from datetime import date, datetime
 from pathlib import Path
 
 # referentie-forecaster-referentie-archief leeft sinds 2026-05-22 in een aparte private repo
-# (auteursrechtelijk materiaal): ~/Merlijn/referentie-forecaster. Default verwacht die naast
+# (auteursrechtelijk materiaal): ~/Merlijn/referentie-archief. Default verwacht die naast
 # de hoofdrepo; override met de REF_ARCHIVE_DIR env-var voor een andere locatie.
 _default_archive = (
     Path(__file__).resolve().parent.parent.parent
-    / 'referentie-forecaster' / 'data' / 'ref_archive'
+    / 'referentie-archief' / 'data' / 'ref_archive'
 )
 ARCHIVE_DIR = Path(os.environ.get('REF_ARCHIVE_DIR', _default_archive))
 
-# Bekende spot-namen die referentie-forecaster gebruikt — voor extractie van per-spot windows
+# Bekende spot-namen die de referentie-forecaster gebruikt — voor extractie van per-spot windows
 SPOT_PATTERNS = {
     'Noordwijk':    [r'\bNwijk\b', r'\bNoordwijk\b'],
     'Zandvoort':    [r'\bZvoort\b', r'\bZandvoort\b'],
@@ -55,7 +56,7 @@ SPOT_PATTERNS = {
     'Petten':       [r'\bPetten\b'],
 }
 
-# Verdict-keywords (referentie-forecaster' lexicon, zie research/reference_methodology.md §4.3)
+# Verdict-keywords (de referentie-forecaster lexicon, zie research/reference_methodology.md §4.3)
 VERDICT_KEYWORDS = {
     'flat':       [r'\bflat\b', r'\brimpelsurf\b', r'\bniet\s+aan\s+beginnen\b',
                    r'\bgeen\s+golven\b', r'\bswell\s+nihil\b'],
@@ -67,7 +68,7 @@ VERDICT_KEYWORDS = {
                    r'\bswell\s+breekt\s+door\b', r'\bbig\s+day\b'],
 }
 
-# Windgegevens uit referentie-forecaster' tekst (bv. "5bft", "tot 4bft", "ZW")
+# Windgegevens uit de referentie-forecaster tekst (bv. "5bft", "tot 4bft", "ZW")
 WIND_BFT_PATTERN = re.compile(r'(\d+)\s*bft', re.IGNORECASE)
 TIME_RANGE_PATTERN = re.compile(r'(\d{1,2})(?::(\d{2}))?\s*[-–—]\s*(\d{1,2})(?::(\d{2}))?u?')
 
@@ -144,8 +145,18 @@ def parse_metadata(text: str, msg_date: date) -> dict:
 # Hoofdrepo-paden (script leeft in <repo>/scripts/).
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 FEATURES_PATH = _REPO_ROOT / 'data' / 'forecast_features.jsonl'
-PAIRS_PATH = _REPO_ROOT / 'data' / 'training' / 'ref_pairs.jsonl'
 SMS_ARCHIVE_DIR = _REPO_ROOT / 'data' / 'sms_archive'
+
+# Training-data (ref_pairs.jsonl) leeft in DEZELFDE private archive-repo als het
+# ruwe archief (~/Merlijn/referentie-archief) — NIET in de publieke hoofdrepo. Stond daar
+# voorheen onder data/training/ (gitignored): vluchtig, want een git-clean of
+# Actions-cache-eviction veegde de hele leer-loop-historie weg. In de private
+# git-repo is het durable én privé. De features zitten ín elk paar ingebakken,
+# dus dit bestand is de zelfstandige trainings-dataset. Override: REF_PAIRS_PATH.
+_PRIVATE_DATA_ROOT = ARCHIVE_DIR.parent  # .../referentie-archief/data
+PAIRS_PATH = Path(os.environ.get(
+    'REF_PAIRS_PATH', _PRIVATE_DATA_ROOT / 'training' / 'ref_pairs.jsonl'
+))
 
 _VALID_VERDICTS = {'flat', 'longboard', 'surfable'}
 
@@ -220,6 +231,21 @@ def write_training_pairs(noordwijk_days: list[dict], msg_date_iso: str) -> list[
         if not d or verdict not in _VALID_VERDICTS:
             continue
         snap = _load_our_snapshot(d)
+        # Her-ingest-bescherming: heeft deze dag al een volwaardig paar (met
+        # onze snapshot/features) en is de snapshot nu niet meer vindbaar
+        # (bv. forecast_features.jsonl ge-roteerd), dan NIET overschrijven met
+        # een leeg paired:false-paar — alleen het referentie-label verversen.
+        # Anders gaat ingebakken trainingshistorie stil verloren.
+        if snap is None and existing.get(d, {}).get('paired'):
+            prev = existing[d]
+            prev['ref_verdict'] = verdict
+            prev['ref_windows'] = day.get('windows') or []
+            prev['ref_archive_ref'] = f"{msg_date_iso}.txt"
+            prev['agreement'] = (
+                prev.get('our_verdict') == verdict
+                if prev.get('our_verdict') is not None else None
+            )
+            continue
         pair = {
             'date': d,
             # --- Referentie-forecaster: alleen afgeleide LABELS (geen ruwe proza — die
@@ -245,6 +271,48 @@ def write_training_pairs(noordwijk_days: list[dict], msg_date_iso: str) -> list[
         for d in sorted(existing):
             f.write(json.dumps(existing[d], ensure_ascii=False) + '\n')
     return made
+
+
+def _sync_private_archive(msg_date_iso: str) -> None:
+    """Commit + push het ruwe archief én de training-paren naar de private
+    archive-repo, zodat de leer-loop-data durable en off-disk staat (overleeft
+    git-clean van de publieke repo en Actions-cache-eviction).
+
+    Best-effort: een falende commit/push (geen netwerk, geen remote-auth,
+    niets gewijzigd) mag de ingest NOOIT laten falen — de bestanden staan dan
+    nog steeds lokaal in de private repo. Stil overslaan als de archief-locatie
+    geen git-repo is (bv. een custom REF_ARCHIVE_DIR buiten een repo).
+    Skippen via REF_ARCHIVE_NO_PUSH=1 (bv. tijdens tests).
+    """
+    if os.environ.get('REF_ARCHIVE_NO_PUSH'):
+        return
+    repo = ARCHIVE_DIR.parent.parent  # .../referentie-archief  (archief = .../referentie-archief/data/ref_archive)
+    if not (repo / '.git').is_dir():
+        return
+
+    def _git(*args, check=False):
+        return subprocess.run(
+            ['git', '-C', str(repo), *args],
+            capture_output=True, text=True, timeout=60, check=check,
+        )
+
+    try:
+        _git('add', '-A')
+        # Niets te committen? Dan klaar (exit 0 op `diff --staged --quiet`).
+        if _git('diff', '--staged', '--quiet').returncode == 0:
+            print(f"↪ Privé-archief: niets gewijzigd om te syncen.")
+            return
+        _git('commit', '-m', f'Ingest referentie-bericht {msg_date_iso}', check=True)
+        push = _git('push')
+        if push.returncode == 0:
+            print(f"↪ Privé-archief gecommit + gepusht (durable).")
+        else:
+            print(f"↪ Privé-archief lokaal gecommit; push faalde "
+                  f"(later handmatig pushen): {push.stderr.strip()[:200]}",
+                  file=sys.stderr)
+    except (subprocess.SubprocessError, OSError) as e:
+        print(f"↪ Privé-archief sync overgeslagen ({type(e).__name__}: {e}); "
+              f"data staat lokaal in {repo}.", file=sys.stderr)
 
 
 def main():
@@ -286,7 +354,7 @@ def main():
         text = args.text
     else:
         if sys.stdin.isatty():
-            print(f"→ Plak referentie-forecaster' SMS voor {msg_date.isoformat()}, druk Ctrl+D wanneer klaar:")
+            print(f"→ Plak de referentie-forecaster SMS voor {msg_date.isoformat()}, druk Ctrl+D wanneer klaar:")
         text = sys.stdin.read()
 
     text = text.strip()
@@ -344,7 +412,8 @@ def main():
         for day in noordwijk_days:
             d = day.get('date'); v = day.get('verdict')
             paired = any(p['date'] == d for p in made_pairs)
-            print(f"    {d}: {v:10s} {'↔ gepaird met onze snapshot' if paired else '(nog geen snapshot → alleen label)'}")
+            v_str = (v if v is not None else 'null')
+            print(f"    {d}: {v_str:10s} {'↔ gepaird met onze snapshot' if paired else '(nog geen snapshot → alleen label)'}")
     print()
     print(f"Datum:            {meta['date']}")
     print(f"Lengte:           {meta['char_count']} tekens")
@@ -357,6 +426,9 @@ def main():
         for spot, verdict in meta['verdicts_per_spot'].items():
             wins = ', '.join(meta['windows_per_spot'].get(spot, []))
             print(f"  {spot:18s} → {verdict:10s} {wins}")
+
+    # Maak de leer-loop-data durable: commit + push naar de private archive-repo.
+    _sync_private_archive(msg_date.isoformat())
     return 0
 
 

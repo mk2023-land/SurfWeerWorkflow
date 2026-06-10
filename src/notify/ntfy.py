@@ -47,7 +47,7 @@ class NtfyNotifier:
 
     def send_digest(self, message: str) -> dict:
         return self._post(
-            title=f"Surf-update Noordwijk van {format_nl_date(datetime.now(ZoneInfo('Europe/Amsterdam')))}",
+            title=f"Surf-update Noordwijk {format_nl_date(datetime.now(ZoneInfo('Europe/Amsterdam')))}",
             body=message,
             priority='3',  # normal
         )

@@ -231,7 +231,7 @@ class SMSValidator:
                     f"Wind speed {val}kn not in allowed speeds {allowed_wind_list}"
                 )
 
-        # 3b. Verboden eenheden — referentie-forecaster gebruikt nooit bft of km/u in onze
+        # 3b. Verboden eenheden — de referentie-forecaster gebruikt nooit bft of km/u in onze
         # pipeline (input is altijd knopen). Elke voorkomen is per definitie
         # een hallucinatie, ongeacht allowed_citations.
         for match in re.finditer(r'\b(\d+[\.,]?\d*)\s*bft\b', sms_text, re.IGNORECASE):
@@ -248,7 +248,7 @@ class SMSValidator:
         # check elk separaat.
         #
         # Tolerantie-logica:
-        #   - Default: 15 min (referentie-forecaster is precies, "HW 14:00" mag geen 14:30 zijn).
+        #   - Default: 15 min (de referentie-forecaster is precies, "HW 14:00" mag geen 14:30 zijn).
         #   - Verhoogd naar 30 min ALS de tijd direct voorafgegaan wordt door
         #     "rond"/"omstreeks"/"tegen"/"ongeveer" (zachte indicatie).
         time_matches = list(re.finditer(r'(\d{1,2}):(\d{2})', sms_text))
@@ -311,7 +311,7 @@ class SMSValidator:
         # 6b. Board-claims moeten matchen met boards_suitable per dag.
         # Een bord-mention is een POSITIEVE claim als er geen negatie vlakbij
         # staat — "longboard prima" = claim, "shortboard niet" = correcte
-        # afwijzing en mag dus altijd. referentie-forecaster gebruikt zelf vaak negatieve
+        # afwijzing en mag dus altijd. de referentie-forecaster gebruikt zelf vaak negatieve
         # mentions ("geen shortboard", "shortboard moet wachten").
         board_patterns = {
             'longboard': r'\blong(?:board)?\b',
@@ -498,7 +498,7 @@ class SMSValidator:
                     )
                     break  # één issue per blok is genoeg
 
-        # 8. Lengte cap — referentie-forecaster' eigen SMS'jes zitten op 1400-1700 tekens.
+        # 8. Lengte cap — de referentie-forecaster eigen SMS'jes zitten op 1400-1700 tekens.
         # Voor ntfy maakt het niet uit. SMS_VALIDATOR_MAX_LEN (src.config) als
         # centrale waarde — gedeeld met notifier-laag.
         if len(sms_text) > SMS_VALIDATOR_MAX_LEN:

@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "surfweer"
+name = "noordwijk-surf-alert"
 version = "0.1.0"
 description = "Noordwijk Surf Alert Workflow"
 requires-python = ">=3.10"

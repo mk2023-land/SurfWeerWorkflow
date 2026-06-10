@@ -388,4 +388,4 @@ class TestPromptCaching:
         assert block.get("type") == "text"
         assert block.get("cache_control") == {"type": "ephemeral"}
         # System-tekst moet de referentie-forecaster-prompt zijn (gecheckt via anker-string)
-        assert "referentie-forecaster" in block.get("text", "")
+        assert "de referentie-forecaster" in block.get("text", "")

@@ -1,10 +1,12 @@
-# GAP-analyse: SurfWeerWorkflow vs. referentie-forecaster' methodologie
+# GAP-analyse: SurfWeerWorkflow vs. methodologie van de referentie-forecaster
 
-**Doel:** voor elk structureel verschil tussen de output van het huidige Python-systeem en de SMS'en van referentie-forecaster van de referentie-forecaster precies vaststellen *wat* afwijkt, *waarom* het afwijkt, en *welke data of modelling* nodig is om het te dichten.
+**Doel:** voor elk structureel verschil tussen de output van het huidige Python-systeem en de berichten van de referentie-forecaster precies vaststellen *wat* afwijkt, *waarom* het afwijkt, en *welke data of modelling* nodig is om het te dichten.
 
-**Datum analyse:** 19 mei 2026, met case-set woensdag 20 mei 2026 + 12 historische SMS-dagen uit `noordwijk-surf-alert-plan-v3.md`.
+**Datum analyse:** 19 mei 2026, met case-set woensdag 20 mei 2026 + 12 historische bericht-dagen uit `noordwijk-surf-alert-plan-v3.md`.
 
 **Niet in scope:** alles wat al gedicht is volgens het ADDENDUM in `benchmark_comparison.md` (anti-hallucinatie, daglicht-filter, longboard-threshold, periode-optimumcurve, tidal-current penalty). Die fixes zitten nu in `src/scoring/hourly.py`, `src/llm/generator.py`, `src/config.py` en zijn op zichzelf adequaat. De analyse hieronder gaat over wat *daarna* nog structureel mist.
+
+> In dit document verwijst "de referentie-forecaster" naar de menselijke pro-forecaster waartegen we benchmarken.
 
 ---
 
@@ -12,35 +14,35 @@
 
 ### CASE 1 — Woensdag 20 mei 2026 (de levende test)
 
-**referentie-forecaster' bericht:** "Nwijk/Zvoort 14-16u of na 19:30u. Genoeg hoogte." + "5 bft tot 20u, daarna afnemend tot 4 bft" + "Avond prima longboarden". Géén mentioning van ochtend.
+**Bericht van de referentie-forecaster:** "Nwijk/Zvoort 14-16u of na 19:30u. Genoeg hoogte." + "5 bft tot 20u, daarna afnemend tot 4 bft" + "Avond prima longboarden". Géén mentioning van ochtend.
 
 **Systeem produceert nu drie longboard-windows:**
 - 06-09u peak 49 (golf 1.10-1.34m, wind 14-17 kn ZW)
 - 12-14u peak 46
 - 18-21u peak 47
 
-**Centrale vraag:** *waarom mentioneert referentie-forecaster géén morgen?* De morgen heeft volgens Open-Meteo de hoogste golven (1.32-1.36m om 09-10u) met *vergelijkbare* wind als de middag. Een dom model zegt: ochtend = hoogste golf = beste uur.
+**Centrale vraag:** *waarom mentioneert de referentie-forecaster géén morgen?* De morgen heeft volgens Open-Meteo de hoogste golven (1.32-1.36m om 09-10u) met *vergelijkbare* wind als de middag. Een dom model zegt: ochtend = hoogste golf = beste uur.
 
 #### Hypothese-evaluatie
 
-**(a) Tidal current — afgewezen als alleenstaande verklaring.** Het huidige systeem berekent voor 10u een tidal_current_intensity van 0.94 (sterk, vlak bij mid-cycle tussen HW 06:23 en LW 14:49). Dat verklaart een **deel** van de penalty, maar referentie-forecaster' redenering achter de stilte tussen 16-19u is *expliciet* tidal current ("vloedstroom vol vanaf 15u") terwijl hij voor de ochtend zwijgt — dus voor de ochtend speelt iets anders.
+**(a) Tidal current — afgewezen als alleenstaande verklaring.** Het huidige systeem berekent voor 10u een tidal_current_intensity van 0.94 (sterk, vlak bij mid-cycle tussen HW 06:23 en LW 14:49). Dat verklaart een **deel** van de penalty, maar de redenering van de referentie-forecaster achter de stilte tussen 16-19u is *expliciet* tidal current ("vloedstroom vol vanaf 15u") terwijl hij voor de ochtend zwijgt — dus voor de ochtend speelt iets anders.
 
-**(b) Wind in de morgen NW i.p.v. ZW — meest waarschijnlijke hoofdverklaring.** Open-Meteo's `knmi_seamless` geeft op 06u-09u wind richtingen 217-222° (ZZW→WZW). Maar de Harmonie-model die referentie-forecaster leest (via weerplaza.nl) heeft op 2.5 km resolutie en toont dat er *vóór* de "buienlijntje van 10u" een rest-NW-component zit van de afgelopen nacht: de echte synoptische situatie is een trog die over Nederland trekt, dus pre-trog is wind nog noordelijker. Het Open-Meteo `knmi_seamless` is een geïnterpoleerde versie van Harmonie en geeft één getal per uur op grid-cel-niveau (resolutie ~5 km na seamless-blending); Harmonie zelf op 2.5 km kan een 30-40° verschil tonen aan de kust. Concreet: referentie-forecaster ziet waarschijnlijk **240-250° (WZW) pas vanaf 11u**, daarvoor 200-220° met nog wat N-component dat de wave-face NIET cleant maar juist verkruimelt door cross-shore te zijn op 0.4m wave-veld. Het systeem mist deze nuance omdat het maar één model in de wind-data heeft.
+**(b) Wind in de morgen NW i.p.v. ZW — meest waarschijnlijke hoofdverklaring.** Open-Meteo's `knmi_seamless` geeft op 06u-09u wind richtingen 217-222° (ZZW→WZW). Maar de Harmonie-model die de referentie-forecaster leest (via weerplaza.nl) heeft op 2.5 km resolutie en toont dat er *vóór* de "buienlijntje van 10u" een rest-NW-component zit van de afgelopen nacht: de echte synoptische situatie is een trog die over Nederland trekt, dus pre-trog is wind nog noordelijker. Het Open-Meteo `knmi_seamless` is een geïnterpoleerde versie van Harmonie en geeft één getal per uur op grid-cel-niveau (resolutie ~5 km na seamless-blending); Harmonie zelf op 2.5 km kan een 30-40° verschil tonen aan de kust. Concreet: de referentie-forecaster ziet waarschijnlijk **240-250° (WZW) pas vanaf 11u**, daarvoor 200-220° met nog wat N-component dat de wave-face NIET cleant maar juist verkruimelt door cross-shore te zijn op 0.4m wave-veld. Het systeem mist deze nuance omdat het maar één model in de wind-data heeft.
 
-**(c) Wave-age / spin-up: secundaire verklaring met aanzienlijke impact.** Het Open-Meteo Marine model is gebaseerd op DWD ICON-WAM (geen WW3 in Open-Meteo, GitHub issue #415). WAM rapporteert quasi-stationaire wind-sea bij gegeven 10m wind. Maar in werkelijkheid: een 0,4m wind-zee veld van 04u → 1,3m van 10u is een 6-uurs spin-up. referentie-forecaster weet dat in die ramp-up fase de golf-vorm chaotisch is (steepness fluctueert), met sets die nog niet "georganiseerd" zijn aan de kust. De golf die om 10u "1,36m" heet, is in werkelijkheid de eerste echt-geformede setbreker — de 0,7-0,8m golfjes om 07u zijn meer choppy plat wateroppervlak met wat texture. referentie-forecaster' "ochtend rustig, opbouwend" is geen voorzichtigheid, het is impliciete kennis dat ICON-WAM's groei-curve te scherp is.
+**(c) Wave-age / spin-up: secundaire verklaring met aanzienlijke impact.** Het Open-Meteo Marine model is gebaseerd op DWD ICON-WAM (geen WW3 in Open-Meteo, GitHub issue #415). WAM rapporteert quasi-stationaire wind-sea bij gegeven 10m wind. Maar in werkelijkheid: een 0,4m wind-zee veld van 04u → 1,3m van 10u is een 6-uurs spin-up. De referentie-forecaster weet dat in die ramp-up fase de golf-vorm chaotisch is (steepness fluctueert), met sets die nog niet "georganiseerd" zijn aan de kust. De golf die om 10u "1,36m" heet, is in werkelijkheid de eerste echt-geformede setbreker — de 0,7-0,8m golfjes om 07u zijn meer choppy plat wateroppervlak met wat texture. De opmerking "ochtend rustig, opbouwend" van de referentie-forecaster is geen voorzichtigheid, het is impliciete kennis dat ICON-WAM's groei-curve te scherp is.
 
-**(d) IJG1 boei live data — wel zo, maar binnen 1u lead time gespeculeerd.** referentie-forecaster gebruikt IJG1 voor *current state*, niet voor de 10u-voorspelling als ze nog 24h voor is (zoals in een dinsdag-SMS voor woensdag). Maar in zijn werkmethode haalt hij rond 23u op dinsdagavond de meest verse spectrum-feed van IJG1 binnen en checkt of de pre-trog situatie zich al manifesteert. Op dat moment ziet hij een 0,3m residual met 4s periode — een achtergrond, geen swell. Conclusie voor woensdagochtend: het wind-veld dat de wave moet bouwen, moet 06-10u in z'n geheel werken vanuit een veld dat nog niet voldoende fetch heeft. Het systeem mist deze cross-check tegen huidige boei-state.
+**(d) IJG1 boei live data — wel zo, maar binnen 1u lead time gespeculeerd.** de referentie-forecaster gebruikt IJG1 voor *current state*, niet voor de 10u-voorspelling als ze nog 24h voor is (zoals in een dinsdag-SMS voor woensdag). Maar in zijn werkmethode haalt hij rond 23u op dinsdagavond de meest verse spectrum-feed van IJG1 binnen en checkt of de pre-trog situatie zich al manifesteert. Op dat moment ziet hij een 0,3m residual met 4s periode — een achtergrond, geen swell. Conclusie voor woensdagochtend: het wind-veld dat de wave moet bouwen, moet 06-10u in z'n geheel werken vanuit een veld dat nog niet voldoende fetch heeft. Het systeem mist deze cross-check tegen huidige boei-state.
 
-**(e) Synoptisch — beslissende verklaring.** referentie-forecaster' "na het buienlijntje van 10u" verraadt een actieve front- of trog-passage. Voor een pro betekent dat: de wind die 06-10u blaast is in de *koude sector* (post-front), met instabiele luchtmassa, vlagerig, en steeds variërend van richting. Het is geen "constante WZW 5 bft" — het is "ZZW 4 met uitschieters naar ZW 6 en draaiingen naar W". Pas *na* de buienlijn stabiliseert de stroming naar consistent WZW 5 bft. Open-Meteo geeft één gemiddeld windgetal per uur, maar de *gust*-variabiliteit zit wel in `wind_gusts_10m` — die wordt momenteel niet gebruikt in de scoring. Met een wind_gusts/wind_speed ratio >1.5 zou je de instabiele periode kunnen detecteren en penalty geven (huidige systeem gebruikt alleen `speed_kn`, gust wordt in conditions doorgegeven maar niet gescoord).
+**(e) Synoptisch — beslissende verklaring.** De opmerking "na het buienlijntje van 10u" van de referentie-forecaster verraadt een actieve front- of trog-passage. Voor een pro betekent dat: de wind die 06-10u blaast is in de *koude sector* (post-front), met instabiele luchtmassa, vlagerig, en steeds variërend van richting. Het is geen "constante WZW 5 bft" — het is "ZZW 4 met uitschieters naar ZW 6 en draaiingen naar W". Pas *na* de buienlijn stabiliseert de stroming naar consistent WZW 5 bft. Open-Meteo geeft één gemiddeld windgetal per uur, maar de *gust*-variabiliteit zit wel in `wind_gusts_10m` — die wordt momenteel niet gebruikt in de scoring. Met een wind_gusts/wind_speed ratio >1.5 zou je de instabiele periode kunnen detecteren en penalty geven (huidige systeem gebruikt alleen `speed_kn`, gust wordt in conditions doorgegeven maar niet gescoord).
 
-**Conclusie CASE 1:** referentie-forecaster schrijft de ochtend af om de optelsom van (b)+(c)+(e) — *niet* om tidal current alleen. Het huidige systeem zou minimaal twee verbeteringen moeten hebben:
+**Conclusie CASE 1:** de referentie-forecaster schrijft de ochtend af om de optelsom van (b)+(c)+(e) — *niet* om tidal current alleen. Het huidige systeem zou minimaal twee verbeteringen moeten hebben:
 1. Multi-model wind comparison (ECMWF + KNMI Harmonie via Open-Meteo `models=` parameter) zodat een spread van >5 kn of >20° wijst op synoptische onzekerheid → ochtend-uren krijgen confidence-penalty.
 2. Wave-age proxy: vergelijk huidige Hs met Hs van 4-6 uur eerder; bij >40% groei = spin-up fase, kwaliteits-penalty van -10 tot -15% op golf_score.
-3. Wind-gust ratio: bij gust/sustained > 1.5 = onstabiele luchtmassa, penalty -5pt op wind_score (referentie-forecaster' "vlagerig").
+3. Wind-gust ratio: bij gust/sustained > 1.5 = onstabiele luchtmassa, penalty -5pt op wind_score (de "vlagerig" van de referentie-forecaster).
 
 ### CASE 2 — Zaterdag 16 mei 2026 (smal-alert)
 
-**referentie-forecaster:** "Zvoort/Nwijk heel even 11-12u zonder wind" — alert-waardig vanwege windstilte-window middenin een drukke dag. Score-doel volgens validatie-tabel: 70-80 in smal window, ALERT (T5+T3).
+**de referentie-forecaster:** "Zvoort/Nwijk heel even 11-12u zonder wind" — alert-waardig vanwege windstilte-window middenin een drukke dag. Score-doel volgens validatie-tabel: 70-80 in smal window, ALERT (T5+T3).
 
 **Wat het systeem zou doen** (gereconstrueerd uit de logica in `src/scoring/`):
 - 11-12u valt onder daglicht ✓
@@ -50,14 +52,14 @@
 - Swell-dir bonus: WZW → 10pt
 - **Totaal ~75-84** — score zou correct genereren.
 
-**Wat het systeem mogelijk MIST:** de detectie van dit als T3 (wind-dip). De huidige `detect_wind_dip` zoekt naar een lokaal minimum >=5 kn onder omliggende 4u. Maar als de zaterdag-baseline 18-22 kn is en het zakt naar 4-6 kn om 11-12u, dan is het verschil 14-18 kn — wel ruim onder de drempel. Probleem: het systeem detecteert *één* uur, terwijl referentie-forecaster het smal-window noemt "heel even 11-12u" — dus stability moet voor een 1-2u window berekend kunnen worden, niet over een 3u minimum. **Gap: minimum window length voor T3 op 1u zetten, niet de huidige >=1u die strict 1.0 geïnterpreteerd wordt.**
+**Wat het systeem mogelijk MIST:** de detectie van dit als T3 (wind-dip). De huidige `detect_wind_dip` zoekt naar een lokaal minimum >=5 kn onder omliggende 4u. Maar als de zaterdag-baseline 18-22 kn is en het zakt naar 4-6 kn om 11-12u, dan is het verschil 14-18 kn — wel ruim onder de drempel. Probleem: het systeem detecteert *één* uur, terwijl de referentie-forecaster het smal-window noemt "heel even 11-12u" — dus stability moet voor een 1-2u window berekend kunnen worden, niet over een 3u minimum. **Gap: minimum window length voor T3 op 1u zetten, niet de huidige >=1u die strict 1.0 geïnterpreteerd wordt.**
 
 ### CASE 3 — Zondag 17 mei 2026 (ochtend & avond OK, T2)
 
-**referentie-forecaster:** "Aflandige zuid offshore wind 1m N deining" — twee windows, ochtend en avond.
+**de referentie-forecaster:** "Aflandige zuid offshore wind 1m N deining" — twee windows, ochtend en avond.
 
 **Wat het systeem zou doen:**
-- ZW offshore wind (~165° = ZZO = aflandig) bij N-swell van 0° = preferred range (270-360°)... wacht, N=0° en blocked_swell_dir is 350-30°: 0° valt IN de geblokkeerde range. Probleem: het systeem kent NU één binaire blocked sector (350-30 wrap-around) terwijl referentie-forecaster zegt dat bij een 1,0m / ~8s N-deining hij wel doorkomt — de pier blokkeert vooral de NNO (10-30°) en in mindere mate de N (350-10°).
+- ZW offshore wind (~165° = ZZO = aflandig) bij N-swell van 0° = preferred range (270-360°)... wacht, N=0° en blocked_swell_dir is 350-30°: 0° valt IN de geblokkeerde range. Probleem: het systeem kent NU één binaire blocked sector (350-30 wrap-around) terwijl de referentie-forecaster zegt dat bij een 1,0m / ~8s N-deining hij wel doorkomt — de pier blokkeert vooral de NNO (10-30°) en in mindere mate de N (350-10°).
 
 **Identificeert structurele gap: refractie continu modelleren.** Het huidige `score_swell_direction_bonus` doet een binaire knip: blocked = 0pt, anders 3-10pt. In werkelijkheid:
 - 0° N: ~60% energie passeert pier (geometrische afstand pier-tot-Noordwijk)
@@ -65,15 +67,15 @@
 - 20° NNO: ~10% energie passeert
 - 30° NO: 80% passeert (komt buiten pier-schaduw)
 
-Een continu refractie-model met `refraction_factor(swell_dir, swell_period) = f(angle_offset, period)` zou dit recht zetten. Voor lange-periode swell (≥9s) is de pier-schaduw uitgebreider omdat lange golven dieper voelen en eerder refracteren — referentie-forecaster' "te kort om rond de pier te komen" omgekeerd: te lang en hij refracteert juist te ver weg van Noordwijk.
+Een continu refractie-model met `refraction_factor(swell_dir, swell_period) = f(angle_offset, period)` zou dit recht zetten. Voor lange-periode swell (≥9s) is de pier-schaduw uitgebreider omdat lange golven dieper voelen en eerder refracteren — de redenering "te kort om rond de pier te komen" van de referentie-forecaster omgekeerd: te lang en hij refracteert juist te ver weg van Noordwijk.
 
 ### CASE 4 — Woensdag 6 augustus 2025 (groundswell door windsea heen, T4)
 
-**referentie-forecaster:** "1,4m swell op 100mhz (10 sec groundswell) door windgolven heen". Dit is *het* paradigma-voorbeeld van waarom 2D-spectrum-lezen nodig is.
+**de referentie-forecaster:** "1,4m swell op 100mhz (10 sec groundswell) door windgolven heen". Dit is *het* paradigma-voorbeeld van waarom 2D-spectrum-lezen nodig is.
 
 **Wat het systeem zou zien:** Open-Meteo Marine zou rapporteren `swell_wave_height=1.2, swell_wave_period=10.0` en `wind_wave_height=0.6, wind_wave_period=4.5`. Het systeem decomposeert dat in WaveSpectrum.peaks, en `has_groundswell_through_windsea(spectrum)` levert True (zie `src/scoring/deconstruct.py` — niet gelezen maar geïmpliceerd door de imports in hourly.py). Resultaat: golf_score +1pt bonus.
 
-**Gap: de +1pt bonus is veel te bescheiden.** referentie-forecaster' alert-waardigheid voor T4 is *exact* dit fenomeen. De huidige config heeft alleen +1pt voor groundswell-through-windsea — dat brengt een score van 70 naar 71, niet alert-waardig. Een T4-bonus moet ~+10pt zijn met als voorwaarde:
+**Gap: de +1pt bonus is veel te bescheiden.** De alert-waardigheid van de referentie-forecaster voor T4 is *exact* dit fenomeen. De huidige config heeft alleen +1pt voor groundswell-through-windsea — dat brengt een score van 70 naar 71, niet alert-waardig. Een T4-bonus moet ~+10pt zijn met als voorwaarde:
 - swell_height ≥ 0.7m
 - swell_period ≥ 9s
 - swell_height ≥ wind_wave_height (groundswell domineert)
@@ -81,7 +83,7 @@ Een continu refractie-model met `refraction_factor(swell_dir, swell_period) = f(
 
 ### CASE 5 — Zaterdag 23 augustus 2025 (avond top, T1+T3)
 
-**referentie-forecaster:** "Nieuwe N-swell op 140mhz" — d.w.z. 7.1s. Plus windafname laat op de dag. Score-doel: 70-85 avond, mogelijk ALERT.
+**de referentie-forecaster:** "Nieuwe N-swell op 140mhz" — d.w.z. 7.1s. Plus windafname laat op de dag. Score-doel: 70-85 avond, mogelijk ALERT.
 
 **Wat het systeem zou doen:**
 - T1 (swell-arrival): vereist boei-historie van A12 of K13. Het systeem heeft NU geen historische boei-data opslag — `forecasts_log.jsonl` is voor scoring-output, niet voor boei-state-over-tijd. Dus T1 kan in praktijk niet getriggerd worden zonder een aparte buoy_history.jsonl.
@@ -91,7 +93,7 @@ Een continu refractie-model met `refraction_factor(swell_dir, swell_period) = f(
 
 ### CASE 6 — Woensdag 20 augustus 2025 (smal alert 12:30-14:30u, T2)
 
-**referentie-forecaster:** "Koufront passeert vanuit het noorden, NNO naar ONO" — wind draait naar offshore. Score-doel: 70-80 in 2u window, ALERT.
+**de referentie-forecaster:** "Koufront passeert vanuit het noorden, NNO naar ONO" — wind draait naar offshore. Score-doel: 70-80 in 2u window, ALERT.
 
 **Wat het systeem zou doen:** T2 detector zou werken (windrichting-shift ≥45° binnen 6u, nieuwe richting offshore). MAAR — de wind-direction in Open-Meteo `knmi_seamless` is een uur-gemiddelde, niet de *moment*-richting tijdens de frontpassage. Een passerende front kan in 30 min van NNO naar ONO draaien — Open-Meteo middelt dat naar (NNO+ONO)/2 = NO over het uur. Het systeem detecteert dan een minder dramatische shift dan werkelijk plaatsvindt.
 
@@ -99,19 +101,19 @@ Een continu refractie-model met `refraction_factor(swell_dir, swell_period) = f(
 
 ### CASE 7 — Vrijdag 21 augustus 2025 (geen alert, "wind W ≤3bft")
 
-**referentie-forecaster:** mediocre. Score-doel: 55-70, GEEN alert.
+**de referentie-forecaster:** mediocre. Score-doel: 55-70, GEEN alert.
 
 **Wat het systeem zou doen:** Hs ~0.6-0.8m, Tp ~5-6s, wind W ~8-10 kn (≤3bft = ≤10 kn). Wind W = 270° = onshore voor Noordwijk (beach normal 285°). cos_offshore = cos(180-15°) = -0.97 → onshore. Speed_score (~10kn) = 22, direction_bonus = -7. Net score ~15pt. Wind face quality multiplier = ~0.67 → golf_score gehalveerd. Total ~40-50. **Algoritme klopt: geen alert.** ✓
 
 ### CASE 8 — Maandag 30 juli 2025 (avond OK, T3, "Z-H even helemaal geen wind vanaf schev")
 
-**referentie-forecaster:** wind-dip avond. Score-doel: 60-75 avond.
+**de referentie-forecaster:** wind-dip avond. Score-doel: 60-75 avond.
 
 **Wat het systeem zou doen:** Een wind-dip met absolute waarde tot ~5 kn vanuit een 18-20 kn baseline geeft een score-jump van laag (~35) naar hoog (~70). T3 zou triggeren. **Algoritme zou waarschijnlijk werken.** ✓
 
 ### CASE 9 — Donderdag 14 mei 2026 ("wat kleins door mix WZW en NW swell")
 
-**referentie-forecaster:** matig. Score-doel: 40-55.
+**de referentie-forecaster:** matig. Score-doel: 40-55.
 
 **Wat het systeem zou doen:** Mixed seas met twee swell-componenten. Het huidige WaveSpectrum object kan slechts één wind_wave en één swell_wave peak bevatten van Open-Meteo Marine. Een *twee-richting* swell (WZW + NW als twee aparte partities) is in de input niet aanwezig — Open-Meteo Marine geeft alleen TOTAL wave_direction en *één* swell_wave_direction. Resultaat: het systeem ziet een gemiddelde richting tussen WZW en NW = NW(W), niet de twee aparte componenten.
 
@@ -119,13 +121,13 @@ Een continu refractie-model met `refraction_factor(swell_dir, swell_period) = f(
 
 ### CASE 10 — Vrijdag 15 mei 2026 (swell 0,9m, onshore)
 
-**referentie-forecaster:** OK middag. Score: 45-60.
+**de referentie-forecaster:** OK middag. Score: 45-60.
 
 Standaard onshore wind + matige golf = mid-range score. Het systeem doet dit waarschijnlijk goed. ✓
 
 ### CASE 11 — Woensdag 5 augustus 2025 (groot alert, T1+T4+T5)
 
-**referentie-forecaster:** 1,5m swell uit N op 10sec. Score: 75-90 ALERT.
+**de referentie-forecaster:** 1,5m swell uit N op 10sec. Score: 75-90 ALERT.
 
 **Wat het systeem zou doen:** Hs ~1,5m, Tp 10s = groundswell. Golf_score = 38 (max). Wind componenten + tide + dir bonus → score ~85-95. ALERT zou correct triggeren mits wind acceptabel is en de N-swell *niet* in de geblokkeerde 350-30° range valt — als swell uit exact 360°=0° komt, valt het in blocked sector en swell_dir_bonus = 0. Dit is precies de refractie-bug uit CASE 3: een 10s groundswell uit zuiver N komt voor 40-50% wél door, niet 0%.
 
@@ -133,13 +135,13 @@ Standaard onshore wind + matige golf = mid-range score. Het systeem doet dit waa
 
 ### CASE 12 — Donderdag 11 september 2025 (OK 8-13u middag, geen alert)
 
-**referentie-forecaster:** "Krachtige W/WZW 's nachts genereert golven, windafname overdag". Score: 50-65 middag.
+**de referentie-forecaster:** "Krachtige W/WZW 's nachts genereert golven, windafname overdag". Score: 50-65 middag.
 
 **Wat het systeem zou doen:** Wave-veld nog hoog vanuit de nachtelijke wind, terwijl wind nu afneemt → exact het scenario waarvoor `wind_trend_factor` is gemaakt. Bij wind_delta van -6 kn in 2u en wave_holding=True → multiplier 1.11. Score gaat van ~50 naar ~55. ✓ Werkt.
 
 ### CASE 13 — Dinsdag 19 mei 2026 (vandaag, baseline)
 
-**referentie-forecaster:** "Vandaag flat, 0,4m wind-zee, ZZO 5kn aflandig, doodtij". Score: <20.
+**de referentie-forecaster:** "Vandaag flat, 0,4m wind-zee, ZZO 5kn aflandig, doodtij". Score: <20.
 
 **Wat het systeem zou doen:** Hs 0,4m bij Tp ~4,5s. Pass de minimum-gate (Hs ≥ 0.30, Tp ≥ 4.0). golf_score met height 0,4 → 0pt (sub-0,5m). Total score 0. ✓ Correct flat.
 
@@ -151,7 +153,7 @@ Uit de 13 cases destilleren zich **zeven divergence-types**, gerangschikt op fre
 
 ### Type R1 — Wind-data granularity (4 van 13 cases beïnvloed)
 
-Het systeem gebruikt één wind getal per uur uit Open-Meteo `knmi_seamless`. referentie-forecaster gebruikt:
+Het systeem gebruikt één wind getal per uur uit Open-Meteo `knmi_seamless`. De referentie-forecaster gebruikt:
 - Harmonie 2.5 km (sub-uurlijks via animatie op weerplaza)
 - ECMWF voor outlook
 - KNMI guidance modelbeoordeling (menselijke synthese)
@@ -159,14 +161,14 @@ Het systeem gebruikt één wind getal per uur uit Open-Meteo `knmi_seamless`. re
 - Teletekst 707 (gemiddeld over 10 min)
 
 Wat dit oplevert dat het systeem mist:
-- Hoeklokale variabiliteit (Z-H vs N-H kan 30-60° verschillen, referentie-forecaster zegt "Wind meer WZW in Z-H en Zeeland")
+- Hoeklokale variabiliteit (Z-H vs N-H kan 30-60° verschillen, de referentie-forecaster zegt "Wind meer WZW in Z-H en Zeeland")
 - Sub-uurlijkse shifts (front-passages, sea-breeze opzetting)
 - Gust-variabiliteit (instabiele luchtmassa)
 - Model-spread als onzekerheidsindicator
 
 ### Type R2 — Mixed-sea decompositie (3 van 13 cases)
 
-Open-Meteo Marine geeft één `swell_wave_*` partitie. referentie-forecaster leest 2D spectra met 2-3 aparte pieken inclusief richting per piek. Wat het systeem mist:
+Open-Meteo Marine geeft één `swell_wave_*` partitie. De referentie-forecaster leest 2D spectra met 2-3 aparte pieken inclusief richting per piek. Wat het systeem mist:
 - Twee verre swells uit verschillende richtingen (CASE 9)
 - Een groundswell die qua hoogte onder de windsea zit maar in een ander deel van het spectrum (CASE 4)
 - Directional spread per partitie
@@ -185,11 +187,11 @@ Open-Meteo's WAM-output is quasi-stationaire equilibrium-respons op de wind. In 
 - Wave-steepness fluctueert tijdens groei (sets variëren in periode)
 - Pas na ~10 uur constante wind is een wind-zee veld "rijp"
 
-referentie-forecaster' intuïtie hiervoor: "ochtend nog rustig, opbouwend door de dag" — hij waardeert pas wave-velden ná hun groeifase.
+De intuïtie van de referentie-forecaster hiervoor: "ochtend nog rustig, opbouwend door de dag" — hij waardeert pas wave-velden ná hun groeifase.
 
 ### Type R5 — Synoptische context (CASE 1, CASE 6, alle alert-cases)
 
-referentie-forecaster kijkt naar UKMO drukkaarten, ECMWF pluim, KNMI guidance om te begrijpen *waarom* een specifieke setup ontstaat:
+De referentie-forecaster kijkt naar UKMO drukkaarten, ECMWF pluim, KNMI guidance om te begrijpen *waarom* een specifieke setup ontstaat:
 - Front-passage → instabiele wind, daarna stabilisatie
 - Hogedruk → flat, behalve diurnal-effecten
 - Trog → korte windvlaag, korte swell-piek
@@ -207,7 +209,7 @@ Voor Noordwijk specifiek is dit minder kritisch (geen pier vlakbij), maar voor a
 
 ### Type R7 — Probabilistische voorspelling (alle multi-day cases)
 
-referentie-forecaster' SMS bevat vaak "kan zaterdag wat zijn" (uncertain), "mogelijk nog een trogje" (probabilistisch). Het systeem rapporteert deterministisch. Bij grote ECMWF-ensemble-spread zou een wave-height confidence interval (P25-P75) veel informatiever zijn dan een single best estimate. Open-Meteo's ECMWF endpoint biedt ensembleleden niet direct, maar `ecmwf_ifs025` deterministisch + comparison met `gfs_seamless` + `knmi_seamless` geeft al een proxy.
+De berichten van de referentie-forecaster bevatten vaak "kan zaterdag wat zijn" (uncertain), "mogelijk nog een trogje" (probabilistisch). Het systeem rapporteert deterministisch. Bij grote ECMWF-ensemble-spread zou een wave-height confidence interval (P25-P75) veel informatiever zijn dan een single best estimate. Open-Meteo's ECMWF endpoint biedt ensembleleden niet direct, maar `ecmwf_ifs025` deterministisch + comparison met `gfs_seamless` + `knmi_seamless` geeft al een proxy.
 
 ---
 
@@ -223,11 +225,11 @@ Per gap: **wat het is**, **welke data nodig**, **effort (XS=2u, S=halve dag, M=1
 
 **Effort:** S (halve dag — input shape uitbreiden, model-spread berekening, penalty inhaken op `score_hour`).
 
-**Impact:** middel-hoog. Voor referentie-forecaster' ochtend-skip op CASE 1 zou dit een 10-15pt drop geven, exact waar nodig. Detecteert ook automatisch frontpassages waar modellen uiteenlopen. Schatting: 4-6 van 13 cases verbeterd.
+**Impact:** middel-hoog. Voor de ochtend-skip van de referentie-forecaster op CASE 1 zou dit een 10-15pt drop geven, exact waar nodig. Detecteert ook automatisch frontpassages waar modellen uiteenlopen. Schatting: 4-6 van 13 cases verbeterd.
 
 ### Gap 2 — Wave-age proxy via Hs-derivative
 
-**Wat:** Bereken `Hs_growth_rate = (Hs[t] - Hs[t-4]) / 4`. Bij groei > 0.15 m/uur (snelle wave-build) pas multiplier 0.85 toe op golf_score. Bij groei <0 (afzwakkend veld) en Hs > 0.7m: pas multiplier 1.05 toe (referentie-forecaster' "wind valt weg, swell loopt door").
+**Wat:** Bereken `Hs_growth_rate = (Hs[t] - Hs[t-4]) / 4`. Bij groei > 0.15 m/uur (snelle wave-build) pas multiplier 0.85 toe op golf_score. Bij groei <0 (afzwakkend veld) en Hs > 0.7m: pas multiplier 1.05 toe (de "wind valt weg, swell loopt door" van de referentie-forecaster).
 
 **Data nodig:** geen — historie zit al in de hourly forecast array.
 
@@ -260,7 +262,7 @@ refraction_factor(swell_dir, swell_period) = sigmoidal blend
 
 **Effort:** S (halve dag — herzien `score_swell_direction_bonus`).
 
-**Impact:** hoog voor N-swell cases. Voor CASE 3 (N-deining 1m) en CASE 11 (1,5m N-swell): voorkomt false-negative van "blocked sector" terwijl referentie-forecaster een ALERT verstuurt. Schatting: 2-3 cases verbeterd, maar deze cases zijn de meest impactvolle (alerts!).
+**Impact:** hoog voor N-swell cases. Voor CASE 3 (N-deining 1m) en CASE 11 (1,5m N-swell): voorkomt false-negative van "blocked sector" terwijl de referentie-forecaster een ALERT verstuurt. Schatting: 2-3 cases verbeterd, maar deze cases zijn de meest impactvolle (alerts!).
 
 ### Gap 5 — Mixed-sea detector (wave_dir vs swell_dir hoek)
 
@@ -324,7 +326,7 @@ refraction_factor(swell_dir, swell_period) = sigmoidal blend
 
 **Effort:** S (halve dag voor zonder ensemble; M als we ECMWF-ensemble willen toevoegen).
 
-**Impact:** laag-middel. Verbetert de "kwalitatieve" tone-fit met referentie-forecaster' eigen voorbehouden ("kan zaterdag wat zijn"). Geen quantificeerbare case-impact maar belangrijk voor user-trust. Schatting: 2-3 cases krijgen betere bericht-tekst.
+**Impact:** laag-middel. Verbetert de "kwalitatieve" tone-fit met de eigen voorbehouden van de referentie-forecaster ("kan zaterdag wat zijn"). Geen quantificeerbare case-impact maar belangrijk voor user-trust. Schatting: 2-3 cases krijgen betere bericht-tekst.
 
 ---
 
@@ -334,7 +336,7 @@ Een paar items die in v3 plan staan maar voor MVP/v4 niet hoeven:
 
 ### NF1 — Echte 2D-spectrum parsing van RWS
 
-Het hele plan v3 begint met "referentie-forecaster leest 2D-spectra". Het systeem heeft daarvoor géén infrastructuur en is dat ook niet van plan in afzienbare termijn (data is alleen als JPG-image beschikbaar van surfweer's spectrum-pagina, niet machine-readable). Open-Meteo's wind_wave + swell_wave splitsing is een 80% benadering voor 20% effort. Acceptabel voor MVP.
+Het hele plan v3 begint met "de referentie-forecaster leest 2D-spectra". Het systeem heeft daarvoor géén infrastructuur en is dat ook niet van plan in afzienbare termijn (data is alleen als JPG-image beschikbaar op de spectrum-pagina van de bron, niet machine-readable). Open-Meteo's wind_wave + swell_wave splitsing is een 80% benadering voor 20% effort. Acceptabel voor MVP.
 
 ### NF2 — Vlaamse banken refractie-filter voor Belgie/Zeeland
 
@@ -379,7 +381,7 @@ Na Sprint 1+2 zou de benchmark-score van 23/24 (huidig na blok 2) naar 27-28/30 
 ## Bronnen geraadpleegd voor deze analyse
 
 - `wave_physics_benchmark.md` (intern, internationale wave physics)
-- `reference_methodology.md` (intern, reverse-engineering referentie-forecaster' methode)
+- `reference_methodology.md` (intern, reverse-engineering van de methode van de referentie-forecaster)
 - `benchmark_comparison.md` (intern, eerdere benchmark + ADDENDUM na blok 2)
 - `noordwijk-surf-alert-plan-v3.md` (intern, plan + 13 SMS validatie-set)
 - `src/scoring/hourly.py`, `src/scoring/windows.py`, `src/data/models.py`, `src/llm/generator.py`, `src/config.py`, `src/data/sources/open_meteo.py` (huidige codebase)
@@ -393,12 +395,12 @@ Na Sprint 1+2 zou de benchmark-score van 23/24 (huidig na blok 2) naar 27-28/30 
 
 ## Samenvattende conclusie
 
-Het systeem heeft na blok 1+2 een sterke basis: scoring is goed gekalibreerd, daglicht-filter werkt, anti-hallucinatie werkt, longboard-threshold dekt referentie-forecaster' "matige longboard-dag" patroon. Wat structureel overblijft zijn **drie families van gaps**:
+Het systeem heeft na blok 1+2 een sterke basis: scoring is goed gekalibreerd, daglicht-filter werkt, anti-hallucinatie werkt, longboard-threshold dekt het "matige longboard-dag"-patroon van de referentie-forecaster. Wat structureel overblijft zijn **drie families van gaps**:
 
-1. **Wind-modellering enkelvoudig** (R1, R5): één model i.p.v. multi-model triangulatie zoals referentie-forecaster doet. Oplosbaar binnen 1-2 dagen door Open-Meteo's multi-model endpoint te benutten.
+1. **Wind-modellering enkelvoudig** (R1, R5): één model i.p.v. multi-model triangulatie zoals de referentie-forecaster doet. Oplosbaar binnen 1-2 dagen door Open-Meteo's multi-model endpoint te benutten.
 
 2. **Wave-decompositie te grof** (R2, R3): één swell + één wind-sea, binaire refractie. Open-Meteo Marine biedt niet meer dan dit; verbeteringen zitten in (a) directional-spread proxy via wave_dir vs swell_dir, (b) continue refractie-modeling, en op termijn (c) RWS 2D-spectrum parsing.
 
 3. **Tijds-dynamiek mist** (R4, R6): wave-veld inertie, drukgradiënt-derivative, sub-uurlijkse shifts. Allemaal afleidbaar uit bestaande forecast-data, alleen niet geïmplementeerd.
 
-De top-4 fixes (Sprint 1) kosten samen ~1 dag werk en zouden de top-3 falende cases (woensdag 20 mei ochtend-skip, CASE 4 groundswell-event, CASE 11 N-swell alert) tot binnen referentie-forecaster' tolerantie brengen. Daarna is het systeem voor de Noordwijk-spot specifiek een sterke benadering van referentie-forecaster' methodiek voor 90%+ van de cases.
+De top-4 fixes (Sprint 1) kosten samen ~1 dag werk en zouden de top-3 falende cases (woensdag 20 mei ochtend-skip, CASE 4 groundswell-event, CASE 11 N-swell alert) tot binnen de tolerantie van de referentie-forecaster brengen. Daarna is het systeem voor de Noordwijk-spot specifiek een sterke benadering van de methodiek van de referentie-forecaster voor 90%+ van de cases.

@@ -1,35 +1,33 @@
-# Hoe referentie-forecaster van de referentie-forecaster tot zijn surfvoorspellingen komt — Diepteanalyse mei 2026
+# Hoe de referentie-forecaster tot zijn surfvoorspellingen komt — Diepteanalyse mei 2026
 
-Onderstaand rapport is een uitbreiding op DEEL 1 van `noordwijk-surf-alert-plan-v3.md`. De analyse van de 13 SMS'jes uit dat document blijft het fundament; deze tekst valideert, corrigeert en verrijkt het met (a) de verse SMS van di 19 mei 2026, (b) materiaal van de referentie-forecaster zelf, en (c) extern onderzoek naar referentie-forecaster' achtergrond en zijn publieke uitleg over spectra, swellsnelheid en getij.
+Onderstaand rapport is een uitbreiding op DEEL 1 van `noordwijk-surf-alert-plan-v3.md`. De analyse van de 13 SMS'jes uit dat document blijft het fundament; deze tekst valideert, corrigeert en verrijkt het met (a) de verse SMS van di 19 mei 2026, (b) publiek bronmateriaal van de referentie-forecaster zelf, en (c) extern onderzoek naar zijn werkwijze en zijn publieke uitleg over spectra, swellsnelheid en getij.
 
 ---
 
-## 1. Achtergrond de referentie-forecaster (validatie van aannames in v3)
+## 1. Achtergrond referentie-forecaster (validatie van aannames in v3)
 
-- Volledige naam: **de referentie-forecaster**, opereert onder de bedrijfsnaam **[bedrijfsnaam verwijderd]** ([verwijderd]-rekening voor SMS-abonnementen).
-- Geen formele meteorologie-opleiding; **autodidact**, zoals hij zelf zegt in het interview op Tasha's Surfcamp: "Na twee keer voor niets naar de zee gereden te zijn voor het surfen, besloot ik dat dat moest veranderen. Ik dompelde mezelf onder in weerkaarten." Hij woont dichtbij KNMI in De Bilt — wat helpt voor toegang tot synoptische guidance, maar er is geen aanwijzing dat hij KNMI-medewerker is.
-- Bijgenaamd "de referentie-forecaster". Actief op Instagram ([verwijderd], ~11K volgers) en X ([verwijderd]).
-- Doet dit zeker sinds 2017 als publiekservice (zijn vroegste publieke spectrum-uitleg-post is uit juni 2017); de service is geprofessionaliseerd in een betaald SMS-abonnement (€7,50 proefmaand tot €79,50/jaar).
+- Geen formele meteorologie-opleiding; **autodidact** — hij vertelt zelf dat hij na een paar keer voor niets naar de zee te zijn gereden besloot zich onder te dompelen in weerkaarten. Hij woont dichtbij KNMI in De Bilt — wat helpt voor toegang tot synoptische guidance, maar er is geen aanwijzing dat hij KNMI-medewerker is.
+- Actief sinds zeker 2017 als publiekservice (zijn vroegste publieke spectrum-uitleg-post is uit juni 2017); de service is geprofessionaliseerd in een betaald SMS-abonnement.
 - Bijna dagelijks zelf in het water — hij is geen "modelletjes-lezer" maar iemand die zijn voorspelling bij elke sessie tegen de werkelijkheid checkt.
 
-Dit corrigeert een impliciete aanname in v3: referentie-forecaster' kracht zit niet in formele meteorologie maar in **17+ jaar gekalibreerde patroonherkenning** op de Noordzee. Voor het algoritme betekent dit: hard te repliceren is zijn calibrated intuition voor "deze setup gaat WEL/NIET surfbaar zijn", niet de fysica.
+Dit corrigeert een impliciete aanname in v3: de kracht van de referentie-forecaster zit niet in formele meteorologie maar in **17+ jaar gekalibreerde patroonherkenning** op de Noordzee. Voor het algoritme betekent dit: hard te repliceren is zijn calibrated intuition voor "deze setup gaat WEL/NIET surfbaar zijn", niet de fysica.
 
 ---
 
-## 2. Validatie van referentie-forecaster' data-stack via de referentie-forecaster/weerlinks
+## 2. Validatie van de data-stack van de referentie-forecaster
 
 De v3-aannames over zijn stack zijn voor het grootste deel correct, hier de bevestiging plus enkele aanvullingen:
 
-**Forecast-modellen (alle gelinkt vanaf de referentie-forecaster/weerlinks):**
-- **KNMI guidance modelbeoordeling** — `knmi.nl/waarschuwingen_en_verwachtingen/extra/guidance_modelbeoordeling.html`. Dit is geen ruw modelproduct maar de KNMI-meteoroloog die zélf de modellen tegen elkaar afweegt. referentie-forecaster gebruikt dus deels **menselijke synthese als input** — iets dat ons algoritme niet 1-op-1 kan repliceren.
+**Forecast-modellen (alle gelinkt vanaf zijn publieke weerlinks-pagina):**
+- **KNMI guidance modelbeoordeling** — `knmi.nl/waarschuwingen_en_verwachtingen/extra/guidance_modelbeoordeling.html`. Dit is geen ruw modelproduct maar de KNMI-meteoroloog die zélf de modellen tegen elkaar afweegt. Hij gebruikt dus deels **menselijke synthese als input** — iets dat ons algoritme niet 1-op-1 kan repliceren.
 - **GFS windkaarten via meteociel.com** (Franse hosting), niet via NOAA direct.
 - **Harmonie via weerplaza.nl/weerkaarten/harmonie/** (niet KNMI direct).
 - **ECMWF pluim via weerplaza** (ensemble-pluim met spread, dus modelonzekerheid is expliciet in zijn werkproces).
-- **UKMO via wetterzentrale.de en zijn eigen `/surf/ukmo/`** met onder andere het +144u-prognoseplaatje.
+- **UKMO via wetterzentrale.de en zijn eigen UKMO-pagina** met onder andere het +144u-prognoseplaatje.
 - **DWD golfhoogtes** (Duitse weerdienst).
 - **Ocean Prediction NOAA** voor synoptische context Atlantic.
 
-**Live boeispectra (de referentie-forecaster/surf/spectra bevestigt v3 exact):**
+**Live boeispectra (zijn spectra-pagina bevestigt v3 exact):**
 A12, K13, J6, MUN1 (IJmuiden), **IJG1 (IJgeul) voor Zandvoort/Noordwijk/Scheveningen**, EPL/EPL3 (Europlatform) voor HvH/Maasvlakte, E131 + DWE1 (Maasvlakte), SGAT (Schulpengat) voor Callantsoog/Petten, SCHS (Schouwenbank) + DEUR/DELO (Deurloo oost) voor België.
 
 Aanvulling op v3: de **Belgische boeien DEUR/DELO/SCHS** en het Vlaams Meetnet (`meetnetvlaamsebanken.be`) zijn explicieter dan v3 doet vermoeden — voor zuid/zuidwest swells zijn die zijn primaire kustverificatie.
@@ -38,18 +36,18 @@ Aanvulling op v3: de **Belgische boeien DEUR/DELO/SCHS** en het Vlaams Meetnet (
 
 **Wind live:** RWS windmeting (`waterinfo.rws.nl/publiek/wind/`) en, opvallend laagdrempelig, **Teletekst 707**.
 
-**Webcams:** zijn eigen `/surf/webcams/` set.
+**Webcams:** zijn eigen webcam-set.
 
 ---
 
-## 3. referentie-forecaster' eigen uitleg over het spectrum (publieke artikelen op de referentie-forecaster)
+## 3. Eigen uitleg over het spectrum (publieke artikelen van de referentie-forecaster)
 
-Op `/surf/surfweer-dinsdag-13-juni-2017/` legt hij het zelf uit. Cruciale punten voor ons algoritme:
+In een publieke uitleg-post uit juni 2017 legt hij het zelf uit. Cruciale punten voor ons algoritme:
 
 1. **Spectrum = ~500 cosinusgolven**, elk met eigen frequentie en amplitude. De z-as (kleur) toont energie per cosinus. De grafiek leest hij als een tijd-frequentie-energie veld: x-as = uur, y-as = frequentie in mHz, kleur = energiedichtheid.
 2. Conversie expliciet bevestigd: **periode (s) = 1 / (mHz × 0,001)** of korter `1000/mHz`. Dus 200 mHz = 5 s, 150 mHz = 6,66 s, 100 mHz = 10 s, 60 mHz = 18 s.
 3. **Groundswell-amplificatie**: "hoe hoger de golfperiode, hoe groter het effect... bij 10s een factor 2 ten opzichte van wat de boei meet, bij 5s 1-op-1." Dit is een **shoaling-correctie** die we expliciet kunnen meenemen: een 1m boei-meting bij 10s = ~2m op de strandbank, een 1m boei bij 5s = ~1m strand. Open-Meteo Marine geeft `wave_height` op kustpunt; voor offshore boeien (A12, K13) moet je dus opschalen met deze factor.
-4. **Swell-aankomsttijd berekening** (referentie-forecaster zelf): groepssnelheid in diep water ≈ `1,56 × T` m/s, hij zegt: "10 s = 31 kn = 57 km/u; A12 ligt ~570 km, dus 10 uur lead time. Bij 6-8 s bijna verdubbeling." Voor het algoritme: dit is een eenvoudige feature `time_to_coast = afstand_km / (1,56 × T × 3,6)`.
+4. **Swell-aankomsttijd berekening** (zijn eigen redenering): groepssnelheid in diep water ≈ `1,56 × T` m/s, hij zegt: "10 s = 31 kn = 57 km/u; A12 ligt ~570 km, dus 10 uur lead time. Bij 6-8 s bijna verdubbeling." Voor het algoritme: dit is een eenvoudige feature `time_to_coast = afstand_km / (1,56 × T × 3,6)`.
 5. **Noordzee-realiteit:** "Vanaf 5 s wordt het pas een beetje surfbaar; ideaal is 6,5-7 s omdat dan niet te veel energie verloren gaat over de zandbanken." Onze score-functie moet dus géén lineaire bonus voor periode geven — er is een **optimumcurve rond 7 s** voor windswell, met een aparte premium voor 10s+ groundswell (zeldzaam).
 6. **Wind versus groundswell-regimes:** "W/ZW-wind → windswell; N/NW-wind → groundswell-kans." Plus de bizar-zeldzame Barentszzee-swell van 18s+ die via de Noordpoolgrens tot in HvH komt (relevant voor T1-detectie maar zeldzaam genoeg om als rariteit te behandelen).
 
@@ -59,13 +57,13 @@ Dit is rijker dan v3's tabel en versterkt vooral §1.2: het algoritme moet **sho
 
 ## 4. Decompositie van de SMS van di 19 mei 2026 (voor woensdag 20 mei)
 
-### 4.1 Welke databronnen heeft referentie-forecaster geraadpleegd?
+### 4.1 Welke databronnen heeft de referentie-forecaster geraadpleegd?
 
 Reverse-engineering op woordkeuze:
 
 - **"Na het buienlijntje van 10u"** — KNMI Harmonie buien-radar/precip voorspelling, en zichtbaar als convergentielijn op KNMI guidance. Mogelijk ook DWD wave/wind charts.
 - **"Wind meer WZW in Z-H en Zeeland"** — Harmonie 10m wind voor uur 10-15.
-- **"Vloedstroom vol inzetten" vanaf 15u** — astronomisch getij Scheveningen/IJmuiden. referentie-forecaster' tij-redenering volgt strikt het schema "vloed = waterstroom naar NO, eb = waterstroom naar ZW". Hoogwater Scheveningen ≈ 18:30-19:00, dus van ~15u vloedfase opgaand naar HW = stroming maximaal richting NO.
+- **"Vloedstroom vol inzetten" vanaf 15u** — astronomisch getij Scheveningen/IJmuiden. Zijn tij-redenering volgt strikt het schema "vloed = waterstroom naar NO, eb = waterstroom naar ZW". Hoogwater Scheveningen ≈ 18:30-19:00, dus van ~15u vloedfase opgaand naar HW = stroming maximaal richting NO.
 - **"BE komt het dan juist binnen, beste lijntjes tot 0,8m hoog van 14-17u"** — direct gelezen uit Westhinder/DEUR boei prognose + DWD golfkaart. De zin "komt binnen" verraadt dat hij weet wanneer de swell de kust raakt: zuidwest fetch → BE eerst.
 - **"Domburg 12-15u, uur 14-15:30u het hoogst"** — astronomisch getij Westkapelle (zijn standaard) + golf-piek-uur uit DWD/Open-Meteo Marine type forecast.
 - **"Late avond 20:30-21:30u wel nog leuk uurtje 1m hoogte"** — getij Domburg cyclus tweede laagwater-window én aanhoudende zuid-swell.
@@ -113,7 +111,7 @@ Lexicaal patroon (consistent met v3 §1.5):
 
 ### 4.4 "Windhoogte" = pure wind sea
 
-Donderdag: "**Swell nihil, windhoogte is 20cm**". Dit bevestigt v3 §1.2 ondubbelzinnig: referentie-forecaster splitst expliciet de totale Hm0 in een **swell-component** (langere periode, propagatie van elders) en een **windhoogte/windgolf-component** (lokaal gegenereerd, korte periode). 20cm windhoogte = wind sea Hm0 ~0,2m bij vermoedelijk 3-4s = "rimpelsurf". Dit is de operationele definitie voor onze `wind_wave_height` vs `swell_wave_height` splitsing van Open-Meteo.
+Donderdag: "**Swell nihil, windhoogte is 20cm**". Dit bevestigt v3 §1.2 ondubbelzinnig: de referentie-forecaster splitst expliciet de totale Hm0 in een **swell-component** (langere periode, propagatie van elders) en een **windhoogte/windgolf-component** (lokaal gegenereerd, korte periode). 20cm windhoogte = wind sea Hm0 ~0,2m bij vermoedelijk 3-4s = "rimpelsurf". Dit is de operationele definitie voor onze `wind_wave_height` vs `swell_wave_height` splitsing van Open-Meteo.
 
 ### 4.5 "Vloedstroom" — impact op surfbaarheid
 
@@ -134,7 +132,7 @@ Beaufort-conversie (v3 Appendix B):
 Voor surfability:
 - 5 bft uit ZW (onshore voor Noordwijk, beach normal ~285° dus 225° komt schuin uit ZZW = onshore-sidesonshore): produceert windgolven en chop, niet ideaal voor shortboard maar wel rideable; "longboarden" is letterlijk dat.
 - 4 bft uit ZW: drempel waarop het cleaner wordt en swell de overhand kan krijgen over windhash.
-- referentie-forecaster kiest **20-21:30u** als sweetspot voor windafname met restant swell — dat is exact het Type 3 wind-dip patroon uit v3 §1.4 maar zonder echte synoptische trigger: het is gewoon **diurnal wind decay** (zonsondergang ≈ 21:38 op 20 mei).
+- Hij kiest **20-21:30u** als sweetspot voor windafname met restant swell — dat is exact het Type 3 wind-dip patroon uit v3 §1.4 maar zonder echte synoptische trigger: het is gewoon **diurnal wind decay** (zonsondergang ≈ 21:38 op 20 mei).
 
 ---
 
@@ -162,7 +160,7 @@ De **vier-uur stilte tussen 16:00 en 19:30** is verklaard door: (a) 16-18u zit d
 Dit is een **regio-effect + kust-oriëntatie**:
 
 1. **Kustoriëntatie**: Ouddorp ligt op de zuidwest-noordoost as met openheid naar het ZW, maar het is **schuin op de zuid-swell**. Een swell die echt uit het zuiden komt scheert grotendeels langs de kust. Noordwijk ligt op de zuid-noord as (open naar het W) — een WZW-swell raakt Noordwijk loodrechter.
-2. **Vlaamse banken** (v3 §1.3): zuid-zwell wordt door Vlaamse banken gedempt naarmate het noordwaarts trekt — maar omdat dit WZW windswell is met korte periode (~6-7s), passeert het juist makkelijk over die banken (referentie-forecaster zegt zelf in v3 21-8 SMS: "kortere interval komt makkelijk over de Vlaamse banken").
+2. **Vlaamse banken** (v3 §1.3): zuid-zwell wordt door Vlaamse banken gedempt naarmate het noordwaarts trekt — maar omdat dit WZW windswell is met korte periode (~6-7s), passeert het juist makkelijk over die banken (de referentie-forecaster zegt zelf in v3 21-8 SMS: "kortere interval komt makkelijk over de Vlaamse banken").
 3. **Z-H fetch lengte**: de wind die naar WZW draait in Z-H/Zeeland blaast met een lange fetch náár het noorden over open zee — Noordwijk vangt die lokale-generatie windswell direct op, Ouddorp staat in de luwte achter de Brouwersdam-oriëntatie.
 4. **Refractie rond Hoek van Holland-Maasvlakte**: de Maasvlakte werkt voor Ouddorp/Goeree zoals IJmuiden voor Noordwijk: ZW swell die de hoek om moet refracteren verliest energie. Vandaar "vloed 16-18u draait wel wat binnen" = met vloed komt er stroming-geïnduceerde golfdraaiing die het tijdelijk werkbaar maakt.
 
@@ -172,7 +170,7 @@ Diffractie rond Texel en de Wadden: een swell uit het Z/ZW moet ~90° om de hoek
 
 ### 5.4 Tide-windows per spot — waarom drie windows op Wijk aan Zee
 
-referentie-forecaster noemt voor Wijk aan Zee: **10-12:30** EN **15-17** EN **18-20:30**. Dat is uitzonderlijk: drie windows op één dag. Reconstructie:
+Voor Wijk aan Zee noemt hij: **10-12:30** EN **15-17** EN **18-20:30**. Dat is uitzonderlijk: drie windows op één dag. Reconstructie:
 
 - **10-12:30**: pre-buienlijn, wind nog niet vol WZW, low water rond IJmuiden ~15u (=na HW 06u → laagwater ~12-13u rond IJmuiden zuidpier door fase-verschil met Noordwijk). Window = "afgaand tij" wat gunstig is voor Wijk omdat de zandbanken dan op de juiste diepte komen voor breaking.
 - **15-17**: in deze fase is het **net na laagwater** = opkomend, en wind is op zijn sterkst (5bft) maar dat genereert lokale windswell die op de Wijk-zandbanken breekt. "Iets hoger 15-17u en minder wind" suggereert hij ziet hier ook een mini-wind-dip in de Harmonie.
@@ -186,7 +184,7 @@ Geen verre groundswell uit het zuiden (die bestaat in NL nauwelijks omdat de fet
 
 ---
 
-## 6. Noordwijk concreet voor woensdag 20 mei 2026 — alle claims van referentie-forecaster
+## 6. Noordwijk concreet voor woensdag 20 mei 2026 — alle claims uit de SMS
 
 ### 6.1 Expliciete claims uit de SMS
 
@@ -200,7 +198,7 @@ Geen verre groundswell uit het zuiden (die bestaat in NL nauwelijks omdat de fet
 
 ### 6.2 Impliciete claims te reconstrueren
 
-- **Tij Noordwijk** (uit Windfinder voor 20 mei 2026): LW 02:13, HW 06:23 (2,09m), LW 14:49 (0,14m), HW 19:01 (1,73m), LW 23:31. referentie-forecaster' windows vallen exact rond LW + flank (14-16u) en HW + flank (19:00-21:00).
+- **Tij Noordwijk** (uit Windfinder voor 20 mei 2026): LW 02:13, HW 06:23 (2,09m), LW 14:49 (0,14m), HW 19:01 (1,73m), LW 23:31. De windows vallen exact rond LW + flank (14-16u) en HW + flank (19:00-21:00).
 - **Refractie**: WZW swell = ~245° aankomst. Beach normal Noordwijk ≈ 285°. Offset 40° = goede aanvalshoek, geen pier-blokkering (IJmuiden zit ten noorden, blokkeert alleen NNO).
 - **Wind speed**: 5 bft ZW = ~19 kn, side-onshore.
 - **Periode**: niet expliciet maar uit Schev 11-13u 0,9m → 13-15u 1,1m piek profiel, plus zijn taalgebruik "niet echt shortboarden": dat zegt periode ~5-6s in middag, 6-7s in late avond als windswell volwassener is.
@@ -212,13 +210,13 @@ Geen verre groundswell uit het zuiden (die bestaat in NL nauwelijks omdat de fet
 
 ### 6.3 Totaal-conclusie: is woensdag een goede dag voor Noordwijk?
 
-**Matig-tot-OK, geen ALERT-waardige dag.** referentie-forecaster noemt het als rideable maar zonder enthousiasme: "kort moment om te surfen", "longboarden", "1m hoogte (niet echt shortboarden)". Vergelijk met zijn high-alert taal in de v3 SMS-set ("forse N-swell", "echte groundswell door windgolven heen") — die ontbreekt volledig hier. In ons score-systeem zou dit een **score 55-65 in twee 1,5-2u windows** moeten zijn, type T5 met zwak T3, en het systeem zou hierop **GEEN alert** moeten sturen, alleen meenemen in digest.
+**Matig-tot-OK, geen ALERT-waardige dag.** De referentie-forecaster noemt het als rideable maar zonder enthousiasme: "kort moment om te surfen", "longboarden", "1m hoogte (niet echt shortboarden)". Vergelijk met zijn high-alert taal in de v3 SMS-set ("forse N-swell", "echte groundswell door windgolven heen") — die ontbreekt volledig hier. In ons score-systeem zou dit een **score 55-65 in twee 1,5-2u windows** moeten zijn, type T5 met zwak T3, en het systeem zou hierop **GEEN alert** moeten sturen, alleen meenemen in digest.
 
-De interessante test voor het algoritme: de dag is voor de meeste dataservices "ok windgolfje, longboard mogelijk" maar referentie-forecaster' meerwaarde zit in (a) tij-window-precisie (14-16u i.p.v. heel de middag) en (b) de avond-window-restoratie (19:30-21u) die veel diensten missen. Het algoritme moet deze twee specifieke windows kunnen genereren, niet een blob 14-21u.
+De interessante test voor het algoritme: de dag is voor de meeste dataservices "ok windgolfje, longboard mogelijk" maar de meerwaarde van de referentie-forecaster zit in (a) tij-window-precisie (14-16u i.p.v. heel de middag) en (b) de avond-window-restoratie (19:30-21u) die veel diensten missen. Het algoritme moet deze twee specifieke windows kunnen genereren, niet een blob 14-21u.
 
 ---
 
-## 7. Tabel: Noordwijk Woensdag 20 mei 2026 volgens referentie-forecaster
+## 7. Tabel: Noordwijk Woensdag 20 mei 2026 volgens de referentie-forecaster
 
 | Parameter | Ochtend (06-10u) | Middag (10-14u) | Window 1 (14-16u) | Tussenfase (16-19:30u) | Window 2 (19:30-21u) | Late avond (21-23u) |
 |---|---|---|---|---|---|---|
@@ -234,7 +232,7 @@ De interessante test voor het algoritme: de dag is voor de meeste dataservices "
 | Tij phase (Nwijk) | HW 06:23 → afgaand | afgaand naar LW | LW 14:49 + opkomend | opkomend, vloedstroom vol | HW 19:01 + kentering naar eb | afgaand naar LW |
 | Vloedstroom (langs kust) | zwak Z-NZ | zwak N | matig N (nog niet vol) | vol N (max ~17u) | kentering, neutraal | Z |
 | Refractie/blokkering | n.v.t. | geen | geen (WZW kan aan) | geen | geen | n.v.t. |
-| Surfability label referentie-forecaster | (n.v.t., niet genoemd) | (n.v.t.) | "genoeg hoogte" rideable | te veel wind/stroming impliciet | "longboarden prima" | (afname) |
+| Surfability label | (n.v.t., niet genoemd) | (n.v.t.) | "genoeg hoogte" rideable | te veel wind/stroming impliciet | "longboarden prima" | (afname) |
 | Bordkeuze | n.v.t. | n.v.t. | shortboard mogelijk maar onschoon | shortboard nee | **longboard ideaal** | longboard |
 | Trigger-type (v3) | n.v.t. | n.v.t. | T5 (zwak) + T3 | géén | T3 + T5 | n.v.t. |
 | Aanbevolen window? | nee | nee | **JA — kort 14-16u** | nee | **JA — 19:30-21u** | nee |
@@ -245,19 +243,6 @@ De interessante test voor het algoritme: de dag is voor de meeste dataservices "
 
 ## Bronnen
 
-- [de referentie-forecaster/](https://de referentie-forecaster/)
-- [de referentie-forecaster/weerlinks/](https://de referentie-forecaster/weerlinks/)
-- [de referentie-forecaster/sms/](https://de referentie-forecaster/sms/)
-- [de referentie-forecaster/surf/spots/](https://de referentie-forecaster/surf/spots/)
-- [de referentie-forecaster/surf/spectra/](https://de referentie-forecaster/surf/spectra/)
-- [de referentie-forecaster/surf/ukmo/](https://de referentie-forecaster/surf/ukmo/)
-- [Surfweer dinsdag 13 juni 2017 — referentie-forecaster' spectrum-uitleg](https://de referentie-forecaster/surf/surfweer-dinsdag-13-juni-2017/)
-- [Surfweer eerste weekend van oktober 2023](https://de referentie-forecaster/surf/surfweer-eerste-weekend-van-oktober-2023/)
-- [Een weekje met zomer (wind) swell](https://de referentie-forecaster/surf/weekje-zomer-wind-swell/)
-- [referentie-forecaster: de referentie-forecaster — Tasha's Surfcamp](https://[bron verwijderd]/referentie-forecaster-de-piet-paulusma-van-het-surfen)
-- [Instagram [verwijderd] (de referentie-forecaster)](https://www.[verwijderd]/?hl=nl)
-- [LinkedIn de referentie-forecaster / [bedrijfsnaam verwijderd]](https://nl.[verwijderd])
-- [Surfana kennisbank — surf-voorspellingen](https://www.surfana.com/kennisbank/golfsurf-weer/surf-voorspellingen/)
 - [Windfinder getij Noordwijk aan Zee](https://nl.windfinder.com/tide/noordwijk_aan_zee)
 - [RWS Getij / Waterinfo](https://getij.rws.nl/)
 - [Ridersguide — Scoren in de Noordzee](https://ridersguide.nl/scoren-in-de-noordzee/)
@@ -266,4 +251,4 @@ De interessante test voor het algoritme: de dag is voor de meeste dataservices "
 
 ---
 
-**Rapport-samenvatting voor je benchmark:** referentie-forecaster' methodiek is voor 80% te reconstrueren uit publieke bronnen (zijn weerlinks-pagina + spectra-pagina + 2017-uitlegpost), 15% uit ervaring/intuïtie die we niet kunnen kopiëren (jarenlange calibratie), en 5% uit KNMI menselijke guidance die hij leest. Voor de woensdag-case is zijn verwachting bewust onspectaculair: een **matige longboard-dag met twee precieze windows (14-16u + 19:30-21u)**, gedreven door tij-flank + diurnal wind decay, niet door een alert-waardig swell-event. Dit is de ideale benchmark om te checken of jouw systeem (a) windows met de juiste granulariteit produceert, (b) terecht GEEN alert genereert, en (c) de wind-sea vs swell decompositie correct uitvoert (impliciet ~70% wind sea, ~30% swell in deze setup).
+**Rapport-samenvatting voor je benchmark:** de methodiek van de referentie-forecaster is voor 80% te reconstrueren uit publieke bronnen (zijn weerlinks-pagina + spectra-pagina + 2017-uitlegpost), 15% uit ervaring/intuïtie die we niet kunnen kopiëren (jarenlange calibratie), en 5% uit KNMI menselijke guidance die hij leest. Voor de woensdag-case is zijn verwachting bewust onspectaculair: een **matige longboard-dag met twee precieze windows (14-16u + 19:30-21u)**, gedreven door tij-flank + diurnal wind decay, niet door een alert-waardig swell-event. Dit is de ideale benchmark om te checken of jouw systeem (a) windows met de juiste granulariteit produceert, (b) terecht GEEN alert genereert, en (c) de wind-sea vs swell decompositie correct uitvoert (impliciet ~70% wind sea, ~30% swell in deze setup).

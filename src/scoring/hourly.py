@@ -175,7 +175,7 @@ def score_hour(state: HourState, context: Optional[dict] = None) -> ScoreBreakdo
         )
 
     # Offshore-context vóór de golf-component: aflandige grooming laat de
-    # windzee vollediger meetellen in de effectieve hoogte (referentie-forecaster' clean windlijn).
+    # windzee vollediger meetellen in de effectieve hoogte (clean windlijn van de referentie-forecaster).
     cos_offshore = _wind_direction_cosine(state.wind.direction_deg, NOORDWIJK.beach_normal_deg)
     golf_score = score_golf_component(state.wave_spectrum, cos_offshore, state.wind.speed_kn)
 

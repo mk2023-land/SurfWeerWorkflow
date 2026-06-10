@@ -122,7 +122,7 @@ def has_groundswell_through_windsea(spectrum: WaveSpectrum) -> bool:
     """
     Controleer of er een groundswell door windgolven heen komt.
 
-    Dit is het "perfecte voorspellingsmoment" dat referentie-forecaster noemt:
+    Dit is het "perfecte voorspellingsmoment" dat de referentie-forecaster noemt:
     groundswell op 10s (100mhz) + wind sea op 5s (200mhz) zijn
     twee aparte energiepieken.
 

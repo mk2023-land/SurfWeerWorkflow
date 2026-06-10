@@ -3,7 +3,7 @@ SMS generator module met Claude Sonnet / Haiku.
 
 Bouwt structured-input voor Claude in fysische eenheden (meters, knopen, graden) —
 NOOIT scores als golfhoogte/wind doorgeven, dat heeft eerder hallucinaties veroorzaakt
-(score 51 werd "51m golfhoogte"). Stijl-template: referentie-forecaster van de referentie-forecaster.
+(score 51 werd "51m golfhoogte"). Stijl-template: de referentie-forecaster.
 
 Digest is multi-day (vandaag + 3 dagen vooruit) en bevat per dag de beste window,
 piek-condities, tij-richting (opkomend/afgaand) en eerstvolgende hoog/laag, plus

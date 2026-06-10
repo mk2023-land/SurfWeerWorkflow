@@ -712,7 +712,7 @@ class SurfAlertSystem:
         # zodra Claude niet de tekst leverde (geen key, API-fout, credits op, of
         # 3× door de validator afgekeurd). De gebruiker wil dit expliciet horen —
         # we prefixen een regel ZODAT het via het normale SMS-kanaal binnenkomt.
-        # Ná de format-validatie hierboven, want die eist een 'Nwijk'/'Surfweer'-start.
+        # Ná de format-validatie hierboven, want die eist een 'Nwijk'/'Surf-update'-start.
         fallback_reason = getattr(self.sms_generator, 'last_fallback_reason', None)
         if fallback_reason:
             reason_txt = fallback_reason_label(fallback_reason)

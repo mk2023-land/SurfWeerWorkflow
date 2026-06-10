@@ -162,7 +162,7 @@ class ValidationRunner:
         print("=" * 80 + "\n")
 
 
-# Canonieke validatieset — condities uit referentie-forecaster' referentie-assessments
+# Canonieke validatieset — condities uit de referentie-forecaster referentie-assessments
 # (gedocumenteerd), expected-ranges gekalibreerd op de huidige scoring-engine.
 # Spiegelt de fixture-cases in tests/test_scoring.py.
 VALIDATION_SET = [
