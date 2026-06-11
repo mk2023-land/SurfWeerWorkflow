@@ -130,7 +130,8 @@ class SurfAlertSystem:
                 openmeteo_data = await fetch_all_openmeteo_data(NOORDWIJK.lat, NOORDWIJK.lon)
                 run_log.openmeteo_status = 'ok' if openmeteo_data else 'partial'
             except Exception as e:
-                logger.error(f"Failed to fetch Open-Meteo data: {e}")
+                # type meeloggen — httpx-timeouts hebben vaak lege str(e).
+                logger.error(f"Failed to fetch Open-Meteo data: {type(e).__name__}: {e}")
                 openmeteo_data = None
                 run_log.openmeteo_status = 'failed'
 

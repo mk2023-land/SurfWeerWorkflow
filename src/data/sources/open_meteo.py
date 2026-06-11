@@ -132,13 +132,16 @@ class OpenMeteoClient:
 
     def __init__(self):
         self.timeout = 30.0
-        self.max_retries = 5
-        # Backoff in seconden tussen pogingen (4 gaps voor 5 pogingen).
-        # Open-Meteo 502/503-storingen duren regelmatig minuten — de oude
-        # exp-backoff (1-4s) viel historisch volledig binnen dezelfde
-        # outage-window (zie run 26453407698, 2026-05-26). Cron-runs zijn
-        # 6+ uur uit elkaar, dus ~8 min max-wachttijd is acceptabel.
-        self._retry_backoff_s = (30, 60, 120, 300)
+        self.max_retries = 3
+        # Backoff in seconden tussen pogingen (2 gaps voor 3 pogingen). Bewust
+        # BEGRENSD op ~2,5 min totaal: de oude config (5 retries, tot 300s
+        # backoff) liet een Open-Meteo-storing ~9-11 min hangen — tegen de
+        # 15-min job-cap aan, met een laat failure-signaal én een lege error
+        # (zie run 27335287216, 2026-06-11). Een korte blip wordt nog uitgereden;
+        # een langere outage faalt nu snel (timely failure-push) en wordt
+        # opgevangen door het volgende cron-slot (4u later) i.p.v. de run vast
+        # te zetten. Worst case ≈ 3×30s timeout + 15s + 30s ≈ 2,25 min.
+        self._retry_backoff_s = (15, 30, 60)
         self.base_url = API_ENDPOINTS['open_meteo_forecast']
         self.marine_url = API_ENDPOINTS['open_meteo_marine']
         self.archive_url = API_ENDPOINTS['open_meteo_archive']
@@ -176,9 +179,13 @@ class OpenMeteoClient:
                         )
                         raise
 
+                # Exception-TYPE meeloggen: httpx-timeouts/connect-errors hebben
+                # vaak een lege str(e), waardoor de fout anders onleesbaar is
+                # ("... failed: ").
                 logger.warning(
                     f"Open-Meteo request failed "
-                    f"(attempt {attempt + 1}/{self.max_retries}): {e}"
+                    f"(attempt {attempt + 1}/{self.max_retries}): "
+                    f"{type(e).__name__}: {e}"
                 )
 
                 if attempt == self.max_retries - 1:
