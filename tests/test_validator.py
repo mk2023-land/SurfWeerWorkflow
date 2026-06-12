@@ -41,6 +41,21 @@ class TestB8CompassExtraction:
         dirs = self.v._extract_compass_directions("ZOZ 1.4m groundswell")
         assert "ZOZ" in dirs
 
+    def test_gusts_allowed_not_flagged_as_hallucination(self):
+        """Regressie (12-06-2026): windvlagen ('vlagen tot 29kn') mogen NIET als
+        hallucinatie afgekeurd worden. wind_gusts_kn moet mee-mergen in
+        _collect_allowed_citations — anders kreeg de wind-check een lege gust-set
+        → elke gust-vermelding afgekeurd → 3× retry → nood-template bij wind."""
+        si = {"days": [{"_allowed_citations": {
+            "wind_speeds_kn": [17.0], "wind_gusts_kn": [29.0],
+            "wave_heights_m": [1.4], "wave_periods_s": [5.2]}}]}
+        allowed = self.v._collect_allowed_citations(si)
+        assert 29.0 in allowed["wind_gusts_kn"]
+        sms = ("Nwijk vr: 1,4m WZW 5,2s, 17kn W met vlagen tot 29kn.\n"
+               "Cam: surfweer.nl/webcams/noordwijk/")
+        res = self.v.validate_sms(sms, si)
+        assert not [i for i in res.issues if "Wind speed" in i], res.issues
+
     def test_dutch_word_zo_not_treated_as_compass(self):
         """'zo'/'no' mid-zin zijn Nederlandse woorden, geen kompas-codes ZO/NO.
         Regressie: de sanitizer sneed 'zo' uit echte digests ('nog onzeker zo

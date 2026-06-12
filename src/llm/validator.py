@@ -525,6 +525,12 @@ class SMSValidator:
             'wave_heights_m': set(),
             'wave_periods_s': set(),
             'wind_speeds_kn': set(),
+            # KRITISCH: gusts mee-mergen. Zonder deze key viel `wind_gusts_kn`
+            # uit de per-dag-citaties weg, waardoor de wind-check (die gusts
+            # expliciet toestaat, zie validate_sms) altijd een lege gust-set
+            # kreeg → elke "vlagen tot Xkn" werd als hallucinatie afgekeurd →
+            # 3× retry → nood-template bij winderig weer. (Bug-fix 12-06-2026.)
+            'wind_gusts_kn': set(),
             'wind_directions_compass': set(),
             'wave_directions_compass': set(),
             'times_hhmm': set(),
