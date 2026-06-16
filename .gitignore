@@ -101,7 +101,8 @@ data/training/
 # stale snapshots en (b) bereiken geleerde params de productie-cloud NOOIT
 # (config leest data/learned_params.json — zonder commit blijft die leeg → seeds).
 # Deze re-includes overrulen de data/*.json(l)-ignore hierboven (laatste match wint).
+# forecast_features (pairing) + learned_params (productie) MOETEN in git.
+# bias_log (~4MB) + boei-spectra blijven uit git wegens grootte/commit-frequentie
+# — die zijn durable via de 90d-artifact-upload in check.yml (recoverbaar).
 !data/forecast_features.jsonl
 !data/learned_params.json
-!data/bias_log.jsonl
-!data/buoy_spectra_history.jsonl

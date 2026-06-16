@@ -216,13 +216,12 @@ jobs:
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
           # Naast state+archief nu ook de leer-loop-data durable committen:
-          # forecast_features (verse per-dag-snapshots voor de pairing),
-          # learned_params (zodat geleerde calibratie de productie-cloud bereikt),
-          # bias_log + boei-spectra (long-term learning, niet meer cache-vluchtig).
+          # forecast_features (verse per-dag-snapshots voor de pairing) en
+          # learned_params (zodat geleerde calibratie de productie-cloud bereikt).
           # forecast_features verandert élke run → commit nu ~elke scheduled run.
+          # bias_log/boei-spectra NIET hier (te groot) — durable via artifact.
           for f in data/sms_archive data/state.json data/monthly_budget.json \
-                   data/forecast_features.jsonl data/learned_params.json \
-                   data/bias_log.jsonl data/buoy_spectra_history.jsonl; do
+                   data/forecast_features.jsonl data/learned_params.json; do
             [ -e "$f" ] && git add "$f"
           done
           if git diff --staged --quiet; then
