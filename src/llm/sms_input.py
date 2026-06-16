@@ -376,13 +376,18 @@ def _summarize_day(
     ]
     surfable_windows = [w for w in day_windows if w.kind == 'surfable']
     longboard_windows = [w for w in day_windows if w.kind == 'longboard']
+    marginal_windows = [w for w in day_windows if w.kind == 'marginal']
 
-    # Surfable wint van longboard als beide bestaan
+    # Surfable > longboard > marginal als kandidaat voor het "beste" venster.
+    # Marginaal als terugval zodat een dag met alléén klein-schone vensters
+    # toch een `best_window` krijgt (i.p.v. als "geen window" te verschijnen).
     chosen_window = None
     if surfable_windows:
         chosen_window = max(surfable_windows, key=lambda w: w.peak_score)
     elif longboard_windows:
         chosen_window = max(longboard_windows, key=lambda w: w.peak_score)
+    elif marginal_windows:
+        chosen_window = max(marginal_windows, key=lambda w: w.peak_score)
 
     # Alle "andere" windows van de dag (niet de chosen) — de referentie-forecaster noemt vaak
     # meerdere vensters op een dag ("14-16u of na 19:30u"). Door deze ook

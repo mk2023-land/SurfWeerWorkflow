@@ -270,14 +270,18 @@ def analyze_windows(
 
     surfable_threshold = SURF_THRESHOLDS['surfable']
     longboard_threshold = SURF_THRESHOLDS['longboard']
-    min_golf_longboard = SURF_THRESHOLDS['min_golf_longboard']
+    marginal_threshold = SURF_THRESHOLDS['marginal']
+    min_golf_marginal = SURF_THRESHOLDS['min_golf_marginal']
 
-    # Eén pass op de longboard-drempel levert de rijdbare spans. Een surfable-uur
-    # (≥60, golf ≥ min_golf_surfable=15) zit per definitie óók boven de
-    # longboard-drempel (≥42, golf ≥ min_golf_longboard=5), dus geen enkel
-    # surfbaar uur gaat verloren door alleen deze pass te draaien.
+    # Eén pass op de LAAGSTE tier (marginal). De `kind` volgt uit de piek:
+    # surfable ≥60, longboard ≥42, anders marginal. Zo komen ook de kleine
+    # schone vensters ("metertje, schone avond als de wind zakt") naar buiten
+    # die voorheen onder de longboard-drempel verdwenen. Eén surfable-/longboard-
+    # uur zit per definitie óók boven de marginal-drempel, dus geen rijdbaar uur
+    # gaat verloren. Vuile onshore-chop scoort door de wind/face-penalty onder
+    # de marginal-drempel en valt er vanzelf uit (geen ruis-vensters).
     clusters = cluster_consecutive_hours(
-        hourly_scores, min_score=longboard_threshold, min_golf=min_golf_longboard
+        hourly_scores, min_score=marginal_threshold, min_golf=min_golf_marginal
     )
 
     windows = []
@@ -287,7 +291,12 @@ def analyze_windows(
             if score.timestamp in triggers_dict:
                 cluster_triggers.update(triggers_dict[score.timestamp])
         peak_score = max(s.total_score for s in cluster)
-        kind = 'surfable' if peak_score >= surfable_threshold else 'longboard'
+        if peak_score >= surfable_threshold:
+            kind = 'surfable'
+        elif peak_score >= longboard_threshold:
+            kind = 'longboard'
+        else:
+            kind = 'marginal'
         windows.append(create_surf_window(
             scores=cluster,
             triggers=list(cluster_triggers),
@@ -296,9 +305,10 @@ def analyze_windows(
         ))
 
     n_surfable = sum(1 for w in windows if w.kind == 'surfable')
+    n_marginal = sum(1 for w in windows if w.kind == 'marginal')
     logger.info(
         f"Found {len(windows)} windows ({n_surfable} surfable, "
-        f"{len(windows) - n_surfable} longboard-only)"
+        f"{len(windows) - n_surfable - n_marginal} longboard, {n_marginal} marginal)"
     )
     return windows
 

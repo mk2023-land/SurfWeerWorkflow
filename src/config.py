@@ -150,12 +150,22 @@ SCORING_WEIGHTS = {
 SURF_THRESHOLDS = {
     'surfable': 60,    # shortboard, voor alert-candidate
     'longboard': 42,   # longboard-only, alleen voor digest
+    # 'marginal' = derde tier ONDER longboard: klein-maar-rijdbaar / schoon
+    # rimpeltje (de "metertje, schone avond als de wind zakt"-momenten die de
+    # referentie-forecaster wél als venster benoemt, maar die wij voorheen als
+    # 'flat' wegstreepten). NB: vuile onshore-chop scoort sowieso láger (de
+    # wind/face-penalty drukt 'm onder ~20), dus deze drempel laat vanzelf
+    # alléén de relatief schone kleine vensters toe. Nooit alert-waardig
+    # (is_alertworthy eist kind=='surfable'). SEED-waarden tot N≥12 → daarna
+    # data-driven fitten via scripts/calibrate.py (12-06-2026).
+    'marginal': 20,
     # Minimum golf_score (de wave-energie zelf, niet de combo-score) per kind.
     # Voorkomt de bug waarbij een 0,16m wave-uur op score 60 kwam door perfecte
     # wind + tij + richting bonussen. Een uur is alleen surfbaar als ER ÉCHT
     # GOLVEN ZIJN, niet omdat de omgeving toevallig perfect is.
     'min_golf_surfable': 15,   # ~ 1,0m wave bij 6s periode
     'min_golf_longboard': 5,   # ~ 0,5-0,6m wave bij 5s periode
+    'min_golf_marginal': 3,    # ~ 0,4m — wel écht een golfje, geen rimpel (seed)
 }
 
 # Fysieke minimums waaronder NIETS surfbaar is, ongeacht score.

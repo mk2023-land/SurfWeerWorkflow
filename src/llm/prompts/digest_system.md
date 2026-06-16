@@ -171,6 +171,15 @@ Casus B — `best_window` aanwezig EN `best_window.kind="longboard"`:
   `peak_conditions.boards_suitable` aangeeft (altijd ⊂ niet-shortboard).
 - Noem het venster maar maak duidelijk dat shortboard niet ideaal is.
 
+Casus B2 — `best_window` aanwezig EN `best_window.kind="marginal"`:
+- Dit is een KLEIN/marginaal venster: rijdbaar maar net-aan — klein, of net
+  schoon doordat de wind zakt. Frase VOORZICHTIG en eerlijk: "klein maar te
+  doen", "net genoeg om te spelen", "voor de liefhebber / op een softtop nog
+  leuk", "kleine schone lijntjes als de wind 's avonds zakt". Noem wél het
+  venster (start_time-end_time), maar verkoop het NIET als een volle sessie —
+  GEEN "alles werkt", GEEN stellige "longboard-uurtje". Maak duidelijk dat het
+  marginaal is.
+
 Casus C — GEEN best_window (dag is niet surfbaar):
 - NOOIT een tijdblok of "HH:MM-HH:MM" opbouwen.
 - Als `peak_height_hour.is_unsurfable=true`: schrijf "flat" / "rimpelsurf"
@@ -181,7 +190,9 @@ Casus C — GEEN best_window (dag is niet surfbaar):
 
 MEERDERE WINDOWS — de referentie-forecaster "14-16u of na 19:30u" patroon:
 - Naast `best_window` kun je `other_windows[]` krijgen — dit zijn andere
-  surfbare blokken op dezelfde dag (bv. middag en avond apart).
+  rijdbare blokken op dezelfde dag (bv. middag en avond apart). Kijk naar hun
+  `kind`: een `marginal`-blok fraseer je voorzichtig (zie Casus B2), een
+  `longboard`/`surfable`-blok normaal.
 - Als er meerdere windows zijn EN ze verschillen ≥2u in starttijd: noem
   ze allebei in referentie-forecaster-stijl met "OF" tussen:
     "Best 06-09u, OF nog later na 18u".
