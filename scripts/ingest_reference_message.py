@@ -315,6 +315,62 @@ def _sync_private_archive(msg_date_iso: str) -> None:
               f"data staat lokaal in {repo}.", file=sys.stderr)
 
 
+def _auto_calibrate_and_publish() -> None:
+    """Na het maken van nieuwe paren: draai de SELF-GATED calibratie
+    (scripts/calibrate.py --write). Die schrijft `data/learned_params.json`
+    ALLEEN als de component-fit op leave-one-out generaliseert (LOO > seed) én er
+    genoeg score_basis-paren zijn — anders blijven de seed-waarden staan. Wordt
+    learned_params daadwerkelijk gewijzigd, dan committen + pushen we het naar de
+    PUBLIEKE hoofdrepo zodat de cloud-digest de geleerde params oppikt.
+
+    Best-effort: faalt de ingest NOOIT. Skip met REF_NO_CALIBRATE=1 (bv. tests).
+    """
+    if os.environ.get('REF_NO_CALIBRATE'):
+        return
+    repo = _REPO_ROOT
+    learned = repo / 'data' / 'learned_params.json'
+    calibrate = repo / 'scripts' / 'calibrate.py'
+    if not calibrate.exists():
+        return
+    before = learned.read_text(encoding='utf-8') if learned.exists() else None
+    try:
+        r = subprocess.run(
+            [sys.executable, str(calibrate), '--write'],
+            cwd=str(repo), capture_output=True, text=True, timeout=180,
+        )
+        for line in r.stdout.splitlines():
+            if any(k in line for k in ('HUIDIGE overeenkomst', 'LEAVE-ONE-OUT',
+                                       'Geschreven naar', 'NIET weggeschreven')):
+                print(f"  ⚙ calib: {line.strip()}")
+    except (subprocess.SubprocessError, OSError) as e:
+        print(f"↪ Auto-calibratie overgeslagen ({type(e).__name__}).", file=sys.stderr)
+        return
+    after = learned.read_text(encoding='utf-8') if learned.exists() else None
+    if before == after:
+        return  # niks gewijzigd → seeds blijven, niets te pushen
+
+    if not (repo / '.git').is_dir():
+        return
+
+    def _git(*args):
+        return subprocess.run(['git', '-C', str(repo), *args],
+                              capture_output=True, text=True, timeout=60)
+    try:
+        _git('add', 'data/learned_params.json')
+        if _git('diff', '--staged', '--quiet').returncode == 0:
+            return
+        _git('commit', '-m', 'Leer-loop: learned_params bijgewerkt (auto-calibratie na ingest)')
+        for _ in range(3):
+            pulled = _git('pull', '--rebase', '--autostash', 'origin', 'main').returncode == 0
+            if pulled and _git('push').returncode == 0:
+                print("↪ learned_params gecommit + gepusht → cloud-digest pikt de geleerde params op.")
+                return
+        print("↪ learned_params lokaal gecommit; push faalde (later handmatig pushen).",
+              file=sys.stderr)
+    except (subprocess.SubprocessError, OSError) as e:
+        print(f"↪ learned_params commit/push overgeslagen ({type(e).__name__}).", file=sys.stderr)
+
+
 def main():
     parser = argparse.ArgumentParser(description='Ingest forecaster-referentiebericht (SMS) in privé-archief')
     parser.add_argument(
@@ -429,6 +485,11 @@ def main():
 
     # Maak de leer-loop-data durable: commit + push naar de private archive-repo.
     _sync_private_archive(msg_date.isoformat())
+
+    # Sluit de leer-loop: zijn er nieuwe paren, draai dan de self-gated calibratie
+    # en publiceer learned_params alleen als de fit generaliseert (geen overfit).
+    if made_pairs:
+        _auto_calibrate_and_publish()
     return 0
 
 
