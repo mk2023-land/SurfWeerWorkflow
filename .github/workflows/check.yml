@@ -167,6 +167,22 @@ jobs:
           path: data/surf_alert.log
           retention-days: 30
 
+      # Leer-loop-data (forecast-snapshots + bias/boei-historie) ook als artifact,
+      # zodat de cache-geaccumuleerde verse versie downloadbaar is (ook op
+      # workflow_dispatch, die de cache NIET saved/commit). Maakt de pairing op
+      # verse per-dag-snapshots mogelijk i.p.v. een stale lokale kopie.
+      - name: Upload leer-loop data
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: leerloop-data-${{ github.run_id }}
+          path: |
+            data/forecast_features.jsonl
+            data/bias_log.jsonl
+            data/buoy_spectra_history.jsonl
+          retention-days: 90
+          if-no-files-found: ignore
+
       # Save cache aan het einde, ook als eerdere steps faalden (if: always()),
       # maar NIET op manual workflow_dispatch runs — die zijn voor testing en
       # mogen de productie-cache (cooldowns, weekly counters, bias_log) niet
@@ -199,14 +215,21 @@ jobs:
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
-          for f in data/sms_archive data/state.json data/monthly_budget.json; do
+          # Naast state+archief nu ook de leer-loop-data durable committen:
+          # forecast_features (verse per-dag-snapshots voor de pairing),
+          # learned_params (zodat geleerde calibratie de productie-cloud bereikt),
+          # bias_log + boei-spectra (long-term learning, niet meer cache-vluchtig).
+          # forecast_features verandert élke run → commit nu ~elke scheduled run.
+          for f in data/sms_archive data/state.json data/monthly_budget.json \
+                   data/forecast_features.jsonl data/learned_params.json \
+                   data/bias_log.jsonl data/buoy_spectra_history.jsonl; do
             [ -e "$f" ] && git add "$f"
           done
           if git diff --staged --quiet; then
-            echo "State + archief ongewijzigd — niets te committen"
+            echo "State + archief + leer-loop-data ongewijzigd — niets te committen"
             exit 0
           fi
-          git commit -m "State + SMS-archief: $(date -u +'%Y-%m-%dT%H:%MZ') run"
+          git commit -m "State + SMS-archief + leer-loop-data: $(date -u +'%Y-%m-%dT%H:%MZ') run"
           # Push met retry: bij een race (remote bewoog ná onze checkout, bv.
           # door rebuild-baseline of een handmatige commit) rebasen we onze
           # commit opnieuw bovenop main en pushen we nogmaals. Zonder retry

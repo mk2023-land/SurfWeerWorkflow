@@ -91,7 +91,17 @@ Thumbs.db
 # CI-artefact van run_validation_backtest.py
 tests/validation_output.json
 
-# Leer-loop data (bevat referentie-labels) — nooit publiek
+# Leer-loop TRAININGSPAREN (bevatten referentie-labels) — nooit publiek.
+# Alleen data/training/ heeft labels; leeft durable in de PRIVATE archive-repo.
 data/training/
-data/forecast_features.jsonl
-data/learned_params.json
+
+# CORRECTIE 16-06-2026: onze EIGEN leer-loop-data (forecast-snapshots, geleerde
+# params, bias-log, boei-spectra) heeft GEEN referentie-labels en hoort DURABLE
+# in git i.p.v. vluchtig in de Actions-cache. Anders (a) matcht de pairing op
+# stale snapshots en (b) bereiken geleerde params de productie-cloud NOOIT
+# (config leest data/learned_params.json — zonder commit blijft die leeg → seeds).
+# Deze re-includes overrulen de data/*.json(l)-ignore hierboven (laatste match wint).
+!data/forecast_features.jsonl
+!data/learned_params.json
+!data/bias_log.jsonl
+!data/buoy_spectra_history.jsonl
