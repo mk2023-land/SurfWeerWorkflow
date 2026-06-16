@@ -119,7 +119,11 @@ def fit_thresholds(pairs: list[dict]):
     if not scored:
         return None
     best = (None, None, -1.0)
-    grid = list(range(10, 91, 2))
+    # Begrensd tot fysiek-redelijke drempels (30-70) — voorkomt een overfit-
+    # artefact als longboard=10 dat bijna elke dag 'longboard' zou noemen.
+    # NB: deze drempel-fit op de scalar score is informatief (report-only) en
+    # schrijft NIET naar productie; alleen de component-fit (LOO-gated) schrijft.
+    grid = list(range(30, 71, 2))
     for lb in grid:
         for sb in grid:
             if sb <= lb:
@@ -195,83 +199,130 @@ def _ordinal_cost(pred: str, ref: str) -> int:
     return abs(_VRANK[pred] - _VRANK[ref])
 
 
-def fit_components(pairs: list[dict]):
-    """Grid-search over (WIND_FACE_PENALTY strength, PARTITION wind_sea_multiplier,
-    longboard-drempel, surfable-drempel) die de ordinale fout minimaliseert
-    (tie-break: meer exacte matches, dan minste afwijking van de seed).
-    Floor-bewust: past min_golf_* toe op de her-gescoorde golf. Returnt dict of
-    None bij onvoldoende paren-met-score_basis."""
+# Grids. Drempels BEGRENSD tot fysiek-redelijke ranges (longboard 30-50,
+# surfable 44-66) zodat de fit niet naar een overfit-artefact als longboard=10
+# kan vluchten (dat zou bijna elke dag 'longboard' noemen). De fit mag de
+# drempels nog wel verlagen om onder-calls te corrigeren, maar binnen rede.
+_STRENGTH_GRID = [round(0.1 * i, 2) for i in range(0, 8)]   # 0.0..0.7
+_MULT_GRID = [0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 1.00]     # ≥ seed 0.65
+_LB_GRID = list(range(30, 51, 2))
+_SB_GRID = list(range(44, 67, 2))
+
+
+def _component_ctx():
+    """Config-afgeleide constanten + helpers voor de component-fit."""
     from src.config import SCORING_WEIGHTS, SURF_THRESHOLDS, WIND_FACE_PENALTY, PARTITION_WEIGHTS
-    from src.data.models import ScoreBreakdown
     from src.scoring.context import period_factor
     from src.scoring.hourly import golf_height_curve
+    return {
+        'golf_max': float(SCORING_WEIGHTS['golf_max']),
+        'swell_mult': float(PARTITION_WEIGHTS['swell_multiplier']),
+        'wfp_min': float(WIND_FACE_PENALTY['min_factor']),
+        'mg_lb': float(SURF_THRESHOLDS['min_golf_longboard']),
+        'mg_sb': float(SURF_THRESHOLDS['min_golf_surfable']),
+        'seed_strength': float(WIND_FACE_PENALTY['strength']),
+        'seed_mult': float(PARTITION_WEIGHTS['wind_sea_multiplier']),
+        'curve': golf_height_curve,
+        'pf': period_factor,
+    }
 
-    usable = [p for p in pairs if (p.get('features') or {}).get('score_basis')]
-    if len(usable) < 6:
-        return None
 
-    golf_max = float(SCORING_WEIGHTS['golf_max'])
-    swell_mult = float(PARTITION_WEIGHTS['swell_multiplier'])
-    wfp_min = float(WIND_FACE_PENALTY['min_factor'])
-    mg_lb = float(SURF_THRESHOLDS['min_golf_longboard'])
-    mg_sb = float(SURF_THRESHOLDS['min_golf_surfable'])
-    seed_strength = float(WIND_FACE_PENALTY['strength'])
-    seed_mult = float(PARTITION_WEIGHTS['wind_sea_multiplier'])
-    _t0 = datetime(2000, 1, 1)
+def _predict_pair(sb_b, strength, mult, lb, sb_thr, ctx):
+    """Her-scoor één paar onder kandidaat-params en geef het verdict."""
+    from src.data.models import ScoreBreakdown
+    golf = _rescore_golf(sb_b, strength, mult, ctx['golf_max'], ctx['swell_mult'],
+                         ctx['wfp_min'], ctx['curve'], ctx['pf'])
+    bd = ScoreBreakdown(
+        timestamp=datetime(2000, 1, 1), golf_score=golf,
+        wind_score=sb_b.get('wind_score') or 0.0,
+        tide_score=sb_b.get('tide_score') or 0.0,
+        swell_dir_bonus=sb_b.get('swell_dir_bonus') or 0.0,
+        confidence=sb_b.get('confidence') or 1.0,
+    )
+    total = bd.total_score
+    if total >= sb_thr and golf >= ctx['mg_sb']:
+        return 'surfable'
+    if total >= lb and golf >= ctx['mg_lb']:
+        return 'longboard'
+    return 'flat'
 
-    strength_grid = [round(0.1 * i, 2) for i in range(0, 8)]      # 0.0..0.7
-    mult_grid = [0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 1.00]        # ≥ seed 0.65
-    lb_grid = list(range(10, 61, 2))
-    sb_grid = list(range(14, 81, 2))
 
-    def _verdict(total, golf, lb, sb):
-        if total >= sb and golf >= mg_sb:
-            return 'surfable'
-        if total >= lb and golf >= mg_lb:
-            return 'longboard'
-        return 'flat'
-
-    best = None  # (cost, -exact, reg, params, agreement)
-    for strength in strength_grid:
-        for mult in mult_grid:
-            # Her-scoor golf + totaal één keer per (strength, mult); drempels
-            # daarna goedkoop variëren.
+def _best_component_params(train: list[dict], ctx: dict):
+    """Grid-search op `train` die de ordinale fout minimaliseert (tie-break:
+    meer exacte matches, dan minste afwijking van de seed). Returnt params-dict."""
+    best = None
+    for strength in _STRENGTH_GRID:
+        for mult in _MULT_GRID:
             rescored = []
-            for p in usable:
+            for p in train:
                 sb_b = p['features']['score_basis']
-                golf = _rescore_golf(sb_b, strength, mult, golf_max, swell_mult,
-                                     wfp_min, golf_height_curve, period_factor)
+                from src.data.models import ScoreBreakdown
+                golf = _rescore_golf(sb_b, strength, mult, ctx['golf_max'],
+                                     ctx['swell_mult'], ctx['wfp_min'], ctx['curve'], ctx['pf'])
                 bd = ScoreBreakdown(
-                    timestamp=_t0,
-                    golf_score=golf,
+                    timestamp=datetime(2000, 1, 1), golf_score=golf,
                     wind_score=sb_b.get('wind_score') or 0.0,
                     tide_score=sb_b.get('tide_score') or 0.0,
                     swell_dir_bonus=sb_b.get('swell_dir_bonus') or 0.0,
                     confidence=sb_b.get('confidence') or 1.0,
                 )
                 rescored.append((bd.total_score, golf, p['ref']))
-            for lb in lb_grid:
-                for sb in sb_grid:
-                    if sb <= lb:
+            for lb in _LB_GRID:
+                for sb_thr in _SB_GRID:
+                    if sb_thr <= lb:
                         continue
                     cost = exact = 0
                     for total, golf, ref in rescored:
-                        pred = _verdict(total, golf, lb, sb)
+                        if total >= sb_thr and golf >= ctx['mg_sb']:
+                            pred = 'surfable'
+                        elif total >= lb and golf >= ctx['mg_lb']:
+                            pred = 'longboard'
+                        else:
+                            pred = 'flat'
                         cost += _ordinal_cost(pred, ref)
                         exact += (pred == ref)
-                    reg = abs(strength - seed_strength) + abs(mult - seed_mult)
+                    reg = abs(strength - ctx['seed_strength']) + abs(mult - ctx['seed_mult'])
                     key = (cost, -exact, reg)
                     if best is None or key < best[0]:
-                        best = (key, {
-                            'wind_face_strength': strength,
-                            'wind_sea_multiplier': mult,
-                            'longboard': float(lb),
-                            'surfable': float(sb),
-                        }, exact / len(usable))
+                        best = (key, {'wind_face_strength': strength,
+                                      'wind_sea_multiplier': mult,
+                                      'longboard': float(lb), 'surfable': float(sb_thr)},
+                                exact / len(train))
+    return best
+
+
+def fit_components(pairs: list[dict]):
+    """Beste component-params op ALLE score_basis-paren (in-sample). None bij <6."""
+    usable = [p for p in pairs if (p.get('features') or {}).get('score_basis')]
+    if len(usable) < 6:
+        return None
+    best = _best_component_params(usable, _component_ctx())
     if best is None:
         return None
     return {**best[1], 'agreement': best[2], 'n': len(usable),
             'ordinal_cost': best[0][0]}
+
+
+def component_loo(pairs: list[dict]):
+    """Leave-one-out overeenkomst van de component-fit: fit telkens op N-1 paren,
+    voorspel het weggelaten paar. Dit is het EERLIJKE generalisatie-cijfer (de
+    in-sample agreement is op klein N overfit). None bij <6 score_basis-paren."""
+    usable = [p for p in pairs if (p.get('features') or {}).get('score_basis')]
+    if len(usable) < 6:
+        return None
+    ctx = _component_ctx()
+    correct = 0
+    for i in range(len(usable)):
+        train = usable[:i] + usable[i + 1:]
+        best = _best_component_params(train, ctx)
+        if best is None:
+            continue
+        pr = best[1]
+        pred = _predict_pair(usable[i]['features']['score_basis'],
+                             pr['wind_face_strength'], pr['wind_sea_multiplier'],
+                             pr['longboard'], pr['surfable'], ctx)
+        correct += (pred == usable[i]['ref'])
+    return correct / len(usable)
 
 
 # ---------------------------------------------------------------------------
@@ -330,6 +381,9 @@ def main():
     ap.add_argument('--write', action='store_true', help='Schrijf learned_params.json')
     ap.add_argument('--min-pairs', type=int, default=12,
                     help='Minimum aantal gepairde dagen voordat we params wegschrijven')
+    ap.add_argument('--min-basis', type=int, default=12,
+                    help='Minimum aantal score_basis-paren voor de component-write '
+                         '(de fysica-knoppen). Aparte, hogere lat dan de drempel-fit.')
     args = ap.parse_args()
 
     pairs = load_pairs()
@@ -377,6 +431,15 @@ def main():
         print(f"\nComponent-fit: nog te weinig paren mét score_basis "
               f"({n_basis}; min 6). Groeit vooruit zodra nieuwe runs loggen.")
 
+    # Leave-one-out van de component-fit = het EERLIJKE generalisatie-cijfer.
+    # De in-sample agreement is op klein N overfit (memoriseert de paren). De
+    # schrijf-gate hieronder gebruikt LOO, niet in-sample.
+    comp_loo = component_loo(pairs)
+    if comp and comp_loo is not None:
+        flag = "  ⚠ overfit-gat" if (comp['agreement'] - comp_loo) >= 0.2 else ""
+        print(f"  → component LEAVE-ONE-OUT (generalisatie): {comp_loo:.0%}"
+              f"  [in-sample {comp['agreement']:.0%}{flag}]")
+
     if not args.write:
         print("\n(Dry-run; gebruik --write om learned_params.json te updaten.)")
         return
@@ -386,12 +449,13 @@ def main():
               f"Te weinig data → seed blijft (geen overfit).")
         return
 
-    # Kies de beste fit: component-fit wint als die de overeenkomst het meest
-    # verbetert; anders de drempel-only fit. Niets schrijven als geen van beide
-    # boven de huidige seed-overeenkomst uitkomt.
-    comp_acc = comp['agreement'] if comp else -1.0
+    # Schrijf-gate. Component-fit wint ALLEEN als hij op LEAVE-ONE-OUT
+    # generaliseert (niet de in-sample 100%) ÉN er genoeg score_basis-paren zijn
+    # (--min-basis). Zo kan een overfit-fit NOOIT naar productie. Anders de
+    # drempel-only fit, mits die boven de seed uitkomt.
     thr_acc = acc_fit if (lb is not None) else -1.0
-    if comp and comp_acc >= thr_acc and comp_acc > acc_now:
+    if (comp and comp_loo is not None and n_basis >= args.min_basis
+            and comp_loo > acc_now):
         out = {
             'WIND_FACE_PENALTY': {'strength': comp['wind_face_strength']},
             'PARTITION_WEIGHTS': {'wind_sea_multiplier': comp['wind_sea_multiplier']},
@@ -402,25 +466,21 @@ def main():
                 'n_pairs': len(pairs),
                 'n_basis': comp['n'],
                 'agreement_before': round(acc_now, 3),
-                'agreement_after': round(comp_acc, 3),
-                'model_loo_agreement': model_acc,
-            },
-        }
-    elif lb is not None and thr_acc > acc_now:
-        out = {
-            'SURF_THRESHOLDS': {'longboard': lb, 'surfable': sb},
-            '_meta': {
-                'fitted_at': datetime.now().isoformat(),
-                'fit_kind': 'thresholds',
-                'n_pairs': len(pairs),
-                'agreement_before': round(acc_now, 3),
-                'agreement_after': round(thr_acc, 3),
+                'agreement_loo': round(comp_loo, 3),
+                'agreement_in_sample': round(comp['agreement'], 3),
                 'model_loo_agreement': model_acc,
             },
         }
     else:
-        print(f"\nNIET weggeschreven: geen fit verbetert boven de seed "
-              f"(seed {acc_now:.0%}, component {comp_acc:.0%}, drempel {thr_acc:.0%}).")
+        # GEEN drempel-fit-write: die schuift alleen knip-punten op een reeds-
+        # vervuilde scalar (cosmetisch, audit-bevinding) → report-only. Alleen de
+        # component-fit (her-scoort de fysica, LOO-gated) mag naar productie.
+        cl = f"{comp_loo:.0%}" if comp_loo is not None else "n.v.t."
+        print(f"\nNIET weggeschreven: de component-fit generaliseert nog niet "
+              f"genoeg op leave-one-out.")
+        print(f"  seed {acc_now:.0%} | component-LOO {cl} | nodig: ≥{args.min_basis} "
+              f"score_basis-paren (nu {n_basis}) ÉN LOO > seed.")
+        print(f"  (drempel-fit {thr_acc:.0%} is report-only — schrijft niet.)")
         return
     LEARNED_PATH.write_text(json.dumps(out, indent=2), encoding='utf-8')
     print(f"\nGeschreven naar {LEARNED_PATH} ({out['_meta']['fit_kind']}-fit) "
