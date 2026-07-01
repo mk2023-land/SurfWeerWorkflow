@@ -84,7 +84,7 @@ jobs:
       # opnieuw een digest. Concurrency-group hieronder voorkomt parallelle
       # runs, dus geen race-condities tussen unique keys.
       - name: Restore persistent data cache
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: data/
           key: surf-data-${{ github.run_id }}-${{ github.run_attempt }}
@@ -191,7 +191,7 @@ jobs:
       # afhangt van env-vars uit een eerdere step.
       - name: Save persistent data cache
         if: always() && github.event_name != 'workflow_dispatch'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: data/
           key: surf-data-${{ github.run_id }}-${{ github.run_attempt }}
