@@ -1,0 +1,22 @@
+{
+  "WIND_FACE_PENALTY": {
+    "strength": 0.5
+  },
+  "PARTITION_WEIGHTS": {
+    "wind_sea_multiplier": 0.8
+  },
+  "SURF_THRESHOLDS": {
+    "longboard": 30.0,
+    "surfable": 50.0
+  },
+  "_meta": {
+    "fitted_at": "2026-07-13T11:31:32.607210",
+    "fit_kind": "component",
+    "n_pairs": 20,
+    "n_basis": 14,
+    "agreement_before": 0.55,
+    "agreement_loo": 0.714,
+    "agreement_in_sample": 0.857,
+    "model_loo_agreement": 0.5
+  }
+}
