@@ -185,6 +185,30 @@ def _load_our_digest_text(forecast_date: str) -> str | None:
     return best
 
 
+def _parse_sent_verdict(digest_text: str | None) -> str | None:
+    """Leid ONS daadwerkelijk verstuurde Noordwijk-verdict voor dag-0 af uit de
+    digest-tekst. De digest dekt 5 dagen ("Nwijk ma: … Nwijk di: …"); dag-0 is de
+    EERSTE "Nwijk <dag>:"-regel (hoort bij de verzenddag == forecast_date). Mapt de
+    fallback-verdict-frasen (src/llm/sms_fallback.py) op {flat,longboard,surfable}.
+
+    Dit is de OPERATIONELE waarheid — wat we mensen echt meldden — i.t.t. de
+    snapshot-`our_verdict`, die via de fallback venster→surfbaar-promotie kan
+    afwijken. Benchmark/leer-loop hoort tegen dit signaal te vergelijken.
+    """
+    if not digest_text:
+        return None
+    m = re.search(r'Nwijk\s+\w+:\s*(.*?)(?=(?:\s*Nwijk\s+\w+:)|$)', digest_text, re.S)
+    seg = (m.group(1) if m else digest_text).lower()
+    head = re.split(r'[—\n]', seg)[0]  # alleen de verdict-frase vóór de condities
+    if 'alles werkt' in head or 'surfbaar' in head or 'klein maar te doen' in head:
+        return 'surfable'
+    if 'longboard' in head:
+        return 'longboard'
+    if 'niet aan beginnen' in head or re.search(r'\bflat\b', head):
+        return 'flat'
+    return None
+
+
 def _load_our_snapshot(forecast_date: str) -> dict | None:
     """Onze beste feature-snapshot voor Noordwijk op `forecast_date` (de
     nowcast met day_offset==0 indien aanwezig, anders dichtstbij)."""
@@ -267,6 +291,14 @@ def write_training_pairs(noordwijk_days: list[dict], msg_date_iso: str) -> list[
         existing[d] = pair
         if snap is not None:
             made.append(pair)
+    # Verstuurd-verdict-meting voor ELK paar (nieuw + back-fill): de operationele
+    # waarheid uit ons digest-archief. `sent_agreement` vergelijkt wat we ECHT
+    # meldden met het referentie-label — dit is de kern-benchmark (zie
+    # _parse_sent_verdict), naast de snapshot-`agreement`.
+    for _d, _pr in existing.items():
+        _sv = _parse_sent_verdict(_pr.get('our_digest_text'))
+        _pr['our_sent_verdict'] = _sv
+        _pr['sent_agreement'] = (_sv == _pr.get('ref_verdict')) if _sv else None
     with PAIRS_PATH.open('w', encoding='utf-8') as f:
         for d in sorted(existing):
             f.write(json.dumps(existing[d], ensure_ascii=False) + '\n')
