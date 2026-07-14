@@ -162,16 +162,18 @@ _VALID_VERDICTS = {'flat', 'longboard', 'surfable'}
 
 
 def _load_our_digest_text(forecast_date: str) -> str | None:
-    """Onze verstuurde digest-tekst die forecast_date als dag-0 beschrijft —
-    d.w.z. het digest-archief-record met decision=='digest' en timestamp op
-    forecast_date. Zo zit ONS eigen bericht ook in de trainingsdata (ons eigen
-    materiaal; staat al publiek in sms_archive)."""
+    """Onze verstuurde dag-0-tekst voor forecast_date uit sms_archive. Voorkeur
+    voor de digest (decision=='digest'); is er die dag geen digest maar wél een
+    ALERT (decision=='alert'), gebruik die — anders missen we op alert-dagen (de
+    belangrijkste dagen!) het verstuurde verdict volledig. De alert-tekst bevat
+    ook de "Nwijk <dag>:"-regel, dus _parse_sent_verdict pakt 'm net zo goed."""
     if not SMS_ARCHIVE_DIR.exists():
         return None
     month_file = SMS_ARCHIVE_DIR / f"{forecast_date[:7]}.jsonl"
     if not month_file.exists():
         return None
     best = None
+    best_alert = None
     for line in month_file.read_text(encoding='utf-8').splitlines():
         line = line.strip()
         if not line:
@@ -180,9 +182,13 @@ def _load_our_digest_text(forecast_date: str) -> str | None:
             e = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if e.get('decision') == 'digest' and str(e.get('timestamp', ''))[:10] == forecast_date:
-            best = e.get('sms_text')  # laatste van die dag wint
-    return best
+        if str(e.get('timestamp', ''))[:10] != forecast_date:
+            continue
+        if e.get('decision') == 'digest':
+            best = e.get('sms_text')  # laatste digest van die dag wint
+        elif e.get('decision') == 'alert':
+            best_alert = e.get('sms_text')  # laatste alert van die dag wint
+    return best if best is not None else best_alert
 
 
 def _parse_sent_verdict(digest_text: str | None) -> str | None:
@@ -296,6 +302,9 @@ def write_training_pairs(noordwijk_days: list[dict], msg_date_iso: str) -> list[
     # meldden met het referentie-label — dit is de kern-benchmark (zie
     # _parse_sent_verdict), naast de snapshot-`agreement`.
     for _d, _pr in existing.items():
+        _txt = _load_our_digest_text(_d)  # herlaad: pikt alerts + late digests op
+        if _txt is not None:
+            _pr['our_digest_text'] = _txt
         _sv = _parse_sent_verdict(_pr.get('our_digest_text'))
         _pr['our_sent_verdict'] = _sv
         _pr['sent_agreement'] = (_sv == _pr.get('ref_verdict')) if _sv else None
