@@ -17,6 +17,20 @@ _COMPASS_16 = ['N', 'NNO', 'NO', 'ONO', 'O', 'OZO', 'ZO', 'ZZO',
 
 _DAY_NL_SHORT = ['ma', 'di', 'wo', 'do', 'vr', 'za', 'zo']
 
+# NL maand-afkortingen; index = maand-nummer - 1.
+_MONTH_NL_SHORT = ['jan', 'feb', 'mrt', 'apr', 'mei', 'jun',
+                   'jul', 'aug', 'sep', 'okt', 'nov', 'dec']
+
+
+def date_label_nl(dt) -> str:
+    """Deterministische NL datum-label voor koppen, bv. "di 14 jul".
+
+    De LLM rekent datums soms verkeerd uit (weekdag klopt, dagnummer +1). Geef
+    dit label mee zodat de LLM het LETTERLIJK overneemt i.p.v. zelf te rekenen;
+    de validator controleert het dagnummer bovendien tegen dit label.
+    """
+    return f"{_DAY_NL_SHORT[dt.weekday()]} {dt.day} {_MONTH_NL_SHORT[dt.month - 1]}"
+
 
 def degrees_to_compass(deg: float) -> str:
     """Vertaal hoek (graden) naar 16-punts kompasrichting (NL).

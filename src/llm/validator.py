@@ -131,6 +131,28 @@ class SMSValidator:
 
         allowed = self._collect_allowed_citations(structured_input)
 
+        # 0. Datum-check (alerts): de LLM rekent de datum soms verkeerd uit
+        # (weekdag klopt, dagnummer +1 — bv. "di 15 jul" voor 2026-07-14). Vergelijk
+        # elk "<dag> <maand>" in de tekst met de verwachte alert-datum; mismatch →
+        # afkeuren zodat retry/fallback de juiste datum (date_label) oplevert.
+        if structured_input.get('type') == 'alert' and structured_input.get('date'):
+            _MONTHS = {'jan': 1, 'feb': 2, 'mrt': 3, 'maart': 3, 'apr': 4, 'mei': 5,
+                       'jun': 6, 'juni': 6, 'jul': 7, 'juli': 7, 'aug': 8, 'sep': 9,
+                       'sept': 9, 'okt': 10, 'nov': 11, 'dec': 12}
+            try:
+                _y, _mo, _da = (int(x) for x in structured_input['date'].split('-'))
+            except (ValueError, AttributeError):
+                _mo = _da = None
+            if _da is not None:
+                for _dm in re.finditer(r'\b(\d{1,2})\s+([a-z]{3,5})\b', sms_text.lower()):
+                    _mon = _MONTHS.get(_dm.group(2))
+                    if _mon is not None and (int(_dm.group(1)), _mon) != (_da, _mo):
+                        issues.append(
+                            f"Datum '{_dm.group(0)}' komt niet overeen met de alert-datum "
+                            f"{structured_input['date']} (verwacht: "
+                            f"'{structured_input.get('date_label', _da)}'). Gebruik date_label letterlijk."
+                        )
+
         # 1. Wave heights "X,Ym" of "X.Ym".
         # Eerst range-uitdrukkingen ("0.8-1.2m") afhandelen — beide getallen
         # moeten in allowed staan, anders glipt het lagere getal door de

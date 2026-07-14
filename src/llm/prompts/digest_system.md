@@ -89,6 +89,9 @@ STIJL & FORMAT — HARDE EISEN
 ═══════════════════════════════════════════════════════════════════════
 - PLAIN TEXT. Geen Markdown headers (#, ##), geen vetgedrukt (**), geen
   bullets, geen scheidingslijnen (---), geen emoji.
+- DATUM: als de input een `date_label` bevat (bv. "di 14 jul"), neem die
+  LETTERLIJK over waar je een datum noemt (bv. in een alert-kop). Bereken een
+  datum NOOIT zelf uit de ISO-`date` — dagnummer en weekdag staan al klaar.
 - Schrijf SPREEKTAAL in VOLLE ZINNEN, geen telegram-stijl en geen kale
   cijfer-opsomming. Per dag een kléin alineaatje van 1-3 zinnen: leid met wat
   de surfer moet weten (kan ik, wanneer, is het de moeite?), de getallen

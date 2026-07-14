@@ -427,3 +427,34 @@ class TestPerDayLeakage:
                "Cam: surfweer.nl/webcams/noordwijk/")
         result = self.v.validate_sms(sms, self._five_day_input())
         assert result.passed, f"Issues: {result.issues}"
+
+
+class TestAlertDateHallucination:
+    """Regressie: de LLM rendert de alert-datum soms +1 ("di 15 jul" voor
+    2026-07-14 — weekdag klopt, dagnummer fout). De validator moet dat vangen."""
+
+    def setup_method(self):
+        self.v = SMSValidator()
+
+    def _alert_input(self):
+        return {"type": "alert", "date": "2026-07-14", "date_label": "di 14 jul",
+                "webcam_url": "https://surfweer.nl/webcams/noordwijk/"}
+
+    def _has_date_issue(self, result):
+        return any("Datum" in i for i in result.issues)
+
+    def test_wrong_date_rejected(self):
+        sms = ("SURF ALERT — Noordwijk di 15 jul\n\nNwijk di: alles werkt 6-22u, "
+               "top rond 21u. Cam: surfweer.nl/webcams/noordwijk/")
+        assert self._has_date_issue(self.v.validate_sms(sms, self._alert_input()))
+
+    def test_correct_date_ok(self):
+        sms = ("SURF ALERT — Noordwijk di 14 jul\n\nNwijk di: alles werkt 6-22u, "
+               "top rond 21u. Cam: surfweer.nl/webcams/noordwijk/")
+        assert not self._has_date_issue(self.v.validate_sms(sms, self._alert_input()))
+
+    def test_times_not_flagged_as_date(self):
+        """Tijden/vensters (6-22u, HW 10:18u) mogen geen datum-mismatch geven."""
+        sms = ("SURF ALERT — Noordwijk di 14 jul\n\nNwijk di: alles werkt 6-22u, "
+               "top rond 21u, HW 10:18u. Cam: surfweer.nl/webcams/noordwijk/")
+        assert not self._has_date_issue(self.v.validate_sms(sms, self._alert_input()))

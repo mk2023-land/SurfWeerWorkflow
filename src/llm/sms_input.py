@@ -22,6 +22,7 @@ from src.data.models import (
 
 from .sms_formatting import (
     _DAY_NL_SHORT,
+    date_label_nl,
     _hours_to,
     _tide_window_quality,
     degrees_to_compass,
@@ -38,6 +39,9 @@ def _prepare_alert_input(alert: AlertCandidate) -> dict:
     input_data: dict = {
         "type": "alert",
         "date": alert.detection_time.strftime("%Y-%m-%d"),
+        # Voorgeformatteerd NL-label ("di 14 jul") — LLM moet dit LETTERLIJK in de
+        # kop gebruiken en de datum NOOIT zelf uitrekenen (hallucineerde eerder +1).
+        "date_label": date_label_nl(alert.detection_time),
         "trigger_types": [t.value for t in alert.window.triggers] if alert.window else [],
         "trigger_explanation": alert.explanation,
         "rarity": f"{alert.window.rarity_percentile:.0f}e percentile" if alert.window else "",
