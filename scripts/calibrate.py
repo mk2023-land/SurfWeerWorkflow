@@ -72,6 +72,9 @@ def load_pairs() -> list[dict]:
                 'date': p['date'],
                 'ref': p['ref_verdict'],
                 'our_verdict': p['our_verdict'],
+                # Wat we ÉCHT verstuurden (board-based digest/alert), naast de
+                # snapshot-peak_score-verdict. Voor de leer-loop-diagnostiek.
+                'our_sent_verdict': p.get('our_sent_verdict'),
                 'our_peak_score': p.get('our_peak_score'),
                 'features': p.get('features') or {},
             })
@@ -399,8 +402,29 @@ def main():
         return
 
     cm_now, acc_now = confusion(pairs, 'our_verdict')
-    print(f"\nHUIDIGE overeenkomst: {acc_now:.0%} ({len(pairs)} dagen)")
-    print_confusion(cm_now, "Huidig (seed-params)")
+    print(f"\nHUIDIGE overeenkomst (snapshot-verdict): {acc_now:.0%} ({len(pairs)} dagen)")
+    print_confusion(cm_now, "Snapshot (peak_score-drempel — wat dit script fit)")
+
+    # Verstuurd-verdict diagnostiek: het board-based verdict dat de gebruiker ECHT
+    # kreeg (uit de digest/alert). De component-fit hieronder kan alleen de
+    # peak_score-keten tunen, dus fit tegen de SNAPSHOT; maar we RAPPORTEREN het
+    # verstuurde signaal zodat de leer-loop ziet dat de twee engines tegengesteld
+    # falen (snapshot te laag op windsee, verstuurd te hoog op klein-fish).
+    sent_pairs = [p for p in pairs if p.get('our_sent_verdict') in VERDICTS]
+    if sent_pairs:
+        cm_sent, acc_sent = confusion(sent_pairs, 'our_sent_verdict')
+        print(f"\nVERSTUURD-verdict overeenkomst (wat de gebruiker kreeg): "
+              f"{acc_sent:.0%} ({len(sent_pairs)} dagen)")
+        print_confusion(cm_sent, "Verstuurd (board-based)")
+        div = [p for p in sent_pairs if p['our_verdict'] != p['our_sent_verdict']]
+        if div:
+            snap_better = sum(1 for p in div if p['our_verdict'] == p['ref'])
+            sent_better = sum(1 for p in div if p['our_sent_verdict'] == p['ref'])
+            print(f"  Snapshot != verstuurd op {len(div)}/{len(sent_pairs)} dagen "
+                  f"(snapshot beter: {snap_better}, verstuurd beter: {sent_better}, "
+                  f"beide fout: {len(div) - snap_better - sent_better}).")
+            print("  → Tegengestelde bias. Eén engine canoniek maken is een "
+                  "PRODUCT-keuze (pessimistischer vs optimistischer), geen calibratie.")
 
     fit = fit_thresholds(pairs)
     lb = sb = acc_fit = None
