@@ -194,8 +194,11 @@ def _load_our_digest_text(forecast_date: str) -> str | None:
 def _parse_sent_verdict(digest_text: str | None) -> str | None:
     """Leid ONS daadwerkelijk verstuurde Noordwijk-verdict voor dag-0 af uit de
     digest-tekst. De digest dekt 5 dagen ("Nwijk ma: … Nwijk di: …"); dag-0 is de
-    EERSTE "Nwijk <dag>:"-regel (hoort bij de verzenddag == forecast_date). Mapt de
-    fallback-verdict-frasen (src/llm/sms_fallback.py) op {flat,longboard,surfable}.
+    EERSTE "Nwijk <dag>:"-regel (hoort bij de verzenddag == forecast_date). Mapt
+    zowel de fallback-template-frasen (src/llm/sms_fallback.py) ALS de vrije
+    LLM-frasen op {flat,longboard,surfable}. Let op: de LLM (Claude, credits aan)
+    schrijft niet letterlijk "surfbaar (long/mid/fish)" maar bv. "voor long, mid en
+    fish 7-22u" of "voor longboard of midlength" — die moeten net zo goed gevangen.
 
     Dit is de OPERATIONELE waarheid — wat we mensen echt meldden — i.t.t. de
     snapshot-`our_verdict`, die via de fallback venster→surfbaar-promotie kan
@@ -206,12 +209,21 @@ def _parse_sent_verdict(digest_text: str | None) -> str | None:
     m = re.search(r'Nwijk\s+\w+:\s*(.*?)(?=(?:\s*Nwijk\s+\w+:)|$)', digest_text, re.S)
     seg = (m.group(1) if m else digest_text).lower()
     head = re.split(r'[—\n]', seg)[0]  # alleen de verdict-frase vóór de condities
-    if 'alles werkt' in head or 'surfbaar' in head or 'klein maar te doen' in head:
-        return 'surfable'
-    if 'longboard' in head:
-        return 'longboard'
-    if 'niet aan beginnen' in head or re.search(r'\bflat\b', head):
+    # Flat eerst (anders vangt 'long' in "geen golven, longboard-loos" verkeerd).
+    if ('niet aan beginnen' in head or re.search(r'\bflat\b', head)
+            or 'geen golv' in head or 'niets meer' in head):
         return 'flat'
+    # Surfable: shortboard/fish/midlength genoemd (fallback: fish/mid → "surfbaar
+    # (long/mid[/fish])"), of expliciete surfbaar/alert-frasen. Volgorde vóór
+    # longboard, want "longboard of midlength" hoort bij surfable (mid aanwezig).
+    if ('shortboard' in head or 'alles werkt' in head or 'fish' in head
+            or 'midlength' in head or re.search(r'\bmid\b', head)
+            or 'surfbaar' in head or 'surfvenster' in head
+            or 'klein maar te doen' in head or 'exception' in head):
+        return 'surfable'
+    # Alleen longboard/long → longboard.
+    if 'longboard' in head or re.search(r'\blong\b', head):
+        return 'longboard'
     return None
 
 
