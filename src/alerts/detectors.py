@@ -6,6 +6,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
+from src.config import SURF_THRESHOLDS
 from src.data.models import AlertCandidate, AlertType, HourState, SurfWindow
 
 logger = logging.getLogger(__name__)
@@ -202,7 +203,8 @@ class WindDipDetector:
     def detect(
         self,
         forecast: list[HourState],
-        history: list[HourState] = None
+        history: list[HourState] = None,
+        windows: list[SurfWindow] = None,
     ) -> Optional[AlertCandidate]:
         """
         Detecteer wind dip.
@@ -211,16 +213,34 @@ class WindDipDetector:
         - Locale minimum in wind speed (≥4kn drop onder omliggende 4u)
         - Minimum duurt >= 1 uur
         - Swell aanwezig (>= 0.7m)
+        - De dip valt binnen een venster van SURFBARE KWALITEIT (peak_score >=
+          surfable-drempel). Zonder deze gate vuurt een wind-dip óók op een lange
+          reeks marginale windslop (bv. 17-7-2026: hs 0,78m maar tp 4,0s = "pure
+          rimpel, breekt niet", peak-score ~30) — een valse alert. De gate
+          hergebruikt de bestaande, gecalibreerde surfable-drempel (geen nieuw
+          magisch getal) en maakt T3 consistent met T5, die óók venster-kwaliteit eist.
 
         Args:
             forecast: Forecast HourStates (komende 48 uur)
             history: Historische HourStates (optioneel)
+            windows: Gescoorde SurfWindows — nodig om de dip tegen surf-kwaliteit
+                te toetsen. Zonder (kwalificerende) windows: geen alert.
 
         Returns:
             AlertCandidate of None
         """
         if len(forecast) < 9:
             return None
+
+        # Alleen vensters die de surfable-drempel halen tellen als "er is iets te
+        # winnen met deze windstilte". Leeg/None → geen kwaliteits-venster → geen alert.
+        surfable_min = SURF_THRESHOLDS['surfable']
+        quality_windows = [w for w in (windows or []) if w.peak_score >= surfable_min]
+        if not quality_windows:
+            return None
+
+        def _in_quality_window(ts: datetime) -> bool:
+            return any(w.start <= ts <= w.end for w in quality_windows)
 
         # Loop over forecast op zoek naar locale minima
         for i in range(4, len(forecast) - 4):
@@ -242,10 +262,12 @@ class WindDipDetector:
                         break
 
                 if dip_duration >= 1:
-                    # Check swell aanwezigheid
+                    # Check swell aanwezigheid ÉN dat de dip in een surfbaar
+                    # (kwaliteits-)venster valt — anders is de windstilte over
+                    # niet-brekende windslop en niet alert-waardig.
                     has_swell = current.wave_spectrum.significant_height_total >= 0.7
 
-                    if has_swell:
+                    if has_swell and _in_quality_window(current.timestamp):
                         logger.info(f"Wind dip detected: {current.wind.speed_kn}kn vs "
                                    f"{avg_surrounding:.1f}kn average at {current.timestamp}")
 
@@ -474,8 +496,9 @@ class AlertDetectorEngine:
             triggered_alerts.add(AlertType.WIND_SHIFT)
             candidates[AlertType.WIND_SHIFT] = candidate
 
-        # Type 3: Wind dip (forecast)
-        candidate = self.detectors[AlertType.WIND_DIP].detect(forecast, history)
+        # Type 3: Wind dip (forecast) — windows nodig voor de surf-kwaliteit-gate
+        # (anders vuurt de dip ook op niet-brekende windslop).
+        candidate = self.detectors[AlertType.WIND_DIP].detect(forecast, history, windows)
         if candidate:
             triggered_alerts.add(AlertType.WIND_DIP)
             candidates[AlertType.WIND_DIP] = candidate

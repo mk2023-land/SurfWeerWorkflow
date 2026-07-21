@@ -219,3 +219,53 @@ class TestB9PrimaryAlertSelection:
     def test_priority_covers_all_known_types(self):
         """Alle 5 AlertTypes moeten in de priority-lijst staan (regressie)."""
         assert set(PRIMARY_ALERT_PRIORITY) == set(AlertType)
+
+
+class TestWindDipQualityGate:
+    """Regressie 17-7-2026: T3 (wind dip) vuurde op niet-brekende windslop
+    (hs 0,78m / tp 4,0s / peak ~30) omdat de enige gate golfhoogte >=0,7m was.
+    Nu vereist: de dip valt binnen een venster van SURFBARE kwaliteit."""
+
+    def _forecast_with_dip(self):
+        from src.data.models import TideState
+        base = datetime(2026, 7, 17, 6, 0, 0)
+        hours = []
+        for k in range(13):
+            speed = 6.0 if k == 6 else 12.0  # windstilte op uur 6
+            hours.append(HourState(
+                timestamp=base + timedelta(hours=k),
+                location_name="Noordwijk",
+                wave_spectrum=_make_spec(base + timedelta(hours=k), 5.0, 0.8),
+                wind=WindState(speed_kn=speed, direction_deg=100, gusts_kn=speed + 2),
+                tide=TideState(level_m=0.0, phase="opgaand",
+                               next_high=base + timedelta(hours=2),
+                               next_low=base + timedelta(hours=8), daily_range_m=2.0),
+                forecast_source="test", confidence=1.0,
+            ))
+        return hours, base
+
+    def _window(self, base, peak_score):
+        from src.data.models import SurfWindow
+        return SurfWindow(
+            start=base + timedelta(hours=5), end=base + timedelta(hours=8),
+            peak_score=peak_score, median_score=peak_score,
+            peak_hour=base + timedelta(hours=6), triggers=[],
+            stability=1.0, rarity_percentile=50.0,
+        )
+
+    def _detector(self):
+        from src.alerts.detectors import WindDipDetector
+        return WindDipDetector()
+
+    def test_no_alert_low_quality_window(self):
+        fc, base = self._forecast_with_dip()
+        assert self._detector().detect(fc, None, [self._window(base, 30)]) is None
+
+    def test_alert_with_surfable_window(self):
+        fc, base = self._forecast_with_dip()
+        cand = self._detector().detect(fc, None, [self._window(base, 55)])
+        assert cand is not None and cand.alert_type == AlertType.WIND_DIP
+
+    def test_no_alert_without_windows(self):
+        fc, base = self._forecast_with_dip()
+        assert self._detector().detect(fc, None, None) is None
