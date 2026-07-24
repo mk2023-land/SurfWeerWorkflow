@@ -90,23 +90,40 @@ def recommend_boards(
     return boards
 
 
-def verdict_from_boards(boards: list) -> str:
-    """Canoniek surf-verdict uit de board-aanbeveling — DEZELFDE bron als de
-    verstuurde digest (src/llm/sms_fallback.py), zodat het gelogde snapshot-
-    verdict niet meer kan divergeren van wat we mensen sturen.
+def verdict_from_conditions(
+    hs_m: float,
+    tp_s: float,
+    wind_speed_kn: float,
+    wind_direction_deg: int,
+    beach_normal_deg: Optional[int] = None,
+) -> str:
+    """Canoniek surf-verdict (flat/longboard/surfable) — DEZELFDE bron voor het
+    gelogde snapshot-verdict (main.py) én de verstuurde digest (sms_fallback),
+    zodat ze niet divergeren.
 
-    Board-based bleek empirisch accurater dan de peak_score-drempel: 61%/89%
-    referentie-pariteit (exact/rideable) vs 54%/69% voor de peak_score-verdict.
-    Het her-tieren van fish→longboard is expliciet NIET gedaan: dat maakte het
-    juist slechter (36%), want de referentie labelt fish/windsee-dagen als surfable.
+    De flat/rijdbaar-grens komt uit recommend_boards (alle fysica-gates: hs-floor,
+    min-periode, wind>28). De longboard/surfable-grens is een HOOGTE-drempel
+    (min_hs_surfable_m), NIET de board-samenstelling.
 
-    - shortboard/fish/midlength aanwezig → 'surfable'
-    - alleen longboard → 'longboard'
-    - niets rijdbaar → 'flat'
+    Waarom hoogte i.p.v. board-type: de oude afleiding tierde op welke boards
+    aanwezig waren (fish/mid → surfable). Maar midlength triggerde op dezelfde hs
+    als longboard, waardoor 'longboard' STRUCTUREEL onbereikbaar was — élke rijdbare
+    dag werd surfable, en de referentie-longboard-dagen (2/14 exact) werden gemist.
+    Kale hs scheidt de longboard/surfable-tier empirisch op ~86% (vs 72% voor de
+    peak_score); de drempel is LOO-gevalideerd op de referentieparen: 62%/78%
+    (exact/rideable) vs 57%/78% voor de board-afgeleide.
+
+    NB — dit is NIET de eerder mislukte 'fish→longboard'-hertiering (die op
+    board-TYPE alle fish-dagen naar longboard duwde en 36% scoorde). Splitsen op
+    HOOGTE laat een grote fish/windsee-dag terecht surfable en een klein clean
+    golfje longboard — precies waar de referentie ze ook zet.
     """
+    boards = recommend_boards(
+        hs_m, tp_s, wind_speed_kn, wind_direction_deg, beach_normal_deg
+    )
     if not boards:
         return 'flat'
-    if any(b in boards for b in ('shortboard', 'fish', 'midlength')):
+    if hs_m >= SURF_MINIMUMS['min_hs_surfable_m']:
         return 'surfable'
     return 'longboard'
 

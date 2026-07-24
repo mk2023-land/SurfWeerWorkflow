@@ -64,6 +64,7 @@ def _fallback_digest_template(
     # Lazy import: scoring.recommend_boards en visibility/convective helpers
     # zijn niet altijd aanwezig in unit-test contexts met mocked scoring.
     try:
+        from src.scoring.context import verdict_from_conditions
         from src.scoring.hourly import (
             convective_warning,
             recommend_boards,
@@ -71,6 +72,7 @@ def _fallback_digest_template(
         )
     except ImportError:
         recommend_boards = None
+        verdict_from_conditions = None
         visibility_concern = None
         convective_warning = None
 
@@ -82,11 +84,13 @@ def _fallback_digest_template(
             continue
         dag = _DAY_ABBR[date_obj.weekday()]
 
-        # "Flat" check: hele dag onder 0.5m → korte regel (mét dagafkorting).
+        # "Flat" check: hele dag onder de longboard-floor → korte regel. Grens
+        # gelijk aan verdict_from_conditions/recommend_boards (min_hs_longboard_m
+        # 0,40), zodat de digest niet flat zegt waar het snapshot longboard logt.
         max_height_day = max(
             s.wave_spectrum.significant_height_total for s in day_states
         )
-        if max_height_day < 0.5:
+        if max_height_day < 0.40:
             parts.append(
                 f"Nwijk {dag}: flat — tot {round(max_height_day * 100)}cm, te klein."
             )
@@ -153,9 +157,24 @@ def _fallback_digest_template(
                 window_strs.append(f"{_fmt_t(w.start)}-{_fmt_t(w.end, unit=True)}")
         venster = " ook ".join(window_strs) if window_strs else None
 
-        # Verdict-lead afgeleid uit board-aanbeveling.
-        if not boards:
+        # Verdict-lead: tier uit verdict_from_conditions (hoogte-drempel, DEZELFDE
+        # bron als het gelogde snapshot-verdict), board-samenstelling bepaalt
+        # alleen de tekst-nuance binnen 'surfable'. Zo kan een klein-maar-clean
+        # golfje weer 'longboard' worden i.p.v. altijd 'surfbaar'.
+        if verdict_from_conditions is not None:
+            tier = verdict_from_conditions(
+                hs_m=spectrum.significant_height_total,
+                tp_s=(dom.period_s if dom else spectrum.mean_period) or 0.0,
+                wind_speed_kn=ps.wind.speed_kn,
+                wind_direction_deg=ps.wind.direction_deg,
+            )
+        else:
+            tier = 'surfable' if boards else 'flat'
+
+        if tier == 'flat' or not boards:
             verdict = "niet aan beginnen"
+        elif tier == 'longboard':
+            verdict = "longboard"
         elif 'shortboard' in boards:
             verdict = "alles werkt"
         elif 'fish' in boards:
@@ -163,7 +182,7 @@ def _fallback_digest_template(
         elif 'midlength' in boards:
             verdict = "surfbaar (long/mid)"
         else:
-            verdict = "longboard"
+            verdict = "surfbaar"
 
         # Verdict + venster VOORAAN; één los tijdstip alleen op dagen zonder
         # rijdbaar venster (conform format-voorkeur: venster > piekmoment).

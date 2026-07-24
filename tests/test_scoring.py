@@ -1654,31 +1654,39 @@ if __name__ == "__main__":
     pytest.main([__file__, "-v"])
 
 
-class TestVerdictFromBoards:
-    """Gedeeld canoniek verdict uit de board-aanbeveling (context.verdict_from_boards).
-    Zorgt dat snapshot-verdict = verstuurd digest-verdict. Board-based bleek
-    accurater dan de peak_score-drempel (61%/89% vs 54%/69% referentie-pariteit);
-    fish/mid = surfable (NIET her-tieren naar longboard — dat maakte het slechter)."""
+class TestVerdictFromConditions:
+    """Canoniek verdict (context.verdict_from_conditions) — DEZELFDE bron voor het
+    gelogde snapshot-verdict én de digest. flat/rijdbaar uit recommend_boards; de
+    longboard/surfable-tier via de HOOGTE-drempel (min_hs_surfable_m 0,70), niet de
+    board-samenstelling. LOO-gevalideerd op de referentieparen: 62%/78% (exact/
+    rideable) vs 57%/78% voor de oude board-afgeleide, en herstelt de longboard-tier
+    die met gelijke midlength/longboard-drempel structureel onbereikbaar was."""
 
-    def test_empty_is_flat(self):
-        from src.scoring.context import verdict_from_boards
-        assert verdict_from_boards([]) == 'flat'
+    def test_too_small_is_flat(self):
+        from src.scoring.context import verdict_from_conditions
+        # Onder de longboard-floor (0,40m) → niets rijdbaar.
+        assert verdict_from_conditions(0.25, 5.0, 6, 300, 285) == 'flat'
 
-    def test_only_longboard(self):
-        from src.scoring.context import verdict_from_boards
-        assert verdict_from_boards(['longboard']) == 'longboard'
+    def test_short_period_is_flat(self):
+        from src.scoring.context import verdict_from_conditions
+        assert verdict_from_conditions(1.2, 3.5, 6, 300, 285) == 'flat'
 
-    def test_fish_or_mid_is_surfable(self):
-        from src.scoring.context import verdict_from_boards
-        assert verdict_from_boards(['longboard', 'midlength']) == 'surfable'
-        assert verdict_from_boards(['longboard', 'midlength', 'fish']) == 'surfable'
+    def test_storm_wind_is_flat(self):
+        from src.scoring.context import verdict_from_conditions
+        assert verdict_from_conditions(1.5, 6.0, 32, 300, 285) == 'flat'
 
-    def test_shortboard_is_surfable(self):
-        from src.scoring.context import verdict_from_boards
-        assert verdict_from_boards(['longboard', 'midlength', 'fish', 'shortboard']) == 'surfable'
+    def test_small_clean_is_longboard(self):
+        # 0,40 ≤ hs < 0,70 → longboard-tier (was onbereikbaar in de oude afleiding).
+        from src.scoring.context import verdict_from_conditions
+        assert verdict_from_conditions(0.5, 4.6, 6, 300, 285) == 'longboard'
+        assert verdict_from_conditions(0.65, 5.0, 8, 300, 285) == 'longboard'
 
-    def test_windsee_08m_is_surfable_not_flat(self):
-        # Regressie: 0,8m/4,5s windsee met lichte wind — peak_score-drempel zei
-        # flat/longboard, board-based zegt (terecht) surfable (referentie ook).
-        from src.scoring.context import recommend_boards, verdict_from_boards
-        assert verdict_from_boards(recommend_boards(0.8, 4.5, 6, 300, 285)) == 'surfable'
+    def test_at_threshold_is_surfable(self):
+        # hs ≥ 0,70 → surfable, ongeacht dat het (nog) geen shortboard-hoogte is.
+        from src.scoring.context import verdict_from_conditions
+        assert verdict_from_conditions(0.70, 4.6, 6, 300, 285) == 'surfable'
+
+    def test_windsee_08m_is_surfable(self):
+        # Regressie: 0,8m/4,5s windsee → surfable (referentie labelt dit ook zo).
+        from src.scoring.context import verdict_from_conditions
+        assert verdict_from_conditions(0.8, 4.5, 6, 300, 285) == 'surfable'

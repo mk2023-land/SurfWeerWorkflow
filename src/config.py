@@ -180,6 +180,10 @@ SURF_MINIMUMS = {
     'min_hs_fish_m': 0.5,
     'min_hs_midlength_m': 0.4,
     'min_hs_longboard_m': 0.4,
+    # Tier-grens longboard→surfable: HOOGTE-drempel, niet board-samenstelling.
+    # LOO-gefit op de referentieparen (verdict_from_conditions); kale hs scheidt
+    # de tiers ~86% vs 72% voor de peak_score. Calibratie-kandidaat (fit-doel).
+    'min_hs_surfable_m': 0.70,
 }
 
 # Wind richtingen voor Noordwijk

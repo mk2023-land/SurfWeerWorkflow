@@ -810,8 +810,9 @@ class SurfAlertSystem:
         reproduceerbaar, en groeit met elke run mee.
         """
         from collections import defaultdict
+
         from src.config import WIND_FACE_PENALTY
-        from src.scoring.context import recommend_boards, verdict_from_boards
+        from src.scoring.context import verdict_from_conditions
         from src.scoring.wave_modifiers import (
             _offshore_groom,
             partition_energy_components,
@@ -822,7 +823,7 @@ class SurfAlertSystem:
             return
 
         by_day: dict = defaultdict(list)
-        for st, sc in zip(hour_states, hourly_scores):
+        for st, sc in zip(hour_states, hourly_scores, strict=False):
             by_day[st.timestamp.date()].append((st, sc))
 
         run_ts = datetime.now()
@@ -837,19 +838,18 @@ class SurfAlertSystem:
                 w for w in windows
                 if w.start.date() == day or w.end.date() == day
             ]
-            # Gelogd verdict uit de board-aanbeveling op het piek-uur — DEZELFDE
-            # bron als de verstuurde digest (sms_fallback), zodat snapshot-verdict
-            # = wat we sturen. Board-based is accurater dan de peak_score-drempel
-            # (61%/89% vs 54%/69% referentie-pariteit). window.kind stuurt nog
-            # steeds de windows/alerts; alleen dit gelogde verdict wordt consistent.
-            boards_peak = recommend_boards(
+            # Gelogd verdict op het piek-uur — DEZELFDE bron als de verstuurde
+            # digest (sms_fallback): flat/rijdbaar uit recommend_boards, en de
+            # longboard/surfable-tier via de hoogte-drempel (min_hs_surfable_m).
+            # Board-samenstelling stuurt NIET de tier (dat maakte 'longboard'
+            # onbereikbaar); hs-splitsing is LOO-gevalideerd (62%/78% vs 57%/78%).
+            verdict = verdict_from_conditions(
                 hs if hs is not None else 0.0,
                 tp if tp is not None else 0.0,
                 st_peak.wind.speed_kn,
                 int(st_peak.wind.direction_deg),
                 NOORDWIJK.beach_normal_deg,
             )
-            verdict = verdict_from_boards(boards_peak)
             # Re-score-basis: genoeg om de golf-score van dit piek-uur EXACT te
             # herberekenen onder geleerde parameters (WIND_FACE_PENALTY strength,
             # PARTITION wind_sea_multiplier), zodat scripts/calibrate.py de
