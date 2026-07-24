@@ -90,6 +90,27 @@ def recommend_boards(
     return boards
 
 
+def verdict_from_boards(boards: list) -> str:
+    """Canoniek surf-verdict uit de board-aanbeveling — DEZELFDE bron als de
+    verstuurde digest (src/llm/sms_fallback.py), zodat het gelogde snapshot-
+    verdict niet meer kan divergeren van wat we mensen sturen.
+
+    Board-based bleek empirisch accurater dan de peak_score-drempel: 61%/89%
+    referentie-pariteit (exact/rideable) vs 54%/69% voor de peak_score-verdict.
+    Het her-tieren van fish→longboard is expliciet NIET gedaan: dat maakte het
+    juist slechter (36%), want de referentie labelt fish/windsee-dagen als surfable.
+
+    - shortboard/fish/midlength aanwezig → 'surfable'
+    - alleen longboard → 'longboard'
+    - niets rijdbaar → 'flat'
+    """
+    if not boards:
+        return 'flat'
+    if any(b in boards for b in ('shortboard', 'fish', 'midlength')):
+        return 'surfable'
+    return 'longboard'
+
+
 def convective_warning(cape: Optional[float], lifted_index: Optional[float]) -> bool:
     """
     Onweer-risico flag voor LLM-context.

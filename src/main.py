@@ -811,6 +811,7 @@ class SurfAlertSystem:
         """
         from collections import defaultdict
         from src.config import WIND_FACE_PENALTY
+        from src.scoring.context import recommend_boards, verdict_from_boards
         from src.scoring.wave_modifiers import (
             _offshore_groom,
             partition_energy_components,
@@ -836,12 +837,19 @@ class SurfAlertSystem:
                 w for w in windows
                 if w.start.date() == day or w.end.date() == day
             ]
-            kinds = {w.kind for w in day_windows}
-            verdict = (
-                'surfable' if 'surfable' in kinds
-                else 'longboard' if 'longboard' in kinds
-                else 'flat'
+            # Gelogd verdict uit de board-aanbeveling op het piek-uur — DEZELFDE
+            # bron als de verstuurde digest (sms_fallback), zodat snapshot-verdict
+            # = wat we sturen. Board-based is accurater dan de peak_score-drempel
+            # (61%/89% vs 54%/69% referentie-pariteit). window.kind stuurt nog
+            # steeds de windows/alerts; alleen dit gelogde verdict wordt consistent.
+            boards_peak = recommend_boards(
+                hs if hs is not None else 0.0,
+                tp if tp is not None else 0.0,
+                st_peak.wind.speed_kn,
+                int(st_peak.wind.direction_deg),
+                NOORDWIJK.beach_normal_deg,
             )
+            verdict = verdict_from_boards(boards_peak)
             # Re-score-basis: genoeg om de golf-score van dit piek-uur EXACT te
             # herberekenen onder geleerde parameters (WIND_FACE_PENALTY strength,
             # PARTITION wind_sea_multiplier), zodat scripts/calibrate.py de

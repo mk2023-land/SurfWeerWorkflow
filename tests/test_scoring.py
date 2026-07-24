@@ -1652,3 +1652,33 @@ def test_rarity_percentile_zero_baseline_no_crash():
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestVerdictFromBoards:
+    """Gedeeld canoniek verdict uit de board-aanbeveling (context.verdict_from_boards).
+    Zorgt dat snapshot-verdict = verstuurd digest-verdict. Board-based bleek
+    accurater dan de peak_score-drempel (61%/89% vs 54%/69% referentie-pariteit);
+    fish/mid = surfable (NIET her-tieren naar longboard — dat maakte het slechter)."""
+
+    def test_empty_is_flat(self):
+        from src.scoring.context import verdict_from_boards
+        assert verdict_from_boards([]) == 'flat'
+
+    def test_only_longboard(self):
+        from src.scoring.context import verdict_from_boards
+        assert verdict_from_boards(['longboard']) == 'longboard'
+
+    def test_fish_or_mid_is_surfable(self):
+        from src.scoring.context import verdict_from_boards
+        assert verdict_from_boards(['longboard', 'midlength']) == 'surfable'
+        assert verdict_from_boards(['longboard', 'midlength', 'fish']) == 'surfable'
+
+    def test_shortboard_is_surfable(self):
+        from src.scoring.context import verdict_from_boards
+        assert verdict_from_boards(['longboard', 'midlength', 'fish', 'shortboard']) == 'surfable'
+
+    def test_windsee_08m_is_surfable_not_flat(self):
+        # Regressie: 0,8m/4,5s windsee met lichte wind — peak_score-drempel zei
+        # flat/longboard, board-based zegt (terecht) surfable (referentie ook).
+        from src.scoring.context import recommend_boards, verdict_from_boards
+        assert verdict_from_boards(recommend_boards(0.8, 4.5, 6, 300, 285)) == 'surfable'
