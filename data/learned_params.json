@@ -10,13 +10,13 @@
     "surfable": 44.0
   },
   "_meta": {
-    "fitted_at": "2026-07-24T12:55:04.538320",
+    "fitted_at": "2026-07-24T12:55:31.532167",
     "fit_kind": "component",
     "n_pairs": 39,
     "n_basis": 33,
-    "agreement_before": 0.615,
-    "agreement_loo": 0.667,
-    "agreement_in_sample": 0.667,
-    "model_loo_agreement": 0.5128205128205128
+    "agreement_before": 0.59,
+    "agreement_loo": 0.697,
+    "agreement_in_sample": 0.697,
+    "model_loo_agreement": 0.5384615384615384
   }
 }
