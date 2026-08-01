@@ -12,7 +12,7 @@ from src.data.models import (
     SurfWindow,
 )
 
-from .sms_formatting import degrees_to_compass
+from .sms_formatting import degrees_to_compass, wind_label_for_noordwijk
 from .sms_input import _group_by_day
 
 
@@ -29,11 +29,21 @@ def _fallback_alert_template(alert: AlertCandidate) -> str:
 # Nederlandse dag-afkortingen (ma=maandag … zo=zondag); index = date.weekday().
 _DAY_ABBR = ["ma", "di", "wo", "do", "vr", "za", "zo"]
 
+# Dagdelen (NL-tijd, HourState.timestamp = Europe/Amsterdam). Gelijk aan de
+# wind-banden in sms_input._wind_summary_for_day zodat digest + LLM-input één
+# dagdeel-indeling delen. Uren buiten 6-22 zijn sowieso geen daglicht (score 0).
+_DAYPARTS = [("ochtend", 6, 12), ("middag", 12, 17), ("avond", 17, 22)]
+
 
 def _fmt_t(dt, unit: bool = False) -> str:
     """Compacte tijd: hele uren als '15', anders '15:30'; voeg 'u' toe bij unit."""
     base = dt.strftime("%-H") if dt.minute == 0 else dt.strftime("%-H:%M")
     return base + ("u" if unit else "")
+
+
+def _nl(x: float) -> str:
+    """NL-decimaal met komma (0,6 i.p.v. 0.6) — zelfde stijl als de LLM-digest."""
+    return f"{round(x, 1):.1f}".replace(".", ",")
 
 
 def _fallback_digest_template(
@@ -76,6 +86,49 @@ def _fallback_digest_template(
         visibility_concern = None
         convective_warning = None
 
+    def _assess(state):
+        """(tier, boards, dominante-piek) voor één uur — DEZELFDE bron als het
+        gelogde snapshot-verdict (verdict_from_conditions/recommend_boards)."""
+        spec = state.wave_spectrum
+        dom = max(spec.peaks, key=lambda p: p.height_m) if spec.peaks else None
+        tp = (dom.period_s if dom else spec.mean_period) or 0.0
+        if recommend_boards is not None:
+            boards = recommend_boards(
+                hs_m=spec.significant_height_total, tp_s=tp,
+                wind_speed_kn=state.wind.speed_kn,
+                wind_direction_deg=state.wind.direction_deg,
+            )
+        else:
+            boards = []
+            hs_ = spec.significant_height_total
+            if hs_ >= 0.4:
+                boards += ['longboard', 'midlength']
+            if hs_ >= 0.5:
+                boards.append('fish')
+            if hs_ >= 1.0 and tp >= 6:
+                boards.append('shortboard')
+        if verdict_from_conditions is not None:
+            tier = verdict_from_conditions(
+                hs_m=spec.significant_height_total, tp_s=tp,
+                wind_speed_kn=state.wind.speed_kn,
+                wind_direction_deg=state.wind.direction_deg,
+            )
+        else:
+            tier = 'surfable' if boards else 'flat'
+        return tier, boards, dom
+
+    def _verdict_text(tier, boards):
+        """Tekst-nuance binnen een rijdbaar dagdeel (tier != flat)."""
+        if tier == 'longboard':
+            return "longboard"
+        if 'shortboard' in boards:
+            return "alles werkt"
+        if 'fish' in boards:
+            return "surfbaar (long/mid/fish)"
+        if 'midlength' in boards:
+            return "surfbaar (long/mid)"
+        return "surfbaar"
+
     days = _group_by_day(hour_states, scores)
     parts: list[str] = []
 
@@ -83,138 +136,115 @@ def _fallback_digest_template(
         if not day_states:
             continue
         dag = _DAY_ABBR[date_obj.weekday()]
-
-        # "Flat" check: hele dag onder de longboard-floor → korte regel. Grens
-        # gelijk aan verdict_from_conditions/recommend_boards (min_hs_longboard_m
-        # 0,40), zodat de digest niet flat zegt waar het snapshot longboard logt.
         max_height_day = max(
             s.wave_spectrum.significant_height_total for s in day_states
         )
-        if max_height_day < 0.40:
-            parts.append(
-                f"Nwijk {dag}: flat — tot {round(max_height_day * 100)}cm, te klein."
-            )
-            continue
 
-        # Peak-hour (= hoogste-golf-uur in daglicht, score > 0)
+        # Dag-brede vlaggen (springtij/mist/onweer) uit het hoogste-golf-
+        # daglichtuur — op de dag-header i.p.v. per dagdeel herhaald.
         daylight = [j for j, sc in enumerate(day_scores) if sc.total_score > 0]
         if daylight:
-            peak_idx = max(
+            peak_day_idx = max(
                 daylight,
                 key=lambda j: day_states[j].wave_spectrum.significant_height_total,
             )
         else:
-            peak_idx = max(
+            peak_day_idx = max(
                 range(len(day_states)),
                 key=lambda j: day_states[j].wave_spectrum.significant_height_total,
             )
-        ps = day_states[peak_idx]
-        spectrum = ps.wave_spectrum
-        dom = max(spectrum.peaks, key=lambda p: p.height_m) if spectrum.peaks else None
-        h = round(spectrum.significant_height_total, 1)
-        p_s = round(dom.period_s if dom else spectrum.mean_period, 1)
-        wave_dir = degrees_to_compass(
-            dom.direction_deg if dom else spectrum.mean_direction
-        )
-        wind_dir = degrees_to_compass(ps.wind.direction_deg)
-        wind_kn = round(ps.wind.speed_kn)
-        peak_hour_str = _fmt_t(ps.timestamp, unit=True)
-
-        # Board-suitability (uit scoring) of fallback-heuristiek.
-        if recommend_boards is not None:
-            boards = recommend_boards(
-                hs_m=spectrum.significant_height_total,
-                tp_s=(dom.period_s if dom else spectrum.mean_period) or 0.0,
-                wind_speed_kn=ps.wind.speed_kn,
-                wind_direction_deg=ps.wind.direction_deg,
-            )
-        else:
-            # Simpele heuristiek: shortboard alleen bij Hs > 1.0 en Tp > 6.
-            boards = []
-            if spectrum.significant_height_total >= 0.3:
-                boards.append('longboard')
-            if spectrum.significant_height_total >= 0.4:
-                boards.append('midlength')
-            if spectrum.significant_height_total >= 0.5:
-                boards.append('fish')
-            if spectrum.significant_height_total >= 1.0 and (
-                (dom.period_s if dom else spectrum.mean_period) >= 6
-            ):
-                boards.append('shortboard')
-
-        # Windows op deze dag (aaneengesloten rijdbare spans).
-        day_windows = [
-            w for w in windows
-            if day_states[0].timestamp <= w.peak_hour <= day_states[-1].timestamp
-        ]
-        window_strs: list[str] = []
-        if day_windows:
-            for w in sorted(day_windows, key=lambda w: w.start)[:3]:
-                # Sla nul-lengte vensters over (start==end) → die lezen als
-                # "6-6u"; val voor die dag terug op één piekmoment.
-                if w.end <= w.start:
-                    continue
-                window_strs.append(f"{_fmt_t(w.start)}-{_fmt_t(w.end, unit=True)}")
-        venster = " ook ".join(window_strs) if window_strs else None
-
-        # Verdict-lead: tier uit verdict_from_conditions (hoogte-drempel, DEZELFDE
-        # bron als het gelogde snapshot-verdict), board-samenstelling bepaalt
-        # alleen de tekst-nuance binnen 'surfable'. Zo kan een klein-maar-clean
-        # golfje weer 'longboard' worden i.p.v. altijd 'surfbaar'.
-        if verdict_from_conditions is not None:
-            tier = verdict_from_conditions(
-                hs_m=spectrum.significant_height_total,
-                tp_s=(dom.period_s if dom else spectrum.mean_period) or 0.0,
-                wind_speed_kn=ps.wind.speed_kn,
-                wind_direction_deg=ps.wind.direction_deg,
-            )
-        else:
-            tier = 'surfable' if boards else 'flat'
-
-        if tier == 'flat' or not boards:
-            verdict = "niet aan beginnen"
-        elif tier == 'longboard':
-            verdict = "longboard"
-        elif 'shortboard' in boards:
-            verdict = "alles werkt"
-        elif 'fish' in boards:
-            verdict = "surfbaar (long/mid/fish)"
-        elif 'midlength' in boards:
-            verdict = "surfbaar (long/mid)"
-        else:
-            verdict = "surfbaar"
-
-        # Verdict + venster VOORAAN; één los tijdstip alleen op dagen zonder
-        # rijdbaar venster (conform format-voorkeur: venster > piekmoment).
-        if venster:
-            if verdict == "niet aan beginnen":
-                verdict = "surfbaar"
-            head = f"{verdict} {venster}, top rond {peak_hour_str}"
-        elif verdict == "niet aan beginnen":
-            head = f"niet aan beginnen, max rond {peak_hour_str}"
-        else:
-            head = f"{verdict} rond {peak_hour_str}"
-
-        # Suffix-flags: springtij, zicht, onweer.
-        suffix = ""
-        if ps.tide.daily_range_m is not None and ps.tide.daily_range_m >= 2.0:
-            suffix += " (springtij)"
+        ps_day = day_states[peak_day_idx]
+        flags = ""
+        if ps_day.tide.daily_range_m is not None and ps_day.tide.daily_range_m >= 2.0:
+            flags += " (springtij)"
         if visibility_concern is not None:
             vc = visibility_concern(
-                ps.visibility_m, ps.dew_point_c, ps.air_temperature_c
+                ps_day.visibility_m, ps_day.dew_point_c, ps_day.air_temperature_c
             )
             if vc == 'haarmist_risico':
-                suffix += " (! mist mogelijk)"
+                flags += " (! mist mogelijk)"
             elif vc == 'dichte_mist':
-                suffix += " (! dichte mist)"
+                flags += " (! dichte mist)"
         if convective_warning is not None and convective_warning(
-            ps.cape_jkg, ps.lifted_index
+            ps_day.cape_jkg, ps_day.lifted_index
         ):
-            suffix += " (! onweer-risico)"
+            flags += " (! onweer-risico)"
 
-        wind_marker = " sterk" if wind_kn >= 18 else ""
-        numbers = f"{h}m {wave_dir} {p_s}s, wind {wind_kn}kn {wind_dir}{wind_marker}"
-        parts.append(f"Nwijk {dag}: {head} — {numbers}{suffix}.")
+        # Rijdbare daglicht-uren → aaneengesloten sessies (gat > 1u = nieuwe
+        # sessie). Per uur getoetst op board-geschiktheid, zodat we de ECHTE
+        # uren tonen ("een dag heeft veel uren") i.p.v. één piekmoment.
+        rideable = []
+        for st, scb in zip(day_states, day_scores, strict=False):
+            if scb.total_score <= 0:
+                continue
+            tier, boards, dom = _assess(st)
+            if tier != 'flat' and boards:
+                rideable.append((st, scb, tier, boards, dom))
+        rideable.sort(key=lambda r: r[0].timestamp)
+
+        runs: list[list] = []
+        for item in rideable:
+            if runs and (
+                item[0].timestamp - runs[-1][-1][0].timestamp
+            ).total_seconds() <= 3600:
+                runs[-1].append(item)
+            else:
+                runs.append([item])
+
+        # Geen enkele rijdbare sessie → compacte flat-regel (geen 3× "flat").
+        if not runs:
+            parts.append(
+                f"Nwijk {dag}: flat — tot {round(max_height_day * 100)}cm, "
+                f"te klein.{flags}"
+            )
+            continue
+
+        # Ken elke sessie toe aan het dagdeel van zijn top-uur (hoogste score).
+        run_by_part: dict[str, list] = {name: [] for name, _, _ in _DAYPARTS}
+        for run in runs:
+            top = max(run, key=lambda r: r[1].total_score)
+            top_hour = top[0].timestamp.hour
+            for name, h0, h1 in _DAYPARTS:
+                if h0 <= top_hour < h1:
+                    run_by_part[name].append((run, top))
+                    break
+
+        daypart_lines = []
+        for name, _h0, _h1 in _DAYPARTS:
+            label = name.ljust(8)
+            band_runs = run_by_part[name]
+            if not band_runs:
+                daypart_lines.append(f"  {label}flat")
+                continue
+            segs = []
+            numbers = None
+            for run, top in sorted(
+                band_runs, key=lambda rt: rt[0][0][0].timestamp
+            )[:2]:
+                st, scb, tier, boards, dom = top
+                verdict = _verdict_text(tier, boards)
+                start_t = _fmt_t(run[0][0].timestamp)
+                end_t = _fmt_t(run[-1][0].timestamp, unit=True)
+                top_t = _fmt_t(st.timestamp, unit=True)
+                segs.append(f"{verdict} {start_t}-{end_t} (top {top_t})")
+                if numbers is None:
+                    spec = st.wave_spectrum
+                    h = _nl(spec.significant_height_total)
+                    p_s = _nl(dom.period_s if dom else spec.mean_period)
+                    wave_dir = degrees_to_compass(
+                        dom.direction_deg if dom else spec.mean_direction
+                    )
+                    wind_dir = degrees_to_compass(st.wind.direction_deg)
+                    wind_kn = round(st.wind.speed_kn)
+                    strong = " sterk" if wind_kn >= 18 else ""
+                    wlabel = wind_label_for_noordwijk(st.wind.direction_deg)
+                    numbers = (
+                        f"{h}m {wave_dir} {p_s}s, "
+                        f"{wind_kn}kn {wind_dir}{strong} {wlabel}"
+                    )
+            daypart_lines.append(f"  {label}{' ook '.join(segs)} — {numbers}")
+
+        parts.append(f"Nwijk {dag}:{flags}\n" + "\n".join(daypart_lines))
 
     body = "\n".join(parts) if parts else "Nwijk: geen data."
     return f"{body}\nCam: surfweer.nl/webcams/noordwijk/"

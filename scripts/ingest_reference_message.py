@@ -191,24 +191,15 @@ def _load_our_digest_text(forecast_date: str) -> str | None:
     return best if best is not None else best_alert
 
 
-def _parse_sent_verdict(digest_text: str | None) -> str | None:
-    """Leid ONS daadwerkelijk verstuurde Noordwijk-verdict voor dag-0 af uit de
-    digest-tekst. De digest dekt 5 dagen ("Nwijk ma: … Nwijk di: …"); dag-0 is de
-    EERSTE "Nwijk <dag>:"-regel (hoort bij de verzenddag == forecast_date). Mapt
-    zowel de fallback-template-frasen (src/llm/sms_fallback.py) ALS de vrije
-    LLM-frasen op {flat,longboard,surfable}. Let op: de LLM (Claude, credits aan)
-    schrijft niet letterlijk "surfbaar (long/mid/fish)" maar bv. "voor long, mid en
-    fish 7-22u" of "voor longboard of midlength" — die moeten net zo goed gevangen.
+_VERDICT_RANK = {'surfable': 3, 'longboard': 2, 'flat': 1}
 
-    Dit is de OPERATIONELE waarheid — wat we mensen echt meldden — i.t.t. de
-    snapshot-`our_verdict`, die via de fallback venster→surfbaar-promotie kan
-    afwijken. Benchmark/leer-loop hoort tegen dit signaal te vergelijken.
-    """
-    if not digest_text:
-        return None
-    m = re.search(r'Nwijk\s+\w+:\s*(.*?)(?=(?:\s*Nwijk\s+\w+:)|$)', digest_text, re.S)
-    seg = (m.group(1) if m else digest_text).lower()
-    head = re.split(r'[—\n]', seg)[0]  # alleen de verdict-frase vóór de condities
+
+def _classify_phrase(text: str) -> str | None:
+    """Map één verdict-frase op {flat,longboard,surfable}. Mapt zowel de
+    fallback-template-frasen (src/llm/sms_fallback.py) ALS de vrije LLM-frasen:
+    de LLM schrijft niet letterlijk "surfbaar (long/mid/fish)" maar bv. "voor
+    long, mid en fish 7-22u" of "voor longboard of midlength"."""
+    head = text.lower()
     # Flat eerst (anders vangt 'long' in "geen golven, longboard-loos" verkeerd).
     if ('niet aan beginnen' in head or re.search(r'\bflat\b', head)
             or 'geen golv' in head or 'niets meer' in head):
@@ -225,6 +216,35 @@ def _parse_sent_verdict(digest_text: str | None) -> str | None:
     if 'longboard' in head or re.search(r'\blong\b', head):
         return 'longboard'
     return None
+
+
+def _parse_sent_verdict(digest_text: str | None) -> str | None:
+    """Leid ONS daadwerkelijk verstuurde Noordwijk-verdict voor dag-0 af uit de
+    digest-tekst. De digest dekt 5 dagen ("Nwijk ma: … Nwijk di: …"); dag-0 is het
+    EERSTE "Nwijk <dag>:"-blok (hoort bij de verzenddag == forecast_date).
+
+    Ondersteunt TWEE formats:
+      - oud, één regel per dag: "Nwijk vr: longboard 11-14u, top rond 13u — …"
+      - nieuw, per dagdeel (ochtend/middag/avond op eigen regels onder de
+        "Nwijk <dag>:"-header). Het dag-verdict = het BESTE dagdeel
+        (surfable > longboard > flat), want dat is wat we de surfer als
+        dag-oordeel meegeven.
+
+    Dit is de OPERATIONELE waarheid — wat we mensen echt meldden — i.t.t. de
+    snapshot-`our_verdict`, die via de fallback venster→surfbaar-promotie kan
+    afwijken. Benchmark/leer-loop hoort tegen dit signaal te vergelijken.
+    """
+    if not digest_text:
+        return None
+    m = re.search(r'Nwijk\s+\w+:\s*(.*?)(?=(?:\s*Nwijk\s+\w+:)|$)', digest_text, re.S)
+    block = m.group(1) if m else digest_text
+    best = None
+    for line in block.splitlines():
+        head = re.split(r'[—]', line)[0]  # verdict-frase vóór de condities
+        v = _classify_phrase(head)
+        if v and (best is None or _VERDICT_RANK[v] > _VERDICT_RANK[best]):
+            best = v
+    return best
 
 
 def _load_our_snapshot(forecast_date: str) -> dict | None:

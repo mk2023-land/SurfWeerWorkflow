@@ -197,33 +197,46 @@ class TestFallbackDigestTemplate:
         # Compact tijdformat: hele uren zonder minuten, 'u' aan het eind.
         assert "11-14u" in sms
 
-    def test_multi_window_joined_with_ook(self):
-        """Twee windows in dezelfde dag worden gejoind met ' ook '."""
+    def test_daypart_layout_ochtend_en_avond(self):
+        """Rijdbaar in ochtend + avond, flat 's middags → drie dagdeel-regels
+        met uren per dagdeel en 'flat' voor het lege dagdeel."""
         d0 = datetime(2026, 5, 20)
-        # Maak een dag met uren 8-20 zodat beide windows binnen dag-range vallen.
         states, scores = [], []
-        for h in range(8, 21):
+        # ochtend rijdbaar (8-10u), middag flat (12-16u), avond rijdbaar (18-20u)
+        for h in range(8, 11):
+            ts = d0.replace(hour=h, minute=0, second=0, microsecond=0)
+            states.append(_make_hour(ts, hs=1.0, period_s=7.0, wind_kn=12))
+            scores.append(_make_score(ts, total=65))
+        for h in range(12, 17):
+            ts = d0.replace(hour=h, minute=0, second=0, microsecond=0)
+            states.append(_make_hour(ts, hs=0.2, period_s=4.0, wind_kn=10))
+            scores.append(_make_score(ts, total=10))
+        for h in range(18, 21):
             ts = d0.replace(hour=h, minute=0, second=0, microsecond=0)
             states.append(_make_hour(ts, hs=1.0, period_s=7.0, wind_kn=12))
             scores.append(_make_score(ts, total=65))
 
-        w1 = SurfWindow(
-            start=d0.replace(hour=11),
-            end=d0.replace(hour=13),
-            peak_score=70, median_score=65,
-            peak_hour=d0.replace(hour=12),
-            triggers=[], stability=0.8, rarity_percentile=75.0,
-            hourly_scores=scores, kind='surfable',
-        )
-        w2 = SurfWindow(
-            start=d0.replace(hour=18),
-            end=d0.replace(hour=20),
-            peak_score=65, median_score=60,
-            peak_hour=d0.replace(hour=19),
-            triggers=[], stability=0.7, rarity_percentile=70.0,
-            hourly_scores=scores, kind='surfable',
-        )
-        sms = self.gen._fallback_digest_template(states, scores, [w1, w2])
+        sms = self.gen._fallback_digest_template(states, scores, [])
+        assert "ochtend" in sms and "middag" in sms and "avond" in sms, sms
+        assert "8-10u" in sms, sms      # ochtend-sessie
+        assert "18-20u" in sms, sms     # avond-sessie
+        # Middag heeft geen sessie → 'flat' op de middag-regel.
+        assert "middag" in sms and "flat" in sms.lower(), sms
+
+    def test_two_sessions_same_daypart_joined_with_ook(self):
+        """Twee losse sessies in HETZELFDE dagdeel worden met ' ook ' gejoind."""
+        d0 = datetime(2026, 5, 20)
+        states, scores = [], []
+        # ochtend: 6-7u rijdbaar, 8-9u flat (gat), 10-11u rijdbaar → 2 sessies
+        for h, hs, tot in [
+            (6, 1.0, 65), (7, 1.0, 65), (8, 0.2, 10), (9, 0.2, 10),
+            (10, 1.0, 65), (11, 1.0, 65),
+        ]:
+            ts = d0.replace(hour=h, minute=0, second=0, microsecond=0)
+            states.append(_make_hour(ts, hs=hs, period_s=7.0, wind_kn=12))
+            scores.append(_make_score(ts, total=tot))
+
+        sms = self.gen._fallback_digest_template(states, scores, [])
         assert " ook " in sms, f"Verwacht ' ook ' in:\n{sms}"
 
     def test_empty_input_returns_safe_fallback(self):

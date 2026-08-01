@@ -39,6 +39,44 @@ class TestSentVerdictParsing:
                 "Nwijk zo: alles werkt 6-22u — 1,5m.")
         assert p(blob) == "flat"
 
+    def test_daypart_format_best_of_day(self):
+        # Nieuw dagdeel-format: dag-verdict = beste dagdeel (surfable>longboard>flat).
+        digest = (
+            "Nwijk za:\n"
+            "  ochtend  longboard 6-11u (top 8u) — 0,6m NW 4,4s, 3kn OZO aflandig\n"
+            "  middag   flat\n"
+            "  avond    flat\n\n"
+            "Nwijk zo:\n"
+            "  ochtend  flat\n"
+            "  middag   flat\n"
+            "  avond    surfbaar (long/mid/fish) 18-21u — 1,3m WZW 5,2s, 12kn ZW\n"
+        )
+        # dag-0 = za: ochtend longboard, rest flat → longboard.
+        assert p(digest) == "longboard"
+
+    def test_daypart_format_surfable_wins(self):
+        digest = (
+            "Nwijk wo:\n"
+            "  ochtend  longboard 7-10u (top 8u) — 0,9m NW 6s\n"
+            "  middag   flat\n"
+            "  avond    surfbaar (long/mid/fish) 18-21u — 1,3m WZW 5,2s\n"
+        )
+        # beste dagdeel = surfable (avond).
+        assert p(digest) == "surfable"
+
+    def test_daypart_format_all_flat(self):
+        digest = (
+            "Nwijk do:\n"
+            "  ochtend  flat\n"
+            "  middag   flat\n"
+            "  avond    flat\n"
+        )
+        assert p(digest) == "flat"
+
+    def test_daypart_collapsed_flat_line(self):
+        # Volledig flatte dag = één compacte regel.
+        assert p("Nwijk do: flat — 20cm windhoogte, te klein.") == "flat"
+
     def test_alert_text_parsed(self):
         alert = ("SURF ALERT — Noordwijk di 14 jul\n\n"
                  "Nwijk di: alles werkt 6-22u, top rond 21u — wind draait.")
