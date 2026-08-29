@@ -617,9 +617,12 @@ def self_feedback_report(records: list[dict]) -> None:
     by_quality: dict[str, int] = {}
     for r in records:
         by_quality[r.get('match_quality', '?')] = by_quality.get(r.get('match_quality', '?'), 0) + 1
+    # 'live' = live herberekend op het echte sessie-uur (sterk); 'fallback_logged_peak' =
+    # kon niet live herberekenen, teruggevallen op het gelogde dag-piek-uur (zwakker,
+    # mogelijk niet het eigen sessie-uur — zie ingest_self_feedback.py); 'none' = niks.
     print(f"Sessies totaal: {len(records)}  "
-          f"(exact={by_quality.get('exact', 0)}, "
-          f"nearest={by_quality.get('nearest', 0)}, "
+          f"(live={by_quality.get('live', 0)}, "
+          f"fallback_logged_peak={by_quality.get('fallback_logged_peak', 0)}, "
           f"none={by_quality.get('none', 0)})")
 
     usable = [r for r in records if r.get('our_score_basis')]
