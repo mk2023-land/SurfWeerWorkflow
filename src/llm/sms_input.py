@@ -55,6 +55,14 @@ def _prepare_alert_input(alert: AlertCandidate) -> dict:
             "duration_hours": round(alert.window.duration_hours, 1),
             "peak_time": peak_hour_score.timestamp.strftime("%H:%M"),
         }
+    # Alleen gezet bij een WIND_SHIFT-trigger (zie engine.py::evaluate_forecast).
+    # Het venster zelf is op TOTAALSCORE geclusterd (golfhoogte kan de score de
+    # hele dag boven de drempel houden ondanks een windrichting-omslag
+    # halverwege) — dit tijdstip is waar de wind-shift-claim specifiek op slaat,
+    # NIET het hele venster. De prompt (digest_system.md) moet de aflandige-
+    # wind-claim aan DIT tijdstip koppelen, niet aan window.duration_hours.
+    if alert.evidence_time is not None:
+        input_data["wind_shift_time"] = alert.evidence_time.strftime("%H:%M")
     return input_data
 
 

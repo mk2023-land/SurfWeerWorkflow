@@ -417,6 +417,15 @@ class AlertCandidate:
     detection_time: datetime
     explanation: str
     confidence: float  # 0.0-1.0
+    # Specifiek forecast-uur waar dit detector-bewijs op slaat (bv. het uur waarop
+    # WindShiftDetector de richting-omslag zag). None = bewijs is "globaal/live",
+    # niet aan één forecast-uur gebonden (T1 boei-aankomst, T4 aanhoudende
+    # groundswell via boei). Gebruikt door main.py om triggers alleen te koppelen
+    # aan vensters die het bewijs-uur ook daadwerkelijk bevatten (zie B9/trigger-
+    # koppel-fix) — voorheen kreeg ELK venster ALLE getriggerde types, ongeacht of
+    # het bewijs er middenin viel of niet (bug: "wind draait offshore" geclaimd
+    # over een heel 13u-venster terwijl de omslag maar in de laatste paar uur zat).
+    evidence_time: Optional[datetime] = None
 
     def to_dict(self) -> Dict:
         """Converteer naar dictionary voor logging/LLM input."""

@@ -183,7 +183,11 @@ class WindShiftDetector:
                             detection_time=datetime.now(),
                             explanation=f"Wind shifting from {dir_before}° to {dir_after}° "
                                       f"(offshore), {hour_after.wind.speed_kn}kn wind",
-                            confidence=0.7
+                            confidence=0.7,
+                            # Het bewijs slaat specifiek op dit uur (hour_after) — niet
+                            # op het hele venster waar dit uur toevallig in valt. Zie
+                            # main.py trigger-koppel-fix.
+                            evidence_time=hour_after.timestamp,
                         )
 
         return None
@@ -277,7 +281,10 @@ class WindDipDetector:
                             detection_time=datetime.now(),
                             explanation=f"Wind dip: {current.wind.speed_kn}kn for {dip_duration}h "
                                       f"(vs {avg_surrounding:.1f}kn surrounding)",
-                            confidence=0.6
+                            confidence=0.6,
+                            # Bewijs slaat op het dip-start-uur, niet op het hele
+                            # venster eromheen. Zie main.py trigger-koppel-fix.
+                            evidence_time=current.timestamp,
                         )
 
         return None

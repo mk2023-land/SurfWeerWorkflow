@@ -374,3 +374,14 @@ STRIKTE REGELS — SAMENVATTING
    `=false` mag je deze frasen NIET gebruiken — ook niet in afgezwakte
    vorm. Dat is een hallucinatie over data die je niet hebt. Mag wel:
    precisie-uitspraken zoals "rond 14u" als de input dat ondersteunt.
+10. ALERTS (`type="alert"`) met een `wind_shift_time`-veld: het venster
+    (`window.start`-`window.end`) is op TOTAALSCORE geclusterd (een hoge golf
+    kan de score de hele dag boven de drempel houden, ook als de windrichting
+    halverwege omslaat). Een claim dat de wind "aflandig"/"offshore" draait
+    hoort dus NIET bij de volledige vensterduur, maar SPECIFIEK bij
+    `wind_shift_time`. Schrijf "wind draait rond {wind_shift_time} naar
+    aflandig", NOOIT "het hele venster van X uur is aflandig/clean" als
+    `wind_shift_time` ergens middenin of aan het eind van het venster ligt.
+    Venster-duur (`duration_hours`) mag je wél noemen als lengte van de
+    SURFBARE periode — dat is een apart feit (golfhoogte), niet hetzelfde
+    als "de hele tijd staat de wind goed".

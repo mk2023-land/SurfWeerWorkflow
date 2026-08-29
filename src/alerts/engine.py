@@ -250,6 +250,19 @@ class AlertEngine:
             # uit elkaar kunnen lopen.
             primary_type = select_primary_alert_type(triggered_alerts)
 
+            # Wind-shift-tijdstip doorgeven aan het finale alert-object (herbruikt
+            # AlertCandidate.evidence_time, hier als "waar de wind-shift-claim
+            # specifiek op slaat" i.p.v. voor venster-matching zoals in main.py).
+            # Check tegen best_window.triggers (al bewijs-tijd-gescoped door
+            # main.py), niet de globale triggered_alerts-set — anders zou een
+            # WIND_SHIFT die ergens ANDERS in de forecast zit maar niet in dit
+            # venster hoort, alsnog een tijdstip op DIT venster's alert plakken.
+            wind_shift_time = None
+            if AlertType.WIND_SHIFT in best_window.triggers:
+                wind_shift_candidate = candidates_by_type.get(AlertType.WIND_SHIFT)
+                if wind_shift_candidate:
+                    wind_shift_time = wind_shift_candidate.evidence_time
+
             alert_candidate = AlertCandidate(
                 alert_type=primary_type,
                 window=best_window,
@@ -257,7 +270,8 @@ class AlertEngine:
                 explanation=self._generate_explanation(
                     best_window, triggered_alerts, candidates_by_type
                 ),
-                confidence=best_window.stability
+                confidence=best_window.stability,
+                evidence_time=wind_shift_time,
             )
 
             logger.info(f"Sending alert: {best_window.peak_score} peak score, {best_window.duration_hours:.1f}h duration")

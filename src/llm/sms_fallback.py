@@ -36,8 +36,12 @@ _DAYPARTS = [("ochtend", 6, 12), ("middag", 12, 17), ("avond", 17, 22)]
 
 
 def _fmt_t(dt, unit: bool = False) -> str:
-    """Compacte tijd: hele uren als '15', anders '15:30'; voeg 'u' toe bij unit."""
-    base = dt.strftime("%-H") if dt.minute == 0 else dt.strftime("%-H:%M")
+    """Compacte tijd: hele uren als '15', anders '15:30'; voeg 'u' toe bij unit.
+
+    Geen `%-H` (Linux/macOS-only strftime-modifier, geen leidende nul strippen) —
+    dat crasht met ValueError op Windows. `str(dt.hour)` is platform-onafhankelijk
+    en geeft hetzelfde resultaat (geen leidende nul, want dt.hour is al een int)."""
+    base = str(dt.hour) if dt.minute == 0 else f"{dt.hour}:{dt.minute:02d}"
     return base + ("u" if unit else "")
 
 

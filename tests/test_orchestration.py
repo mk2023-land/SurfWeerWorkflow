@@ -606,10 +606,23 @@ class TestAlertTriggerWiring:
 
         monkeypatch.setattr(main_mod, 'analyze_windows', _fake_analyze)
 
-        # Forceer dat minstens één detector triggert.
+        # Forceer dat minstens één detector triggert. main.py roept sinds de
+        # bewijs-tijd-bewuste koppel-fix (29-08-2026) `detect_all_with_candidates`
+        # aan i.p.v. de oude Set-only `detect_all`-shim. Candidate zonder
+        # evidence_time/window => "globaal bewijs" (zelfde categorie als T1/T4),
+        # dus gekoppeld aan elk forecast-window — exact het oude gedrag dat deze
+        # test bewaakt.
+        from src.data.models import AlertCandidate
         monkeypatch.setattr(
-            main_mod.AlertDetectorEngine, 'detect_all',
-            lambda self, forecast, history, buoy, windows: {AlertType.WIND_DIP},
+            main_mod.AlertDetectorEngine, 'detect_all_with_candidates',
+            lambda self, forecast, history, buoy, windows: (
+                {AlertType.WIND_DIP},
+                {AlertType.WIND_DIP: AlertCandidate(
+                    alert_type=AlertType.WIND_DIP, window=None,
+                    detection_time=datetime.now(), explanation='test',
+                    confidence=0.6,
+                )},
+            ),
         )
 
         captured = {}
@@ -632,4 +645,88 @@ class TestAlertTriggerWiring:
         assert any(w.is_alertworthy for w in windows), (
             "window niet alert-worthy ondanks peak>=75/rarity>=70/stability>=0.6 "
             "en een getriggerd type — de is_alertworthy-keten is gebroken"
+        )
+
+    def test_evidence_scoped_trigger_not_attached_to_unrelated_window(
+        self, patched_system, monkeypatch,
+    ):
+        """⭐ Regressietest voor de bug van 29-08-2026: een T2 (WIND_SHIFT) met
+        bewijs op ÉÉN specifiek uur mag NIET aan een ver-daarvan-liggend window
+        geplakt worden. Voorheen kreeg élk forecast-window élk getriggerd type
+        (main.py: `window.triggers = list(trigger_list)` voor ALLE windows),
+        waardoor een alert "wind draait naar offshore" claimde over een heel
+        13-uurs venster terwijl de omslag maar in een paar uur zat.
+
+        Setup: twee gescheiden windows (vroeg/laat in de forecast). WIND_SHIFT
+        se evidence_time valt alleen binnen het LATE window. Verwacht: alleen
+        het late window krijgt WIND_SHIFT; het vroege window niet.
+        """
+        from src import main as main_mod
+        from src.data.models import AlertCandidate, AlertType, SurfWindow
+
+        baseline = _baseline_low_p70()
+        monkeypatch.setattr(
+            main_mod.SeasonalBaselineBuilder,
+            'load_baseline', lambda self: baseline,
+        )
+
+        def _fake_analyze(hourly_scores, triggers_dict=None, **kwargs):
+            forecast_scores = hourly_scores[12:]
+            assert len(forecast_scores) >= 24, "verwacht genoeg forecast-uren voor 2 vensters"
+            early = forecast_scores[0:4]
+            late = forecast_scores[20:24]
+
+            def _mk(cluster):
+                return SurfWindow(
+                    start=cluster[0].timestamp, end=cluster[-1].timestamp,
+                    peak_score=80, median_score=78,
+                    peak_hour=cluster[0].timestamp,
+                    triggers=[], stability=1.0, rarity_percentile=95.0,
+                    hourly_scores=list(cluster), kind='surfable',
+                )
+            return [_mk(early), _mk(late)]
+
+        monkeypatch.setattr(main_mod, 'analyze_windows', _fake_analyze)
+
+        # WIND_SHIFT-bewijs valt op het EERSTE uur van het LATE window — dus
+        # binnen [late.start, late.end], buiten [early.start, early.end].
+        def _fake_detect(self, forecast, history, buoy, windows):
+            late_window = max(windows, key=lambda w: w.start)
+            shift_hour = late_window.hourly_scores[0].timestamp
+            return (
+                {AlertType.WIND_SHIFT},
+                {AlertType.WIND_SHIFT: AlertCandidate(
+                    alert_type=AlertType.WIND_SHIFT, window=None,
+                    detection_time=datetime.now(),
+                    explanation='Wind shifting from 250° to 100° (offshore), 10kn wind',
+                    confidence=0.7,
+                    evidence_time=shift_hour,
+                )},
+            )
+        monkeypatch.setattr(main_mod.AlertDetectorEngine, 'detect_all_with_candidates', _fake_detect)
+
+        captured = {}
+        original_eval = patched_system.alert_engine.evaluate_forecast
+
+        def _spy_eval(forecast, history, buoy_history, windows, is_digest_time):
+            captured['windows'] = list(windows)
+            return original_eval(forecast, history, buoy_history, windows, is_digest_time)
+
+        patched_system.alert_engine.evaluate_forecast = _spy_eval
+
+        _run_async(patched_system.run())
+
+        windows = captured.get('windows') or []
+        assert len(windows) == 2, "verwacht exact de 2 gestubde windows"
+        early_w = min(windows, key=lambda w: w.start)
+        late_w = max(windows, key=lambda w: w.start)
+
+        assert AlertType.WIND_SHIFT in late_w.triggers, (
+            "WIND_SHIFT hoort bij het LATE window (bewijs-uur valt erbinnen)"
+        )
+        assert AlertType.WIND_SHIFT not in early_w.triggers, (
+            "REGRESSIE: WIND_SHIFT werd aan het VROEGE window geplakt terwijl "
+            "het bewijs-uur daar niet in valt — exact de bug van 29-08-2026 "
+            "('wind draait naar offshore' geclaimd over een heel venster "
+            "terwijl de omslag maar in een deel ervan zat)."
         )

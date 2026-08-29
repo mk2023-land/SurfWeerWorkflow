@@ -588,6 +588,14 @@ class SMSValidator:
             if v:
                 merged['times_hhmm'].add(v)
 
+        # Alert-specifiek: het tijdstip waarop een WIND_SHIFT-trigger daadwerkelijk
+        # sloeg (zie sms_input.py::_prepare_alert_input). Zonder dit zou een
+        # correcte "wind draait rond HH:MM naar aflandig"-verwijzing afgekeurd
+        # worden als hallucinatie.
+        wind_shift_time = structured_input.get('wind_shift_time')
+        if wind_shift_time:
+            merged['times_hhmm'].add(wind_shift_time)
+
         # Lookahead (dagen 5-8 buiten de digest-window): de optionele
         # `lookahead.allowed_citations` levert wave-heights/periods/dirs voor
         # de vooruitblik-zin aan het einde van het bericht. Zonder dit

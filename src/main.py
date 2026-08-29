@@ -293,8 +293,10 @@ class SurfAlertSystem:
                     f"Alert-detectie gedegradeerd: {run_log.alert_search_degraded_reason}"
                 )
 
-            triggered_alerts = detector_engine.detect_all(
-                forecast, history, buoy_history, windows
+            triggered_alerts, candidates_by_type = (
+                detector_engine.detect_all_with_candidates(
+                    forecast, history, buoy_history, windows
+                )
             )
 
             # KOPPEL de getriggerde alert-types aan de windows in de forecast-
@@ -306,12 +308,36 @@ class SurfAlertSystem:
             # een losse triggers_dict en raakte de window-objecten nooit aan.
             # We koppelen alleen aan forecast-windows (start >= forecast[0])
             # zodat historische condities geen alert kunnen veroorzaken.
+            #
+            # Bewijs-tijd-bewust (fix 29-08-2026): voorheen kreeg ELK
+            # forecast-window ALLE getriggerde types, ongeacht of het bewijs
+            # van die trigger er daadwerkelijk in viel. Resultaat: een T2
+            # (WIND_SHIFT) gedetecteerd op ÉÉN specifiek uur werd aan een heel
+            # 13-uurs venster geplakt, en de alert-tekst claimde "wind draait
+            # naar offshore" over het VOLLEDIGE venster terwijl de meeste uren
+            # nog aanlandig waren. Nu: alleen koppelen aan een venster als het
+            # bewijs-uur er middenin valt (T2/T3), of aan het eigen
+            # geïdentificeerde venster (T5, bindt al `window=` in de detector),
+            # of — voor detectors zonder uur-specifiek bewijs (T1/T4, hun
+            # bewijs is per definitie "nu" via live boei-data) — het oude
+            # brede gedrag behouden.
             if triggered_alerts and forecast:
                 forecast_start = forecast[0].timestamp
-                trigger_list = list(triggered_alerts)
-                for window in windows:
-                    if window.start >= forecast_start:
-                        window.triggers = list(trigger_list)
+                for alert_type in triggered_alerts:
+                    candidate = candidates_by_type.get(alert_type)
+                    evidence_time = candidate.evidence_time if candidate else None
+                    evidence_window = candidate.window if candidate else None
+                    for window in windows:
+                        if window.start < forecast_start:
+                            continue
+                        if evidence_time is not None:
+                            in_scope = window.start <= evidence_time <= window.end
+                        elif evidence_window is not None:
+                            in_scope = window is evidence_window
+                        else:
+                            in_scope = True  # T1/T4: globaal/live bewijs, oud gedrag
+                        if in_scope and alert_type not in window.triggers:
+                            window.triggers = [*window.triggers, alert_type]
 
             # Filter PAS NU — na trigger-koppeling kan dit niet-leeg zijn.
             alertworthy_windows = filter_alertworthy_windows(windows)
