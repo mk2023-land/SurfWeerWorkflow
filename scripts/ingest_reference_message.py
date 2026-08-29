@@ -23,6 +23,7 @@ Bestand-layout (in de private archive-repo ~/Merlijn/referentie-archief):
         ...
 """
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -31,9 +32,23 @@ import sys
 from datetime import date, datetime
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+# Forceer UTF-8 stdout/stderr — op Windows is de console-codepage vaak cp1252,
+# wat crasht op de ✓/✗/↪-tekens hieronder (UnicodeEncodeError).
+for _stream in (sys.stdout, sys.stderr):
+    with contextlib.suppress(AttributeError):
+        _stream.reconfigure(encoding='utf-8')
+
+# Laad .env VOORDAT de env-var-defaults hieronder geëvalueerd worden — zelfde
+# patroon als src/config.py. Zonder dit moet REF_ARCHIVE_DIR/REF_PAIRS_PATH
+# elke keer handmatig in de shell gezet worden op machines waar het privé-
+# archief niet naast de hoofdrepo staat (bv. Windows-checkouts).
+load_dotenv()
+
 # referentie-forecaster-referentie-archief leeft sinds 2026-05-22 in een aparte private repo
 # (auteursrechtelijk materiaal): ~/Merlijn/referentie-archief. Default verwacht die naast
-# de hoofdrepo; override met de REF_ARCHIVE_DIR env-var voor een andere locatie.
+# de hoofdrepo; override met de REF_ARCHIVE_DIR env-var (of .env) voor een andere locatie.
 _default_archive = (
     Path(__file__).resolve().parent.parent.parent
     / 'referentie-archief' / 'data' / 'ref_archive'

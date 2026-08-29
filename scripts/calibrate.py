@@ -25,6 +25,7 @@ Run:  uv run python scripts/calibrate.py [--write] [--min-pairs N]
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import math
 import os
@@ -33,10 +34,27 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+# Forceer UTF-8 stdout/stderr — op Windows is de console-codepage vaak cp1252,
+# wat crasht op de →/⚠-tekens hieronder (UnicodeEncodeError). PYTHONUTF8=1
+# lost dit ook op maar geldt pas voor NIEUWE shells na het zetten; deze
+# reconfigure werkt direct, ongeacht codepage of hoe het script aangeroepen is
+# (ook als subprocess vanuit ingest_reference_message.py).
+for _stream in (sys.stdout, sys.stderr):
+    with contextlib.suppress(AttributeError):
+        _stream.reconfigure(encoding='utf-8')
+
 # Script leeft in <repo>/scripts/ — zorg dat src/ importeerbaar is voor de
 # component-fit (her-scoort de golf-keten met de ÉCHTE scoring-helpers, geen
 # her-implementatie → geen drift met de live scoring).
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+# Laad .env VOORDAT PAIRS_PATH hieronder wordt bepaald — zelfde patroon als
+# src/config.py en scripts/ingest_reference_message.py. Zonder dit moet
+# REF_PAIRS_PATH elke keer handmatig gezet worden op machines waar het privé-
+# archief niet naast de hoofdrepo staat.
+load_dotenv()
 
 VERDICTS = ['flat', 'longboard', 'surfable']  # ordinaal: flat < longboard < surfable
 _VRANK = {v: i for i, v in enumerate(VERDICTS)}

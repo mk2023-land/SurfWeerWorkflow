@@ -13,6 +13,10 @@ dependencies = [
     "numpy>=2.2.6",
     "python-dotenv>=1.2.2",
     "twilio>=9.10.9",
+    # Windows heeft geen ingebouwde IANA tz-database (Linux/macOS wel) — zonder
+    # dit faalt elke `zoneinfo.ZoneInfo('Europe/Amsterdam')` call in src/util.py
+    # met ZoneInfoNotFoundError.
+    "tzdata; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
