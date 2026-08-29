@@ -69,6 +69,14 @@ _DEFAULT_PAIRS_PATH = (
 PAIRS_PATH = Path(os.getenv('REF_PAIRS_PATH', _DEFAULT_PAIRS_PATH))
 LEARNED_PATH = Path(os.getenv('LEARNED_PARAMS_PATH', 'data/learned_params.json'))
 
+# Eigen surf-sessie-feedback (scripts/ingest_self_feedback.py) — zelfde privé-
+# archiefrepo, ander bestand/schema dan de Tobias-parenpijplijn. Default is
+# simpelweg "naast ref_pairs.jsonl" — dat pad is al REF_PAIRS_PATH/.env-aware,
+# dus dit volgt automatisch mee op elke machine (geen eigen, apart te vergeten
+# env-var-override nodig). SELF_FEEDBACK_PATH blijft beschikbaar voor het
+# zeldzame geval dat het toch ergens anders moet staan.
+SELF_FEEDBACK_PATH = Path(os.getenv('SELF_FEEDBACK_PATH', PAIRS_PATH.parent / 'self_feedback.jsonl'))
+
 
 # ---------------------------------------------------------------------------
 # Gepairde data laden (label + onze snapshot), geschreven door de ingest.
@@ -549,6 +557,106 @@ def train_eval_model(pairs: list[dict]):
 
 
 # ---------------------------------------------------------------------------
+# EIGEN SURF-FEEDBACK — DIAGNOSTISCH, schrijft NOOIT naar learned_params.
+#
+# Ander signaal dan de Tobias-parenpijplijn hierboven: gepaird met
+# scripts/ingest_self_feedback.py, per surf-sessie een 1-10 tevredenheidsscore
+# per onderdeel (tijd, hoogte, wind, duur, richting, stroming) van de gebruiker
+# zelf, gejoind met ONZE score_basis van dat moment. Vier onderdelen mappen
+# direct op een bestaand score-component (hoogte→golf_score, wind→wind_score,
+# richting→swell_dir_bonus, stroming→tide_score); tijd/duur gaan over
+# venster-detectie, niet een losse formule, dus die worden alleen geteld.
+#
+# Puur rapporterend — net als --regime-diagnostic hierboven. Bij kleine N is
+# een Pearson-r vrijwel ruis; die wordt pas getoond vanaf N>=4 en expliciet als
+# "indicatief" gemerkt tot N>=8.
+# ---------------------------------------------------------------------------
+_FEEDBACK_DIMENSION_MAP = {
+    'hoogte': 'golf_score',
+    'wind': 'wind_score',
+    'richting': 'swell_dir_bonus',
+    'stroming': 'tide_score',
+}
+
+
+def load_self_feedback() -> list[dict]:
+    if not SELF_FEEDBACK_PATH.exists():
+        return []
+    out = []
+    for line in SELF_FEEDBACK_PATH.read_text(encoding='utf-8').splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            out.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return out
+
+
+def _pearson_r(xs: list[float], ys: list[float]):
+    n = len(xs)
+    if n < 2:
+        return None
+    mx = sum(xs) / n
+    my = sum(ys) / n
+    cov = sum((x - mx) * (y - my) for x, y in zip(xs, ys, strict=True))
+    vx = sum((x - mx) ** 2 for x in xs)
+    vy = sum((y - my) ** 2 for y in ys)
+    if vx <= 0 or vy <= 0:
+        return None
+    return cov / (vx ** 0.5 * vy ** 0.5)
+
+
+def self_feedback_report(records: list[dict]) -> None:
+    """Print een leesbaar rapport — geen return-waarde, geen schrijf-pad."""
+    if not records:
+        print("Nog geen eigen sessie-feedback (scripts/ingest_self_feedback.py).")
+        return
+
+    by_quality: dict[str, int] = {}
+    for r in records:
+        by_quality[r.get('match_quality', '?')] = by_quality.get(r.get('match_quality', '?'), 0) + 1
+    print(f"Sessies totaal: {len(records)}  "
+          f"(exact={by_quality.get('exact', 0)}, "
+          f"nearest={by_quality.get('nearest', 0)}, "
+          f"none={by_quality.get('none', 0)})")
+
+    usable = [r for r in records if r.get('our_score_basis')]
+    if not usable:
+        print("Geen enkele sessie heeft een gekoppelde score_basis (allemaal "
+              "match_quality='none') — nog niks te correleren.")
+        return
+
+    for dim, comp in _FEEDBACK_DIMENSION_MAP.items():
+        pairs = [
+            (r['user_scores'][dim], r['our_score_basis'].get(comp))
+            for r in usable
+            if dim in (r.get('user_scores') or {}) and r['our_score_basis'].get(comp) is not None
+        ]
+        if not pairs:
+            print(f"\n{dim} ↔ {comp}: nog geen paren.")
+            continue
+        xs, ys = zip(*pairs, strict=True)
+        n = len(pairs)
+        print(f"\n{dim} ↔ {comp} (N={n}):")
+        for x, y in pairs:
+            print(f"    gebruiker={x}  ons={y:.1f}")
+        r = _pearson_r(list(xs), list(ys))
+        if n < 4 or r is None:
+            print(f"  Pearson r: n.v.t. (N={n} < 4, te weinig voor een zinnig getal)")
+        else:
+            flag = "  (indicatief, klein N)" if n < 8 else ""
+            print(f"  Pearson r = {r:.2f}{flag}")
+
+    for dim in ('tijd', 'duur'):
+        vals = [r['user_scores'][dim] for r in usable if dim in (r.get('user_scores') or {})]
+        if vals:
+            print(f"\n{dim} (geen 1-op-1 score-component, alleen geteld): "
+                  f"N={len(vals)}, gemiddeld={sum(vals) / len(vals):.1f}")
+
+
+# ---------------------------------------------------------------------------
 def main():
     ap = argparse.ArgumentParser(description='Fit scoring-params op referentie-data')
     ap.add_argument('--write', action='store_true', help='Schrijf learned_params.json')
@@ -564,7 +672,21 @@ def main():
                          'learned_params.json — alleen ter vergelijking met de '
                          'single-fit component-LOO hierboven. Niet gebruiken in de '
                          'auto-calibratie na elke ingest (te traag voor routine-gebruik).')
+    ap.add_argument('--self-feedback', action='store_true',
+                    help='Print een rapport over de eigen surf-sessie-feedback '
+                         '(scripts/ingest_self_feedback.py): per onderdeel de '
+                         'gebruikersscore naast het bijbehorende score-component. '
+                         'Puur diagnostisch, schrijft nooit naar learned_params.json.')
     args = ap.parse_args()
+
+    if args.self_feedback:
+        # Standalone rapport — onafhankelijk van de Tobias-parenpijplijn
+        # hieronder (ander bestand, andere join-sleutel). Print en stop.
+        print("=" * 60)
+        print("EIGEN SURF-FEEDBACK — rapport")
+        print("=" * 60)
+        self_feedback_report(load_self_feedback())
+        return
 
     pairs = load_pairs()
     print("=" * 60)

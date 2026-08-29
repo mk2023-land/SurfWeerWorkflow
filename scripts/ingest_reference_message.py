@@ -361,10 +361,14 @@ def write_training_pairs(noordwijk_days: list[dict], msg_date_iso: str) -> list[
     return made
 
 
-def _sync_private_archive(msg_date_iso: str) -> None:
+def _sync_private_archive(msg_date_iso: str, commit_message: str | None = None) -> None:
     """Commit + push het ruwe archief én de training-paren naar de private
     archive-repo, zodat de leer-loop-data durable en off-disk staat (overleeft
     git-clean van de publieke repo en Actions-cache-eviction).
+
+    `commit_message` laat andere ingest-scripts (bv. ingest_self_feedback.py) deze
+    zelfde commit/push-logica hergebruiken met een eigen boodschap i.p.v. de
+    Tobias-specifieke default hieronder te dupliceren.
 
     Best-effort: een falende commit/push (geen netwerk, geen remote-auth,
     niets gewijzigd) mag de ingest NOOIT laten falen — de bestanden staan dan
@@ -384,13 +388,14 @@ def _sync_private_archive(msg_date_iso: str) -> None:
             capture_output=True, text=True, timeout=60, check=check,
         )
 
+    message = commit_message or f'Ingest referentie-bericht {msg_date_iso}'
     try:
         _git('add', '-A')
         # Niets te committen? Dan klaar (exit 0 op `diff --staged --quiet`).
         if _git('diff', '--staged', '--quiet').returncode == 0:
             print(f"↪ Privé-archief: niets gewijzigd om te syncen.")
             return
-        _git('commit', '-m', f'Ingest referentie-bericht {msg_date_iso}', check=True)
+        _git('commit', '-m', message, check=True)
         push = _git('push')
         if push.returncode == 0:
             print(f"↪ Privé-archief gecommit + gepusht (durable).")
