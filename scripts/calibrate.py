@@ -347,6 +347,158 @@ def component_loo(pairs: list[dict]):
 
 
 # ---------------------------------------------------------------------------
+# REGIME-SPLIT component-fit — DIAGNOSTISCH, schrijft NOOIT naar learned_params.
+#
+# Hypothese uit PATTERNS.md (augustus-batch): de twee bestaande knoppen
+# (wind_face_strength, wind_sea_multiplier) proberen zowel "kleine aflandige
+# golfjes worden te vaak gepromoveerd" als "aanlandige messy-golven worden te
+# vaak gepromoveerd" met ÉÉN globale waarde op te lossen — twee tegengestelde
+# problemen die dezelfde knop nooit tegelijk goed kan zetten. Hier fitten we
+# de knoppen APART voor aflandige/glasachtige uren (`groom>0`, al aanwezig in
+# elke score_basis — geen nieuwe features nodig) vs aanlandige/windstille uren
+# (`groom==0`), met gedeelde longboard/surfable-drempels.
+#
+# Alleen aan te roepen met `--regime-diagnostic` (traag: volledige LOO doet
+# een aparte grid-search per weggelaten paar). Rapporteert alleen; de
+# write-gate in main() kijkt hier niet naar. Wordt dit ooit een winnende
+# aanpak (LOO > de bestaande single-fit LOO, op genoeg paren per regime),
+# dan is de vervolgstap het WEL wiren naar learned_params.json + config.py +
+# de live scoring (wave_modifiers.py) — een aparte, grotere stap die zijn
+# eigen review verdient.
+# ---------------------------------------------------------------------------
+def _regime_of(sb: dict) -> str:
+    return 'offshore' if (sb.get('groom') or 0.0) > 0.0 else 'onshore'
+
+
+def _precompute_candidates(usable: list[dict], ctx: dict) -> list[dict]:
+    """Per paar: golf/total-score voor ALLE (strength, mult) combinaties in de
+    grids, één keer vooraf berekend. Regime-split en single-fit kunnen dit
+    beide hergebruiken i.p.v. los te herberekenen per (lb, sb_thr)-combinatie."""
+    from src.data.models import ScoreBreakdown
+    out = []
+    for p in usable:
+        sb_b = p['features']['score_basis']
+        cand = {}
+        for strength in _STRENGTH_GRID:
+            for mult in _MULT_GRID:
+                golf = _rescore_golf(sb_b, strength, mult, ctx['golf_max'],
+                                     ctx['swell_mult'], ctx['wfp_min'], ctx['curve'], ctx['pf'])
+                bd = ScoreBreakdown(
+                    timestamp=datetime(2000, 1, 1), golf_score=golf,
+                    wind_score=sb_b.get('wind_score') or 0.0,
+                    tide_score=sb_b.get('tide_score') or 0.0,
+                    swell_dir_bonus=sb_b.get('swell_dir_bonus') or 0.0,
+                    confidence=sb_b.get('confidence') or 1.0,
+                )
+                cand[(strength, mult)] = (bd.total_score, golf)
+        out.append({'cand': cand, 'ref': p['ref'], 'regime': _regime_of(sb_b)})
+    return out
+
+
+def _best_regime_params(train: list[dict], ctx: dict):
+    """Grid-search met APARTE (strength, mult) per regime, gedeelde drempels.
+    Voor een vaste (lb, sb_thr) ontkoppelt de kosten-som per paar over regimes,
+    dus per regime onafhankelijk optimaliseren is exact (geen approximatie)."""
+    precomp = _precompute_candidates(train, ctx)
+    best = None
+    for lb in _LB_GRID:
+        for sb_thr in _SB_GRID:
+            if sb_thr <= lb:
+                continue
+            per_regime = {}
+            for regime in ('offshore', 'onshore'):
+                bucket = [r for r in precomp if r['regime'] == regime]
+                if not bucket:
+                    continue
+                best_pm = None
+                for strength in _STRENGTH_GRID:
+                    for mult in _MULT_GRID:
+                        cost = exact = 0
+                        for r in bucket:
+                            total, golf = r['cand'][(strength, mult)]
+                            if total >= sb_thr and golf >= ctx['mg_sb']:
+                                pred = 'surfable'
+                            elif total >= lb and golf >= ctx['mg_lb']:
+                                pred = 'longboard'
+                            else:
+                                pred = 'flat'
+                            cost += _ordinal_cost(pred, r['ref'])
+                            exact += (pred == r['ref'])
+                        if best_pm is None or cost < best_pm[0]:
+                            best_pm = (cost, exact, strength, mult)
+                per_regime[regime] = best_pm
+            if not per_regime:
+                continue
+            total_cost = sum(v[0] for v in per_regime.values())
+            total_exact = sum(v[1] for v in per_regime.values())
+            key = (total_cost, -total_exact)
+            if best is None or key < best[0]:
+                best = (key, {
+                    'longboard': float(lb), 'surfable': float(sb_thr),
+                    'params_by_regime': {
+                        r: {'wind_face_strength': v[2], 'wind_sea_multiplier': v[3]}
+                        for r, v in per_regime.items()
+                    },
+                }, total_exact / len(train))
+    return best
+
+
+def _predict_pair_regime(sb: dict, params: dict, lb: float, sb_thr: float, ctx: dict) -> str:
+    regime = _regime_of(sb)
+    pr = params.get(regime) or params.get('offshore') or params.get('onshore')
+    golf = _rescore_golf(sb, pr['wind_face_strength'], pr['wind_sea_multiplier'],
+                         ctx['golf_max'], ctx['swell_mult'], ctx['wfp_min'],
+                         ctx['curve'], ctx['pf'])
+    from src.data.models import ScoreBreakdown
+    bd = ScoreBreakdown(
+        timestamp=datetime(2000, 1, 1), golf_score=golf,
+        wind_score=sb.get('wind_score') or 0.0,
+        tide_score=sb.get('tide_score') or 0.0,
+        swell_dir_bonus=sb.get('swell_dir_bonus') or 0.0,
+        confidence=sb.get('confidence') or 1.0,
+    )
+    total = bd.total_score
+    if total >= sb_thr and golf >= ctx['mg_sb']:
+        return 'surfable'
+    if total >= lb and golf >= ctx['mg_lb']:
+        return 'longboard'
+    return 'flat'
+
+
+def regime_fit_and_loo(pairs: list[dict]):
+    """Diagnostisch: in-sample fit + leave-one-out van de regime-split.
+    Print bucket-groottes zodat duidelijk is of een regime al genoeg paren heeft
+    (zelfde N≥5-achtige discipline als de rest van de leer-loop). None bij <6."""
+    usable = [p for p in pairs if (p.get('features') or {}).get('score_basis')]
+    if len(usable) < 6:
+        return None
+    ctx = _component_ctx()
+    n_offshore = sum(1 for p in usable if _regime_of(p['features']['score_basis']) == 'offshore')
+    n_onshore = len(usable) - n_offshore
+    best = _best_regime_params(usable, ctx)
+    if best is None:
+        return None
+    _, params, in_sample = best
+    correct = 0
+    for i in range(len(usable)):
+        train = usable[:i] + usable[i + 1:]
+        b2 = _best_regime_params(train, ctx)
+        if b2 is None:
+            continue
+        pr = b2[1]
+        pred = _predict_pair_regime(
+            usable[i]['features']['score_basis'], pr['params_by_regime'],
+            pr['longboard'], pr['surfable'], ctx,
+        )
+        correct += (pred == usable[i]['ref'])
+    loo = correct / len(usable)
+    return {
+        'n_offshore': n_offshore, 'n_onshore': n_onshore,
+        'in_sample': in_sample, 'loo': loo, 'params': params,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Model ernaast: multinomiale logistische regressie (pure numpy)
 # ---------------------------------------------------------------------------
 _FEATS = ['hs_m', 'tp_s', 'wind_speed_kn', 'offshore_cos', 'tide_level_norm']
@@ -405,6 +557,13 @@ def main():
     ap.add_argument('--min-basis', type=int, default=12,
                     help='Minimum aantal score_basis-paren voor de component-write '
                          '(de fysica-knoppen). Aparte, hogere lat dan de drempel-fit.')
+    ap.add_argument('--regime-diagnostic', action='store_true',
+                    help='Print een extra, TRAGE diagnose: aparte wind_face_strength/'
+                         'wind_sea_multiplier voor aflandige vs aanlandige uren '
+                         '(zie PATTERNS.md augustus-batch). Schrijft nooit naar '
+                         'learned_params.json — alleen ter vergelijking met de '
+                         'single-fit component-LOO hierboven. Niet gebruiken in de '
+                         'auto-calibratie na elke ingest (te traag voor routine-gebruik).')
     args = ap.parse_args()
 
     pairs = load_pairs()
@@ -481,6 +640,31 @@ def main():
         flag = "  ⚠ overfit-gat" if (comp['agreement'] - comp_loo) >= 0.2 else ""
         print(f"  → component LEAVE-ONE-OUT (generalisatie): {comp_loo:.0%}"
               f"  [in-sample {comp['agreement']:.0%}{flag}]")
+
+    if args.regime_diagnostic:
+        print("\n" + "-" * 60)
+        print("REGIME-SPLIT DIAGNOSE (aflandig vs aanlandig, --regime-diagnostic)")
+        print("-" * 60)
+        rd = regime_fit_and_loo(pairs)
+        if rd is None:
+            print("Te weinig score_basis-paren (min 6).")
+        else:
+            print(f"Bucket-groottes: offshore(groom>0)={rd['n_offshore']}, "
+                  f"onshore/windstil(groom=0)={rd['n_onshore']}")
+            print(f"  gedeelde drempels: longboard>={rd['params']['longboard']:.0f}, "
+                  f"surfable>={rd['params']['surfable']:.0f}")
+            for regime, pr in rd['params']['params_by_regime'].items():
+                print(f"  {regime}: wind_face_strength={pr['wind_face_strength']}, "
+                      f"wind_sea_multiplier={pr['wind_sea_multiplier']}")
+            print(f"In-sample: {rd['in_sample']:.0%}  |  LEAVE-ONE-OUT: {rd['loo']:.0%}")
+            if comp_loo is not None:
+                verdict = ("WINT van single-fit" if rd['loo'] > comp_loo
+                          else "verslechtert t.o.v. single-fit" if rd['loo'] < comp_loo
+                          else "gelijk aan single-fit")
+                print(f"  → vs. single-fit LOO ({comp_loo:.0%}): {verdict}. "
+                      f"Alleen bij een duidelijke, stabiele winst + genoeg paren per "
+                      f"regime is dit de moeite van het wiren naar learned_params.json "
+                      f"+ config.py + wave_modifiers.py waard — nu puur diagnostisch.")
 
     if not args.write:
         print("\n(Dry-run; gebruik --write om learned_params.json te updaten.)")
