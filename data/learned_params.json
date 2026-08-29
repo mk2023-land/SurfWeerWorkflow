@@ -1,22 +1,22 @@
 {
   "WIND_FACE_PENALTY": {
-    "strength": 0.0
+    "strength": 0.6
   },
   "PARTITION_WEIGHTS": {
     "wind_sea_multiplier": 0.9
   },
   "SURF_THRESHOLDS": {
-    "longboard": 30.0,
-    "surfable": 44.0
+    "longboard": 32.0,
+    "surfable": 50.0
   },
   "_meta": {
-    "fitted_at": "2026-08-29T09:31:28.783865",
+    "fitted_at": "2026-08-29T09:31:45.054066",
     "fit_kind": "component",
-    "n_pairs": 57,
-    "n_basis": 51,
-    "agreement_before": 0.561,
-    "agreement_loo": 0.627,
-    "agreement_in_sample": 0.627,
-    "model_loo_agreement": 0.45614035087719296
+    "n_pairs": 59,
+    "n_basis": 53,
+    "agreement_before": 0.542,
+    "agreement_loo": 0.547,
+    "agreement_in_sample": 0.623,
+    "model_loo_agreement": 0.4745762711864407
   }
 }
