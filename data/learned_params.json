@@ -3,20 +3,20 @@
     "strength": 0.0
   },
   "PARTITION_WEIGHTS": {
-    "wind_sea_multiplier": 0.9
+    "wind_sea_multiplier": 1.0
   },
   "SURF_THRESHOLDS": {
     "longboard": 30.0,
     "surfable": 44.0
   },
   "_meta": {
-    "fitted_at": "2026-07-13T11:36:31.683750",
+    "fitted_at": "2026-09-03T16:46:45.245222",
     "fit_kind": "component",
-    "n_pairs": 31,
-    "n_basis": 25,
-    "agreement_before": 0.452,
-    "agreement_loo": 0.64,
-    "agreement_in_sample": 0.64,
-    "model_loo_agreement": 0.6129032258064516
+    "n_pairs": 74,
+    "n_basis": 68,
+    "agreement_before": 0.541,
+    "agreement_loo": 0.559,
+    "agreement_in_sample": 0.618,
+    "model_loo_agreement": 0.44594594594594594
   }
 }
