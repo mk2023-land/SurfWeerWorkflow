@@ -91,6 +91,24 @@ jobs:
           restore-keys: |
             surf-data-
 
+      # BUGFIX 2026-09-05: de cache-restore hierboven overschrijft blind heel
+      # data/ met de laatst-opgeslagen cache-entry — inclusief bestanden die
+      # OOK git-tracked zijn. Bij een restore-keys-fallback (oudere cache-
+      # entry dan de net uitgecheckte git-HEAD) verdween zo stilletjes elke
+      # tussentijdse git-commit (bv. een leer-loop-calibratie-update) zodra de
+      # latere "Commit state + SMS archive to git"-stap deze bestanden
+      # opnieuw committeerde — concreet gebeurd op 2026-09-03: een verse
+      # learned_params.json-fit (N=75) werd binnen uren teruggezet naar de
+      # stale 13-juli-seed. Git is de bron van waarheid voor getrackte
+      # bestanden; de cache dient alleen voor de NIET-getrackte leer-loop-data
+      # (bias_log.jsonl, buoy_spectra_history.jsonl, forecasts_log.jsonl) —
+      # die staan hier niet in en worden dus niet aangeraakt.
+      - name: Reconcile git-tracked files after cache restore
+        run: |
+          git checkout -- data/state.json data/monthly_budget.json \
+            data/forecast_features.jsonl data/learned_params.json \
+            data/seasonal_baseline.json data/sms_archive/ 2>/dev/null || true
+
       - name: Run surf alert check
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

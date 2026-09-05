@@ -232,7 +232,20 @@ def _ordinal_cost(pred: str, ref: str) -> int:
 # surfable 44-66) zodat de fit niet naar een overfit-artefact als longboard=10
 # kan vluchten (dat zou bijna elke dag 'longboard' noemen). De fit mag de
 # drempels nog wel verlagen om onder-calls te corrigeren, maar binnen rede.
-_STRENGTH_GRID = [round(0.1 * i, 2) for i in range(0, 8)]   # 0.0..0.7
+#
+# _STRENGTH_GRID begint bij 0.2, NIET bij 0.0 (bugfix 2026-09-05). strength=0.0
+# maakt WIND_FACE_PENALTY een complete no-op — face_pen wordt dan altijd 1.0,
+# ongeacht hoe slecht wave_face_quality is (zelfs bij face_q=0.4, het slechtste
+# wat voorkomt). Op N=75 mixt de trainingsset twee tegengestelde regimes
+# (klein-schoon-aflandig wil een lage strength, groot-rommelig-aanlandig een
+# hoge), en één globale knop kan daarom naar 0 collapsen zodra een fit toevallig
+# meer richting het ene regime leunt — concreet gebeurd: productie draaide op
+# strength=0.0 terwijl een verzonden digest "2,0m 19kn aanlandig" alsnog
+# "surfbaar" noemde. Een fysisch-gemotiveerd veiligheidsmechanisme mag geen
+# beschikbare "oplossing" zijn voor een enkele-knop-fit — dit is een
+# grid-begrenzing zoals de _LB_GRID/_SB_GRID hieronder, geen hardcoded uitkomst
+# (de fit kiest nog steeds zelf de waarde binnen 0.2-0.7).
+_STRENGTH_GRID = [round(0.1 * i, 2) for i in range(2, 8)]   # 0.2..0.7
 _MULT_GRID = [0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 1.00]     # ≥ seed 0.65
 _LB_GRID = list(range(30, 51, 2))
 _SB_GRID = list(range(44, 67, 2))

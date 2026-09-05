@@ -1,6 +1,6 @@
 {
   "WIND_FACE_PENALTY": {
-    "strength": 0.0
+    "strength": 0.5
   },
   "PARTITION_WEIGHTS": {
     "wind_sea_multiplier": 0.9
@@ -17,6 +17,7 @@
     "agreement_before": 0.452,
     "agreement_loo": 0.64,
     "agreement_in_sample": 0.64,
-    "model_loo_agreement": 0.6129032258064516
+    "model_loo_agreement": 0.6129032258064516,
+    "manual_correction_2026-09-05": "WIND_FACE_PENALTY.strength was 0.0 (fit vóór de _STRENGTH_GRID-ondergrens-fix in scripts/calibrate.py) — dat is nu buiten het geldige bereik (0.2-0.7) en maakte de face-quality-penalty een complete no-op. Geen nieuwe fit haalde de LOO-gate (54% < seed 56% op N=75), dus handmatig teruggezet naar de gedocumenteerde fysische seed (config.py WIND_FACE_PENALTY.strength=0.5) i.p.v. een ongevalideerde nieuwe waarde te verzinnen. PARTITION_WEIGHTS/SURF_THRESHOLDS ongemoeid gelaten — die lossen een ander, al begrepen probleem op (referentie-pariteit) en zijn niet betrokken bij deze bug."
   }
 }
