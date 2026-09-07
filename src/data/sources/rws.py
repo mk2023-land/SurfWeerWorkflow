@@ -360,7 +360,31 @@ class RWSClient:
         include_extras: bool = True,
     ) -> List[Dict[str, Any]]:
         """
-        Haal recente boei-data op: significante golfhoogte (m), periode (s), richting (°).
+        Haal recente boei-data op (laatste `hours_back` uur t.o.v. nu).
+
+        Dunne wrapper rond `fetch_buoy_history` — zie die functie voor de
+        volledige merge-strategie-documentatie. `include_extras` is bewaard
+        voor backward-compat; nu een no-op omdat de per-station `quantities`
+        lijst exact bepaalt wat we vragen.
+        """
+        end = datetime.now(timezone.utc)
+        start = end - timedelta(hours=hours_back)
+        return await self.fetch_buoy_history(station_code, start, end)
+
+    async def fetch_buoy_history(
+        self,
+        station_code: str,
+        start: datetime,
+        end: datetime,
+    ) -> List[Dict[str, Any]]:
+        """
+        Haal boei-data op voor een expliciete periode: significante
+        golfhoogte (m), periode (s), richting (°).
+
+        Zelfde functie als `fetch_buoy_data`, maar met een expliciete
+        `start`/`end` i.p.v. "laatste N uur t.o.v. nu" — nodig om historische
+        periodes op te vragen (bv. de seizoensbaseline-rebuild in
+        `src/baseline/seasonal.py`, die per-maand batcht over 5 jaar).
 
         Bevraagt per-station alleen de Aquo-grootheden die deze sensor
         daadwerkelijk publiceert (zie `RWS_STATIONS[code]['quantities']`).
@@ -381,9 +405,6 @@ class RWSClient:
 
         Per-grootheid failures (203, 503, lege response) zijn gracieus — de
         bijbehorende key ontbreekt in het gemergede punt.
-
-        `include_extras` is bewaard voor backward-compat; nu een no-op omdat
-        de per-station `quantities` lijst exact bepaalt wat we vragen.
         """
         if station_code not in RWS_STATIONS:
             raise ValueError(f"Onbekend station: {station_code}")
@@ -400,12 +421,9 @@ class RWSClient:
         if GROOTHEID_HM0 not in quantities:
             quantities.insert(0, GROOTHEID_HM0)
 
-        end = datetime.now(timezone.utc)
-        start = end - timedelta(hours=hours_back)
-
         logger.info(
-            f"Fetching buoy data for {station['name']} ({rws_code}), {hours_back}h history, "
-            f"grootheden={quantities}"
+            f"Fetching buoy data for {station['name']} ({rws_code}), "
+            f"{start.isoformat()} t/m {end.isoformat()}, grootheden={quantities}"
         )
 
         tasks = [

@@ -253,6 +253,43 @@ class TestExtendedBuoyData:
             assert 'tp_s' in p
             assert 'h13_m' in p
 
+    def test_fetch_buoy_history_uses_explicit_period(self, monkeypatch):
+        """
+        `fetch_buoy_history` moet de opgegeven `start`/`end` doorzetten naar
+        de RWS-requestbody (i.p.v. "nu - hours_back" zoals `fetch_buoy_data`),
+        en dezelfde merge-logica toepassen. Nodig voor de seizoensbaseline-
+        rebuild, die per-maand historische periodes opvraagt (zie
+        `src/baseline/seasonal.py`).
+        """
+        r = _ijg1_full_router()
+        client = _patch_client(monkeypatch, r)
+
+        captured_bodies: list[dict[str, Any]] = []
+        orig_post = client._post
+
+        async def spying_post(url, body):
+            captured_bodies.append(body)
+            return await orig_post(url, body)
+
+        monkeypatch.setattr(client, '_post', spying_post)
+
+        start = datetime(2021, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2021, 1, 31, tzinfo=timezone.utc)
+        data = _run(client.fetch_buoy_history('IJG1', start, end))
+
+        assert len(data) == 3
+        assert data[0]['height_m'] == pytest.approx(1.20)
+        # De request-body moet de doorgegeven historische periode bevatten,
+        # niet een "nu"-relatieve periode.
+        assert all(
+            body['Periode']['Begindatumtijd'].startswith('2021-01-01')
+            for body in captured_bodies
+        )
+        assert all(
+            body['Periode']['Einddatumtijd'].startswith('2021-01-31')
+            for body in captured_bodies
+        )
+
     def test_backward_compat_with_include_extras_false(self, monkeypatch):
         """
         `include_extras=False` is in DDAPI20 een no-op geworden — de
